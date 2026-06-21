@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "Octave.Desktop (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "Octave.Desktop (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
