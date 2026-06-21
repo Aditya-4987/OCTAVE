@@ -10,6 +10,9 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Shapes;
+using Microsoft.Extensions.DependencyInjection;
+using Octave.Core.Services.Audio;
+using Octave_Desktop.ViewModels;
 
 // To learn more about WinUI, the WinUI project structure,
 // and more about our project templates, see: http://aka.ms/winui-project-info.
@@ -22,20 +25,24 @@ namespace Octave_Desktop;
 public partial class App : Application
 {
     private Window? _window;
-    
-    /// <summary>
-    /// Initializes the singleton application object.  This is the first line of authored code
-    /// executed, and as such is the logical equivalent of main() or WinMain().
-    /// </summary>
+
+    public IServiceProvider Services { get; }
+
     public App()
     {
         InitializeComponent();
+
+        var services = new ServiceCollection();
+
+        // Audio Engine
+        services.AddSingleton<IAudioPlayerService, ManagedBassAudioService>();
+
+        // ViewModels
+        services.AddSingleton<MainViewModel>();
+
+        Services = services.BuildServiceProvider();
     }
 
-    /// <summary>
-    /// Invoked when the application is launched.
-    /// </summary>
-    /// <param name="args">Details about the launch request and process.</param>
     protected override void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
     {
         _window = new MainWindow();

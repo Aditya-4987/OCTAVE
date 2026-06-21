@@ -1,27 +1,43 @@
 using Microsoft.UI.Xaml;
-
-// To learn more about WinUI, the WinUI project structure,
-// and more about our project templates, see: http://aka.ms/winui-project-info.
+using Octave.Core.Services.Audio;
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
 
 namespace Octave_Desktop;
 
-/// <summary>
-/// The application window. This hosts a Frame that displays pages. Add your
-/// UI and logic to MainPage.xaml / MainPage.xaml.cs instead of here so you
-/// can use Page features such as navigation events and the Loaded lifecycle.
-/// </summary>
 public sealed partial class MainWindow : Window
 {
+    private readonly IAudioPlayerService _audioPlayer = new ManagedBassAudioService();
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int MessageBox(
+        IntPtr hWnd,
+        string text,
+        string caption,
+        uint type);
+
     public MainWindow()
     {
-        InitializeComponent();
+        try
+        {
+            InitializeComponent();
 
-        ExtendsContentIntoTitleBar = true;
-        SetTitleBar(AppTitleBar);
+            string testSongPath = Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory,
+                @"Assets\test.mp3");
 
-        AppWindow.SetIcon("Assets/AppIcon.ico");
+            bool initialized = _audioPlayer.Init();
 
-        // Navigate the root frame to the main page on startup.
-        RootFrame.Navigate(typeof(MainPage));
+            _audioPlayer.Play(testSongPath);
+        }
+        catch (Exception ex)
+        {
+            MessageBox(
+                IntPtr.Zero,
+                ex.ToString(),
+                "Octave Crash",
+                0);
+        }
     }
 }
