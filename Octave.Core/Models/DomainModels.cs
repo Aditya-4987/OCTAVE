@@ -1,0 +1,71 @@
+using System;
+
+namespace Octave.Core.Models;
+
+// =================================================================
+// 1. PERSISTED ENTITIES (Mapped 1:1 to SQLite STRICT Tables)
+// =================================================================
+
+public record Artist(
+    string Id,
+    string Name,
+    string? Bio,
+    string? ArtworkUrl,
+    bool IsLocal
+);
+
+public record Album(
+    string Id,
+    string Title,
+    string ArtistId,
+    string ArtistName,
+    int Year,
+    string? ArtworkUrl,
+    string Provider
+);
+
+public record Track(
+    string Id,
+    string Title,
+    string ArtistId,
+    string ArtistName,
+    string AlbumId,
+    string AlbumTitle,
+    double DurationSeconds,
+    string SourceUri,       // Local absolute file path OR remote CDN URL
+    string Provider,        // "Local", "Qobuz", "Tidal", "YouTube"
+    int TrackNumber,
+    int Year,
+    DateTime DateAdded
+);
+
+public record Playlist(
+    string Id,
+    string Title,
+    string? Description,
+    DateTime CreatedAt,
+    bool IsLocalOnly,
+    int TrackCount = 0      // Hydrated dynamically by SQL COUNT()
+);
+
+// =================================================================
+// 2. RUNTIME / STATE MODELS (Never saved to SQL directly)
+// =================================================================
+
+public class QueueItem
+{
+    public required string Id { get; init; }
+    public required Track Track { get; init; }
+    public bool IsPlaying { get; set; }
+}
+
+public enum PlaybackStatus { Stopped, Playing, Paused, Buffering }
+
+public record PlaybackState(
+    Track? CurrentTrack,
+    PlaybackStatus Status,
+    double PositionSeconds,
+    double DurationSeconds,
+    float Volume,
+    bool IsMuted
+);
