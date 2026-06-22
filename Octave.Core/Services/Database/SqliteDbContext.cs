@@ -301,6 +301,99 @@ public class SqliteDbContext
         return Convert.ToInt32(result);
     }
     
+    public async Task<List<Artist>> GetAllArtistsAsync()
+    {
+        var artists = new List<Artist>();
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT Id, Name, Bio, ArtworkUrl, IsLocal FROM Artists ORDER BY Name ASC;";
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var id = reader.GetString(0);
+            var name = reader.GetString(1);
+            var bio = reader.IsDBNull(2) ? null : reader.GetString(2);
+            var artworkUrl = reader.IsDBNull(3) ? null : reader.GetString(3);
+            var isLocal = reader.GetInt32(4) != 0;
+
+            artists.Add(new Artist(id, name, bio, artworkUrl, isLocal));
+        }
+        return artists;
+    }
+
+    public async Task<List<Album>> GetAllAlbumsAsync()
+    {
+        var albums = new List<Album>();
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT Id, Title, ArtistId, ArtistName, Year, ArtworkUrl, Provider FROM Albums ORDER BY Title ASC;";
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var id = reader.GetString(0);
+            var title = reader.GetString(1);
+            var artistId = reader.GetString(2);
+            var artistName = reader.GetString(3);
+            var year = reader.GetInt32(4);
+            var artworkUrl = reader.IsDBNull(5) ? null : reader.GetString(5);
+            var provider = reader.GetString(6);
+
+            albums.Add(new Album(id, title, artistId, artistName, year, artworkUrl, provider));
+        }
+        return albums;
+    }
+
+    public async Task<List<Track>> GetTracksByAlbumAsync(string albumId)
+    {
+        var tracks = new List<Track>();
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded 
+            FROM Tracks 
+            WHERE AlbumId = @albumId 
+            ORDER BY TrackNumber ASC;";
+        
+        cmd.Parameters.Add(new SqliteParameter("@albumId", albumId));
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var id = reader.GetString(0);
+            var title = reader.GetString(1);
+            var artistId = reader.GetString(2);
+            var artistName = reader.GetString(3);
+            var albId = reader.GetString(4);
+            var albumTitle = reader.GetString(5);
+            var durationSeconds = reader.GetDouble(6);
+            var sourceUri = reader.GetString(7);
+            var provider = reader.GetString(8);
+            var trackNumber = reader.GetInt32(9);
+            var year = reader.GetInt32(10);
+            var epochSeconds = reader.GetInt64(11);
+
+            var dateAdded = DateTimeOffset.FromUnixTimeSeconds(epochSeconds).UtcDateTime;
+
+            tracks.Add(new Track(
+                id,
+                title,
+                artistId,
+                artistName,
+                albId,
+                albumTitle,
+                durationSeconds,
+                sourceUri,
+                provider,
+                trackNumber,
+                year,
+                dateAdded
+            ));
+        }
+        return tracks;
+    }
+    
     // Public helper required for Ticket #003 Consumer Transaction batching
     public async Task<SqliteTransaction> BeginTransactionAsync()
     {

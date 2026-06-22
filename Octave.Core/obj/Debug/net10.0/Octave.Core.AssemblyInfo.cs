@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Octave.Core")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+93eab39978ed94632b3f657fd22007dc380d7a48")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+fa67b6d0756e7f2e9ffdd39dcb66a6deb4f9e7e2")]
 [assembly: System.Reflection.AssemblyProductAttribute("Octave.Core")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Octave.Core")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
