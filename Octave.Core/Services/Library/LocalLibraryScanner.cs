@@ -66,9 +66,9 @@ public class LocalLibraryScanner
                     }
                 }
             }
-            catch (UnauthorizedAccessException)
+            catch (Exception ex) when (ex is UnauthorizedAccessException || ex is IOException || ex is DirectoryNotFoundException)
             {
-                // Silently ignore locked OS folders and continue
+                // Silently swallow OS-level directory lockouts, unmapped network drops, or path-too-long faults
             }
             finally
             {
