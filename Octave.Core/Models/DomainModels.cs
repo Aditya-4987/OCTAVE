@@ -61,11 +61,15 @@ public class QueueItem
 
 public enum PlaybackStatus { Stopped, Playing, Paused, Buffering }
 
+public enum RepeatMode { None, Track, Queue }
+
 public record PlaybackState(
     Track? CurrentTrack,
     PlaybackStatus Status,
     double PositionSeconds,
     double DurationSeconds,
     float Volume,
-    bool IsMuted
+    bool IsMuted,
+    bool IsShuffle,
+    RepeatMode RepeatMode
 );
