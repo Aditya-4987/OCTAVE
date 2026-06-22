@@ -394,6 +394,19 @@ public class SqliteDbContext
         return tracks;
     }
     
+    public async Task LogPlaybackHistoryAsync(string trackId)
+    {
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "INSERT INTO PlaybackHistory (Id, TrackId, PlayedAt) VALUES (@id, @trackId, @playedAt);";
+
+        cmd.Parameters.Add(new SqliteParameter("@id", Guid.NewGuid().ToString()));
+        cmd.Parameters.Add(new SqliteParameter("@trackId", trackId));
+        cmd.Parameters.Add(new SqliteParameter("@playedAt", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+
+        await cmd.ExecuteNonQueryAsync();
+    }
+    
     // Public helper required for Ticket #003 Consumer Transaction batching
     public async Task<SqliteTransaction> BeginTransactionAsync()
     {
