@@ -24,11 +24,12 @@
             </TitleBar.IconSource>
         </TitleBar>
 
-        <!--
-            The Frame hosts pages for your application content. Add your UI to
-            MainPage.xaml rather than here so you can use Page features such as
-            navigation events and the Loaded lifecycle.
-        -->
-        <Frame x:Name="RootFrame" Grid.Row="1" />
+        <StackPanel Grid.Row="1" VerticalAlignment="Center" HorizontalAlignment="Center" Width="400">
+            <TextBlock Text="OCTAVE: STATIC FIRE HARNESS" FontSize="20" FontWeight="Bold" Margin="0,0,0,16" HorizontalAlignment="Center"/>
+            <Button x:Name="StaticFireButton" Content="Ignite Main Engines (Scan &amp; Play)" Click="OnStaticFireClicked" Width="250" Height="40" HorizontalAlignment="Center"/>
+            <ScrollViewer MaxHeight="250" Margin="0,20,0,0" Background="#111111" Padding="10">
+                <TextBlock x:Name="ConsoleLog" TextWrapping="Wrap" FontFamily="Consolas" Foreground="#00FF66" Text="Harness ready..."/>
+            </ScrollViewer>
+        </StackPanel>
     </Grid>
 </Window>

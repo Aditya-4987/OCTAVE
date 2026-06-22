@@ -1,3 +1,2 @@
 future cleanups: 
-convert MainViewModel observable fields
-to partial properties.
+convert MainViewModel observable fields to partial properties.
