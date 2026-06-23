@@ -66,20 +66,20 @@ public sealed partial class MainWindow : Window
     public Brush GetShuffleColor(bool isShuffle)
     {
         return isShuffle 
-            ? new SolidColorBrush(Microsoft.UI.Colors.LimeGreen) 
-            : new SolidColorBrush(Microsoft.UI.Colors.Gray);
+            ? new SolidColorBrush(Microsoft.UI.Colors.White) 
+            : new SolidColorBrush(Windows.UI.Color.FromArgb(255, 136, 136, 136));
     }
 
     public Brush GetRepeatColor(RepeatMode mode)
     {
         return mode != RepeatMode.None 
-            ? new SolidColorBrush(Microsoft.UI.Colors.LimeGreen) 
-            : new SolidColorBrush(Microsoft.UI.Colors.Gray);
+            ? new SolidColorBrush(Microsoft.UI.Colors.White) 
+            : new SolidColorBrush(Windows.UI.Color.FromArgb(255, 136, 136, 136));
     }
 
     public string GetRepeatGlyph(RepeatMode mode)
     {
-        return mode == RepeatMode.Track ? "\uE8EF" : "\uE8EE";
+        return mode == RepeatMode.Track ? "\uE8ED" : "\uE8EE";
     }
 
     private void PlaybackSlider_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)

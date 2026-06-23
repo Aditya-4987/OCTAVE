@@ -398,10 +398,48 @@ public class QueueService : IQueueService
             _activeQueue[_currentIndex].IsPlaying = false;
         }
 
+        var item = _activeQueue[index];
+        var track = item.Track;
+
+        bool isLocal = !track.SourceUri.StartsWith("http://", StringComparison.OrdinalIgnoreCase) && 
+                       !track.SourceUri.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+        if (isLocal && !System.IO.File.Exists(track.SourceUri))
+        {
+            System.Diagnostics.Debug.WriteLine($"[QueueService] Missing physical file detected (Storage may be offline): {track.SourceUri}");
+            
+            _activeQueue.RemoveAt(index);
+            _unshuffledQueue.Remove(item);
+
+            if (_activeQueue.Count == 0)
+            {
+                _audioPlayer.Stop();
+                _currentIndex = -1;
+                EmitPlaybackStateChanged();
+                return;
+            }
+
+            if (index >= _activeQueue.Count)
+            {
+                if (_repeatMode == RepeatMode.Queue)
+                {
+                    index = 0;
+                }
+                else
+                {
+                    _audioPlayer.Stop();
+                    _currentIndex = -1;
+                    EmitPlaybackStateChanged();
+                    return;
+                }
+            }
+
+            PlayIndexInternal(index);
+            return;
+        }
+
         _currentIndex = index;
         _activeQueue[_currentIndex].IsPlaying = true;
 
-        var track = _activeQueue[_currentIndex].Track;
         _audioPlayer.Play(track.SourceUri);
 
         EmitPlaybackStateChanged();
