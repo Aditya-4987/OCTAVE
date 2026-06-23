@@ -48,6 +48,9 @@ public partial class ShellViewModel : ObservableObject
     [ObservableProperty]
     private string _consoleOutput = "[System Ready]\n";
 
+    [ObservableProperty]
+    private bool _isDragging;
+
     public ShellViewModel(
         ILibraryService libraryService,
         IQueueService queueService,
@@ -91,7 +94,10 @@ public partial class ShellViewModel : ObservableObject
         }
 
         IsPlaying = state.Status == PlaybackStatus.Playing;
-        PositionSeconds = state.PositionSeconds;
+        if (!IsDragging)
+        {
+            PositionSeconds = state.PositionSeconds;
+        }
         DurationSeconds = state.DurationSeconds;
         Volume = state.Volume;
         IsShuffle = state.IsShuffle;
@@ -103,6 +109,15 @@ public partial class ShellViewModel : ObservableObject
 
     [RelayCommand]
     private void Pause() => _queueService.Pause();
+
+    [RelayCommand]
+    private void SeekPlayback(double targetedSeconds)
+    {
+        double clamped = Math.Clamp(targetedSeconds, 0, DurationSeconds);
+        _audioPlayer.Seek(clamped);
+        PositionSeconds = clamped;
+        IsDragging = false;
+    }
 
     [RelayCommand]
     private void Next() => _queueService.PlayNext();

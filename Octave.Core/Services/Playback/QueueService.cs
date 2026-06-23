@@ -25,8 +25,6 @@ public class QueueService : IQueueService
 
     private float _volume = 1.0f;
     private bool _isMuted = false;
-    private double _positionSeconds = 0;
-    private PlaybackStatus _status = PlaybackStatus.Stopped;
 
     public QueueService(IAudioPlayerService audioPlayer, SqliteDbContext dbContext)
     {
@@ -50,7 +48,6 @@ public class QueueService : IQueueService
         {
             lock (_queueLock)
             {
-                _status = PlaybackStatus.Playing;
                 EmitPlaybackStateChanged();
             }
         };
@@ -59,7 +56,6 @@ public class QueueService : IQueueService
         {
             lock (_queueLock)
             {
-                _positionSeconds = pos;
                 EmitPlaybackStateChanged();
             }
         };
@@ -151,7 +147,6 @@ public class QueueService : IQueueService
                 _audioPlayer.Stop();
                 itemToRemove.IsPlaying = false;
                 _currentIndex = -1;
-                _status = PlaybackStatus.Stopped;
             }
             else if (_currentIndex > index)
             {
@@ -178,8 +173,6 @@ public class QueueService : IQueueService
             _activeQueue.Clear();
             _unshuffledQueue.Clear();
             _currentIndex = -1;
-            _status = PlaybackStatus.Stopped;
-            _positionSeconds = 0;
 
             EmitPlaybackStateChanged();
         }
@@ -317,8 +310,6 @@ public class QueueService : IQueueService
                     {
                         _activeQueue[_currentIndex].IsPlaying = false;
                     }
-                    _currentIndex = -1;
-                    _status = PlaybackStatus.Stopped;
                     EmitPlaybackStateChanged();
                     return;
                 }
@@ -362,10 +353,9 @@ public class QueueService : IQueueService
     {
         lock (_queueLock)
         {
-            if (_status == PlaybackStatus.Playing)
+            if (_audioPlayer.Status == PlaybackStatus.Playing)
             {
                 _audioPlayer.Pause();
-                _status = PlaybackStatus.Paused;
                 EmitPlaybackStateChanged();
             }
         }
@@ -375,13 +365,12 @@ public class QueueService : IQueueService
     {
         lock (_queueLock)
         {
-            if (_status == PlaybackStatus.Paused)
+            if (_audioPlayer.Status == PlaybackStatus.Paused)
             {
                 _audioPlayer.Resume();
-                _status = PlaybackStatus.Playing;
                 EmitPlaybackStateChanged();
             }
-            else if (_status == PlaybackStatus.Stopped && _activeQueue.Count > 0)
+            else if (_audioPlayer.Status == PlaybackStatus.Stopped && _activeQueue.Count > 0)
             {
                 int indexToPlay = _currentIndex >= 0 ? _currentIndex : 0;
                 PlayIndexInternal(indexToPlay);
@@ -411,7 +400,6 @@ public class QueueService : IQueueService
 
         _currentIndex = index;
         _activeQueue[_currentIndex].IsPlaying = true;
-        _status = PlaybackStatus.Playing;
 
         var track = _activeQueue[_currentIndex].Track;
         _audioPlayer.Play(track.SourceUri);
@@ -461,8 +449,6 @@ public class QueueService : IQueueService
                     {
                         _audioPlayer.Stop();
                         _activeQueue[_currentIndex].IsPlaying = false;
-                        _currentIndex = -1;
-                        _status = PlaybackStatus.Stopped;
                         EmitPlaybackStateChanged();
                     }
                     break;
@@ -481,13 +467,11 @@ public class QueueService : IQueueService
             currentTrack = _activeQueue[_currentIndex].Track;
         }
 
-        double duration = currentTrack != null ? _audioPlayer.GetDurationSeconds() : 0;
-
         return new PlaybackState(
             CurrentTrack: currentTrack,
-            Status: _status,
-            PositionSeconds: _positionSeconds,
-            DurationSeconds: duration,
+            Status: _audioPlayer.Status,
+            PositionSeconds: _audioPlayer.PositionSeconds,
+            DurationSeconds: _audioPlayer.DurationSeconds,
             Volume: _volume,
             IsMuted: _isMuted,
             IsShuffle: _isShuffle,

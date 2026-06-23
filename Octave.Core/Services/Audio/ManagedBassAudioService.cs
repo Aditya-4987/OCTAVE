@@ -2,6 +2,7 @@ using ManagedBass;
 using System;
 using System.Diagnostics;
 using System.Threading;
+using Octave.Core.Models;
 
 namespace Octave.Core.Services.Audio;
 
@@ -112,6 +113,38 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
     public void SetVolume(float volume) => 
         Bass.ChannelSetAttribute(_currentStream, ChannelAttribute.Volume, Math.Clamp(volume, 0f, 1f));
 
+    public double PositionSeconds => _currentStream != 0 
+        ? Bass.ChannelBytes2Seconds(_currentStream, Bass.ChannelGetPosition(_currentStream)) 
+        : 0.0;
+
+    public double DurationSeconds => _currentStream != 0 
+        ? Bass.ChannelBytes2Seconds(_currentStream, Bass.ChannelGetLength(_currentStream)) 
+        : 0.0;
+
+    public PlaybackStatus Status
+    {
+        get
+        {
+            if (_currentStream == 0) return PlaybackStatus.Stopped;
+            var active = Bass.ChannelIsActive(_currentStream);
+            return active switch
+            {
+                ManagedBass.PlaybackState.Playing => PlaybackStatus.Playing,
+                ManagedBass.PlaybackState.Paused => PlaybackStatus.Paused,
+                ManagedBass.PlaybackState.Stalled => PlaybackStatus.Buffering,
+                _ => PlaybackStatus.Stopped
+            };
+        }
+    }
+
+    public void Seek(double positionSeconds)
+    {
+        if (_currentStream == 0) return;
+        double clampedPosition = Math.Clamp(positionSeconds, 0, DurationSeconds);
+        long bytePosition = Bass.ChannelSeconds2Bytes(_currentStream, clampedPosition);
+        Bass.ChannelSetPosition(_currentStream, bytePosition);
+    }
+
     private void OnTrackEndedCallback(int handle, int channel, int data, IntPtr user)
     {
         StopPositionTimer();
@@ -138,7 +171,7 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
 
     private void OnPositionTimerTick(object? state)
     {
-        if (_currentStream != 0 && Bass.ChannelIsActive(_currentStream) == PlaybackState.Playing)
+        if (_currentStream != 0 && Bass.ChannelIsActive(_currentStream) == ManagedBass.PlaybackState.Playing)
         {
             double pos = GetPositionSeconds();
             PositionChanged?.Invoke(this, pos);

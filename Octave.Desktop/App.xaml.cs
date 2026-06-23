@@ -60,6 +60,9 @@ public partial class App : Application
                 // ViewModels
                 services.AddSingleton<MainViewModel>();
                 services.AddSingleton<ShellViewModel>();
+                services.AddTransient<LibraryViewModel>();
+                services.AddTransient<AlbumsViewModel>();
+                services.AddTransient<ArtistsViewModel>();
             })
             .Build();
 
