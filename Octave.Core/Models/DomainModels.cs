@@ -73,3 +73,6 @@ public record PlaybackState(
     bool IsShuffle,
     RepeatMode RepeatMode
 );
+
+public enum EntityType { Album, Artist }
+public record EntityNavigationParameter(EntityType Type, string Id);

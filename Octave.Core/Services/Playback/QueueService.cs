@@ -12,6 +12,8 @@ public class QueueService : IQueueService
 {
     public event EventHandler<PlaybackState>? PlaybackStateChanged;
 
+    public PlaybackState CurrentState { get; private set; }
+
     private readonly IAudioPlayerService _audioPlayer;
     private readonly SqliteDbContext _dbContext;
 
@@ -30,6 +32,8 @@ public class QueueService : IQueueService
     {
         _audioPlayer = audioPlayer ?? throw new ArgumentNullException(nameof(audioPlayer));
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+
+        CurrentState = GetCurrentState();
 
         // Auto-advance loop subscription with required exception trapping
         _audioPlayer.TrackEnded += async (s, e) =>
@@ -520,6 +524,7 @@ public class QueueService : IQueueService
     private void EmitPlaybackStateChanged()
     {
         var state = GetCurrentState();
+        CurrentState = state;
         PlaybackStateChanged?.Invoke(this, state);
     }
 }

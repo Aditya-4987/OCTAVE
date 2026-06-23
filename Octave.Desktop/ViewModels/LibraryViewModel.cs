@@ -15,6 +15,12 @@ public partial class LibraryViewModel : ObservableObject
     private readonly IQueueService _queueService;
     private readonly Microsoft.UI.Dispatching.DispatcherQueue _dispatcher;
 
+    [ObservableProperty]
+    public partial string? CurrentPlayingTrackId { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsCurrentlyPlaying { get; set; }
+
     public ObservableCollection<Track> Items { get; } = new();
 
     public LibraryViewModel(ILibraryService libraryService, IQueueService queueService)
@@ -22,7 +28,23 @@ public partial class LibraryViewModel : ObservableObject
         _libraryService = libraryService ?? throw new ArgumentNullException(nameof(libraryService));
         _queueService = queueService ?? throw new ArgumentNullException(nameof(queueService));
         _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+
+        var initialState = _queueService.CurrentState;
+        CurrentPlayingTrackId = initialState?.CurrentTrack?.Id;
+        IsCurrentlyPlaying = initialState?.Status == PlaybackStatus.Playing;
+
+        _queueService.PlaybackStateChanged += (s, state) =>
+        {
+            _dispatcher.TryEnqueue(() =>
+            {
+                CurrentPlayingTrackId = state.CurrentTrack?.Id;
+                IsCurrentlyPlaying = state.Status == PlaybackStatus.Playing;
+            });
+        };
     }
+
+    public void PausePlayback() => _queueService.Pause();
+    public void ResumePlayback() => _queueService.Resume();
 
     public async Task LoadAsync()
     {

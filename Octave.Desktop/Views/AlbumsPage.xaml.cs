@@ -24,4 +24,12 @@ public sealed partial class AlbumsPage : Page
     {
         await ViewModel.LoadAsync();
     }
+
+    private void GridView_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is Octave.Core.Models.Album clickedAlbum)
+        {
+            Frame.Navigate(typeof(EntityDetailPage), new Octave.Core.Models.EntityNavigationParameter(Octave.Core.Models.EntityType.Album, clickedAlbum.Id));
+        }
+    }
 }

@@ -1,36 +1,37 @@
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Navigation;
 using Microsoft.Extensions.DependencyInjection;
 using Octave_Desktop.ViewModels;
-using Microsoft.UI.Xaml;
+using Octave.Core.Models;
 using System;
 
 namespace Octave_Desktop.Views;
 
-public sealed partial class LibraryPage : Page
+public sealed partial class EntityDetailPage : Page
 {
-    public LibraryViewModel ViewModel { get; }
+    public EntityDetailViewModel ViewModel { get; }
 
     private readonly System.Collections.Generic.List<Button> _playButtons = new();
 
-    public LibraryPage()
+    public EntityDetailPage()
     {
-        ViewModel = App.Services.GetRequiredService<LibraryViewModel>();
+        ViewModel = App.Services.GetRequiredService<EntityDetailViewModel>();
         InitializeComponent();
-        this.Loaded += LibraryPage_Loaded;
-        this.Unloaded += LibraryPage_Unloaded;
+        this.Unloaded += EntityDetailPage_Unloaded;
 
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
     }
 
-    private void LibraryPage_Unloaded(object sender, RoutedEventArgs e)
+    private void EntityDetailPage_Unloaded(object sender, RoutedEventArgs e)
     {
         ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
     }
 
     private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(LibraryViewModel.CurrentPlayingTrackId) ||
-            e.PropertyName == nameof(LibraryViewModel.IsCurrentlyPlaying))
+        if (e.PropertyName == nameof(EntityDetailViewModel.CurrentPlayingTrackId) ||
+            e.PropertyName == nameof(EntityDetailViewModel.IsCurrentlyPlaying))
         {
             DispatcherQueue.TryEnqueue(() =>
             {
@@ -43,14 +44,19 @@ public sealed partial class LibraryPage : Page
         }
     }
 
-    private async void LibraryPage_Loaded(object sender, RoutedEventArgs e)
+    protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
-        await ViewModel.LoadAsync();
+        base.OnNavigatedTo(e);
+
+        if (e.Parameter is EntityNavigationParameter param)
+        {
+            await ViewModel.LoadEntityAsync(param);
+        }
     }
 
     private void ListView_ItemClick(object sender, ItemClickEventArgs e)
     {
-        if (e.ClickedItem is Octave.Core.Models.Track track)
+        if (e.ClickedItem is Track track)
         {
             ViewModel.PlayTrackCommand.Execute(track);
         }
@@ -75,7 +81,7 @@ public sealed partial class LibraryPage : Page
 
     private void UpdatePlayButtonIcon(Button btn)
     {
-        if (btn.Content is FontIcon fontIcon && btn.DataContext is Octave.Core.Models.Track track)
+        if (btn.Content is FontIcon fontIcon && btn.DataContext is Track track)
         {
             bool isCurrent = track.Id == ViewModel.CurrentPlayingTrackId;
             bool isPlaying = ViewModel.IsCurrentlyPlaying;
@@ -85,7 +91,7 @@ public sealed partial class LibraryPage : Page
 
     private void PlayButton_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button btn && btn.DataContext is Octave.Core.Models.Track track)
+        if (sender is Button btn && btn.DataContext is Track track)
         {
             if (track.Id == ViewModel.CurrentPlayingTrackId)
             {
@@ -108,6 +114,14 @@ public sealed partial class LibraryPage : Page
     public static string GetProviderGlyph(string provider)
     {
         return provider.Equals("Local", StringComparison.OrdinalIgnoreCase) ? "\uE770" : "\uE774";
+    }
+
+    private void BackButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (Frame.CanGoBack)
+        {
+            Frame.GoBack();
+        }
     }
 
     public static string FormatDuration(double seconds)

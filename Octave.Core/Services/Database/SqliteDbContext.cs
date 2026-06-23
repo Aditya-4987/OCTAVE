@@ -393,6 +393,99 @@ public class SqliteDbContext
         }
         return tracks;
     }
+
+    public async Task<List<Track>> GetTracksByArtistAsync(string artistId)
+    {
+        var tracks = new List<Track>();
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded 
+            FROM Tracks 
+            WHERE ArtistId = @artistId 
+            ORDER BY Year DESC, AlbumTitle ASC, TrackNumber ASC;";
+        
+        cmd.Parameters.Add(new SqliteParameter("@artistId", artistId));
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var id = reader.GetString(0);
+            var title = reader.GetString(1);
+            var artId = reader.GetString(2);
+            var artistName = reader.GetString(3);
+            var albumIdVal = reader.GetString(4);
+            var albumTitle = reader.GetString(5);
+            var durationSeconds = reader.GetDouble(6);
+            var sourceUri = reader.GetString(7);
+            var provider = reader.GetString(8);
+            var trackNumber = reader.GetInt32(9);
+            var year = reader.GetInt32(10);
+            var epochSeconds = reader.GetInt64(11);
+
+            var dateAdded = DateTimeOffset.FromUnixTimeSeconds(epochSeconds).UtcDateTime;
+
+            tracks.Add(new Track(
+                id,
+                title,
+                artId,
+                artistName,
+                albumIdVal,
+                albumTitle,
+                durationSeconds,
+                sourceUri,
+                provider,
+                trackNumber,
+                year,
+                dateAdded
+            ));
+        }
+        return tracks;
+    }
+
+    public async Task<Album?> GetAlbumByIdAsync(string albumId)
+    {
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT Id, Title, ArtistId, ArtistName, Year, ArtworkUrl, Provider FROM Albums WHERE Id = @albumId LIMIT 1;";
+        cmd.Parameters.Add(new SqliteParameter("@albumId", albumId));
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        if (await reader.ReadAsync())
+        {
+            var id = reader.GetString(0);
+            var title = reader.GetString(1);
+            var artistId = reader.GetString(2);
+            var artistName = reader.GetString(3);
+            var year = reader.GetInt32(4);
+            var artworkUrl = reader.IsDBNull(5) ? null : reader.GetString(5);
+            var provider = reader.GetString(6);
+
+            return new Album(id, title, artistId, artistName, year, artworkUrl, provider);
+        }
+        return null;
+    }
+
+    public async Task<Artist?> GetArtistByIdAsync(string artistId)
+    {
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT Id, Name, Bio, ArtworkUrl, IsLocal FROM Artists WHERE Id = @artistId LIMIT 1;";
+        cmd.Parameters.Add(new SqliteParameter("@artistId", artistId));
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        if (await reader.ReadAsync())
+        {
+            var id = reader.GetString(0);
+            var name = reader.GetString(1);
+            var bio = reader.IsDBNull(2) ? null : reader.GetString(2);
+            var artworkUrl = reader.IsDBNull(3) ? null : reader.GetString(3);
+            var isLocal = reader.GetInt32(4) != 0;
+
+            return new Artist(id, name, bio, artworkUrl, isLocal);
+        }
+        return null;
+    }
     
     public async Task LogPlaybackHistoryAsync(string trackId)
     {

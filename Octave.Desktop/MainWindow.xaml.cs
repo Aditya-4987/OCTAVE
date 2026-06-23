@@ -18,6 +18,7 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
 
         // Default navigation
+        ContentFrame.Navigated += ContentFrame_Navigated;
         ContentFrame.Navigate(typeof(Views.LibraryPage));
         NavView.SelectedItem = LibraryItem;
 
@@ -32,21 +33,72 @@ public sealed partial class MainWindow : Window
     {
         if (args.IsSettingsInvoked)
         {
-            ContentFrame.Navigate(typeof(Views.SettingsPage));
+            if (ContentFrame.SourcePageType != typeof(Views.SettingsPage))
+            {
+                ContentFrame.Navigate(typeof(Views.SettingsPage));
+            }
         }
         else if (args.InvokedItemContainer is NavigationViewItem item)
         {
-            switch (item.Tag?.ToString())
+            Type? targetPageType = item.Tag?.ToString() switch
             {
-                case "Library":
-                    ContentFrame.Navigate(typeof(Views.LibraryPage));
+                "Library" => typeof(Views.LibraryPage),
+                "Albums" => typeof(Views.AlbumsPage),
+                "Artists" => typeof(Views.ArtistsPage),
+                _ => null
+            };
+
+            if (targetPageType != null && ContentFrame.SourcePageType != targetPageType)
+            {
+                ContentFrame.Navigate(targetPageType);
+            }
+        }
+    }
+
+    private void NavigationView_BackRequested(NavigationView sender, NavigationViewBackRequestedEventArgs args)
+    {
+        if (ContentFrame.CanGoBack)
+        {
+            ContentFrame.GoBack();
+        }
+    }
+
+    private void ContentFrame_Navigated(object sender, Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
+    {
+        NavView.IsBackEnabled = ContentFrame.CanGoBack;
+
+        if (ContentFrame.SourcePageType == typeof(Views.SettingsPage))
+        {
+            NavView.SelectedItem = NavView.SettingsItem;
+            return;
+        }
+
+        string? tag = null;
+        if (ContentFrame.SourcePageType == typeof(Views.LibraryPage)) tag = "Library";
+        else if (ContentFrame.SourcePageType == typeof(Views.AlbumsPage)) tag = "Albums";
+        else if (ContentFrame.SourcePageType == typeof(Views.ArtistsPage)) tag = "Artists";
+
+        if (tag != null)
+        {
+            foreach (var item in NavView.MenuItems)
+            {
+                if (item is NavigationViewItem navItem && navItem.Tag?.ToString() == tag)
+                {
+                    NavView.SelectedItem = navItem;
                     break;
-                case "Albums":
-                    ContentFrame.Navigate(typeof(Views.AlbumsPage));
+                }
+            }
+        }
+        else if (ContentFrame.SourcePageType == typeof(Views.EntityDetailPage) && e.Parameter is EntityNavigationParameter param)
+        {
+            string parentTag = param.Type == EntityType.Album ? "Albums" : "Artists";
+            foreach (var item in NavView.MenuItems)
+            {
+                if (item is NavigationViewItem navItem && navItem.Tag?.ToString() == parentTag)
+                {
+                    NavView.SelectedItem = navItem;
                     break;
-                case "Artists":
-                    ContentFrame.Navigate(typeof(Views.ArtistsPage));
-                    break;
+                }
             }
         }
     }

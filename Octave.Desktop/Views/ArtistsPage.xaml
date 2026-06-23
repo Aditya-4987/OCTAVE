@@ -18,7 +18,9 @@
 
         <GridView Grid.Row="1"
                   ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}"
-                  SelectionMode="None">
+                  SelectionMode="None"
+                  IsItemClickEnabled="True"
+                  ItemClick="GridView_ItemClick">
             <GridView.ItemTemplate>
                 <DataTemplate x:DataType="models:Artist">
                     <Grid Width="160" Height="210" Margin="8" Padding="8" Background="#1E1E1E" CornerRadius="8">

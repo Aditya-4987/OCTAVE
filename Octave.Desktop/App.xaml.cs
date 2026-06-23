@@ -63,6 +63,7 @@ public partial class App : Application
                 services.AddTransient<LibraryViewModel>();
                 services.AddTransient<AlbumsViewModel>();
                 services.AddTransient<ArtistsViewModel>();
+                services.AddTransient<EntityDetailViewModel>();
             })
             .Build();
 

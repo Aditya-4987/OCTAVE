@@ -33,6 +33,15 @@ public class LibraryService : ILibraryService
     public Task<List<Track>> GetTracksByAlbumAsync(string albumId) => 
         _dbContext.GetTracksByAlbumAsync(albumId);
 
+    public Task<List<Track>> GetTracksByArtistAsync(string artistId) =>
+        _dbContext.GetTracksByArtistAsync(artistId);
+
+    public Task<Album?> GetAlbumByIdAsync(string albumId) =>
+        _dbContext.GetAlbumByIdAsync(albumId);
+
+    public Task<Artist?> GetArtistByIdAsync(string artistId) =>
+        _dbContext.GetArtistByIdAsync(artistId);
+
     public Task<int> GetTotalTrackCountAsync() => 
         _dbContext.GetTotalTrackCountAsync();
 }

@@ -29,6 +29,7 @@
                         Grid.Row="1"
                         PaneDisplayMode="Left"
                         ItemInvoked="NavigationView_ItemInvoked"
+                        BackRequested="NavigationView_BackRequested"
                         IsSettingsVisible="True">
             <NavigationView.MenuItems>
                 <NavigationViewItem Content="Library" Icon="Audio" Tag="Library" x:Name="LibraryItem" />

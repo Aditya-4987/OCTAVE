@@ -8,6 +8,8 @@ public interface IQueueService
 {
     event EventHandler<PlaybackState>? PlaybackStateChanged;
 
+    PlaybackState CurrentState { get; }
+
     IReadOnlyList<QueueItem> GetCurrentQueue();
     void Enqueue(Track track);
     void EnqueueNext(Track track);
