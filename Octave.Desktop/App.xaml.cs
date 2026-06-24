@@ -19,6 +19,7 @@ using Octave.Core.Interfaces;
 using Octave.Core.Services.Playback;
 using Octave.Core.Services.Metadata;
 using Octave_Desktop.ViewModels;
+using Octave_Desktop.Services.System;
 using System.IO;
 
 namespace Octave_Desktop;
@@ -63,6 +64,7 @@ public partial class App : Application
                 // Facades
                 services.AddSingleton<ILibraryService, LibraryService>();
                 services.AddSingleton<IQueueService, QueueService>();
+                services.AddSingleton<ISmtcService, WindowsSmtcService>();
 
                 // ViewModels
                 services.AddSingleton<MainViewModel>();
@@ -134,6 +136,12 @@ public partial class App : Application
         }
 
         _window = new MainWindow();
+
+        // Retrieve native window handle and initialize SMTC platform controller
+        IntPtr hwnd = WinRT.Interop.WindowNative.GetWindowHandle(_window);
+        var smtcService = Services.GetRequiredService<ISmtcService>();
+        smtcService.Initialize(hwnd);
+
         _window.Activate();
     }
 }
