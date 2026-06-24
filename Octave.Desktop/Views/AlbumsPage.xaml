@@ -5,8 +5,13 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:models="using:Octave.Core.Models"
+    xmlns:converters="using:Octave_Desktop.Converters"
     mc:Ignorable="d"
     Background="Transparent">
+
+    <Page.Resources>
+        <converters:ArtworkPathConverter x:Key="ArtworkPathConverter" />
+    </Page.Resources>
 
     <Grid Padding="24">
         <Grid.RowDefinitions>
@@ -30,9 +35,12 @@
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
-                        <!-- Square Artwork Placeholder -->
+                        <!-- Square Artwork Image -->
                         <Grid Grid.Row="0" Width="144" Height="144" Background="#2E2E2E" CornerRadius="6">
-                            <FontIcon Glyph="&#xE93C;" FontFamily="Segoe MDL2 Assets" FontSize="48" Foreground="#444444" />
+                            <Image Source="{x:Bind ArtworkUrl, Converter={StaticResource ArtworkPathConverter}}" 
+                                   Width="144" 
+                                   Height="144" 
+                                   Stretch="UniformToFill" />
                         </Grid>
 
                         <!-- Title -->

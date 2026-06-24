@@ -5,8 +5,13 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:models="using:Octave.Core.Models"
+    xmlns:converters="using:Octave_Desktop.Converters"
     mc:Ignorable="d"
     Background="Transparent">
+
+    <Page.Resources>
+        <converters:ArtworkPathConverter x:Key="ArtworkPathConverter" />
+    </Page.Resources>
 
     <Grid Padding="24">
         <Grid.RowDefinitions>
@@ -30,9 +35,9 @@
                         </Grid.RowDefinitions>
 
                         <!-- Circular Artwork Placeholder -->
-                        <Grid Grid.Row="0" Width="144" Height="144" Background="#2E2E2E" CornerRadius="72">
-                            <FontIcon Glyph="&#xE77B;" FontFamily="Segoe MDL2 Assets" FontSize="48" Foreground="#444444" />
-                        </Grid>
+                        <Border Grid.Row="0" Width="100" Height="100" CornerRadius="50" HorizontalAlignment="Center" Background="#222222">
+                            <Image Source="{x:Bind ArtworkUrl, Mode=OneWay, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Artist}" Stretch="UniformToFill"/>
+                        </Border>
 
                         <!-- Name -->
                         <TextBlock Grid.Row="1" Text="{x:Bind Name}" FontWeight="SemiBold" FontSize="14" Foreground="White" TextTrimming="CharacterEllipsis" Margin="0,8,0,0" HorizontalAlignment="Center" VerticalAlignment="Center"/>

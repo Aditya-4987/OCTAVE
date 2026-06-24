@@ -17,6 +17,7 @@ using Octave.Core.Services.Database;
 using Octave.Core.Services.Library;
 using Octave.Core.Interfaces;
 using Octave.Core.Services.Playback;
+using Octave.Core.Services.Metadata;
 using Octave_Desktop.ViewModels;
 using System.IO;
 
@@ -36,16 +37,22 @@ public partial class App : Application
         InitializeComponent();
     }
 
-    protected override void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
+    protected override async void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
     {
         var host = Host.CreateDefaultBuilder()
             .ConfigureServices((context, services) =>
             {
                 // Resolve the unpacked MSIX path
-                string dbPath = System.IO.Path.Combine(Windows.Storage.ApplicationData.Current.LocalFolder.Path, "octave.db");
+                string localFolderPath = Windows.Storage.ApplicationData.Current.LocalFolder.Path;
+                string dbPath = System.IO.Path.Combine(localFolderPath, "octave.db");
+                string cachePath = System.IO.Path.Combine(localFolderPath, "ArtworkCache");
+                System.IO.Directory.CreateDirectory(cachePath);
                 
                 // DB Context
                 services.AddSingleton(new SqliteDbContext($"Data Source={dbPath}"));
+
+                // Artwork Cache Manager
+                services.AddSingleton<IArtworkCacheManager>(new ArtworkCacheManager(cachePath));
 
                 // Engine
                 services.AddSingleton<IAudioPlayerService, ManagedBassAudioService>();
@@ -64,10 +71,67 @@ public partial class App : Application
                 services.AddTransient<AlbumsViewModel>();
                 services.AddTransient<ArtistsViewModel>();
                 services.AddTransient<EntityDetailViewModel>();
+                services.AddTransient<SearchViewModel>();
             })
             .Build();
 
         Services = host.Services;
+
+        // Startup Diagnostic Logging
+        string processArch = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString();
+        string bassDllArch = "Unknown";
+        string localFolder = Windows.Storage.ApplicationData.Current.LocalFolder.Path;
+        string dbFile = System.IO.Path.Combine(localFolder, "octave.db");
+
+        try
+        {
+            string bassDllPath = System.IO.Path.Combine(System.AppDomain.CurrentDomain.BaseDirectory, "bass.dll");
+            if (System.IO.File.Exists(bassDllPath))
+            {
+                using (var fs = new System.IO.FileStream(bassDllPath, System.IO.FileMode.Open, System.IO.FileAccess.Read))
+                {
+                    byte[] bytes = new byte[4];
+                    fs.Seek(0x3c, System.IO.SeekOrigin.Begin);
+                    int read = fs.Read(bytes, 0, 4);
+                    if (read == 4)
+                    {
+                        uint peOffset = System.BitConverter.ToUInt32(bytes, 0);
+                        fs.Seek(peOffset + 4, System.IO.SeekOrigin.Begin);
+                        read = fs.Read(bytes, 0, 2);
+                        if (read == 2)
+                        {
+                            ushort machine = System.BitConverter.ToUInt16(bytes, 0);
+                            bassDllArch = machine == 0x014c ? "x86" : machine == 0x8664 ? "x64" : $"Unknown (0x{machine:X4})";
+                        }
+                    }
+                }
+            }
+            else
+            {
+                bassDllArch = "File Missing";
+            }
+        }
+        catch (Exception ex)
+        {
+            bassDllArch = $"Error reading: {ex.Message}";
+        }
+
+        System.Diagnostics.Debug.WriteLine($"[Startup Diagnostics] Process Architecture: {processArch}");
+        System.Diagnostics.Debug.WriteLine($"[Startup Diagnostics] bass.dll Architecture: {bassDllArch}");
+        System.Diagnostics.Debug.WriteLine($"[Startup Diagnostics] Database Path: {dbFile}");
+
+        // Database Initialization before Window activation
+        try
+        {
+            var dbContext = Services.GetRequiredService<SqliteDbContext>();
+            await dbContext.InitializeAsync();
+            System.Diagnostics.Debug.WriteLine("[Startup Diagnostics] Database Initialization: SUCCESS");
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Startup Diagnostics] Database Initialization: FAILED - {ex}");
+            throw;
+        }
 
         _window = new MainWindow();
         _window.Activate();

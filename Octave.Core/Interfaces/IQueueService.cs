@@ -26,4 +26,5 @@ public interface IQueueService
     void Pause();
     void Resume();
     void SetVolume(float volume);
+    PlaybackState Seek(double positionSeconds);
 }

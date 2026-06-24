@@ -71,8 +71,12 @@ public record PlaybackState(
     float Volume,
     bool IsMuted,
     bool IsShuffle,
-    RepeatMode RepeatMode
+    RepeatMode RepeatMode,
+    long SequenceToken = 0
 );
 
-public enum EntityType { Album, Artist }
+public enum EntityType { Album, Artist, Track }
 public record EntityNavigationParameter(EntityType Type, string Id);
+
+public record SearchResults(System.Collections.Generic.List<Track> Tracks, System.Collections.Generic.List<Album> Albums, System.Collections.Generic.List<Artist> Artists);
+public record SearchSuggestion(string Title, EntityType Type, string Id);

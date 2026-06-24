@@ -44,4 +44,10 @@ public class LibraryService : ILibraryService
 
     public Task<int> GetTotalTrackCountAsync() => 
         _dbContext.GetTotalTrackCountAsync();
+
+    public Task<Track?> GetTrackByIdAsync(string trackId) =>
+        _dbContext.GetTrackByIdAsync(trackId);
+
+    public Task<SearchResults> SearchLibraryAsync(string query, int? limit = null) =>
+        _dbContext.SearchLibraryAsync(query, limit);
 }

@@ -8,6 +8,7 @@ using Microsoft.Data.Sqlite;
 using Octave.Core.Helpers;
 using Octave.Core.Models;
 using Octave.Core.Services.Database;
+using Octave.Core.Interfaces;
 
 namespace Octave.Core.Services.Library;
 
@@ -20,12 +21,14 @@ public record LibraryScanProgressEventArgs(
 public class LocalLibraryScanner
 {
     private readonly SqliteDbContext _dbContext;
+    private readonly IArtworkCacheManager _artworkCacheManager;
 
     public event EventHandler<LibraryScanProgressEventArgs>? ScanProgressChanged;
 
-    public LocalLibraryScanner(SqliteDbContext dbContext)
+    public LocalLibraryScanner(SqliteDbContext dbContext, IArtworkCacheManager artworkCacheManager)
     {
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+        _artworkCacheManager = artworkCacheManager ?? throw new ArgumentNullException(nameof(artworkCacheManager));
     }
 
     public async Task ScanAsync(string rootPath, CancellationToken ct)
@@ -120,8 +123,26 @@ public class LocalLibraryScanner
                     string trackId = IdGenerator.FromTrackUri(filePath);
                     DateTime dateAdded = IdGenerator.ResolveFileDateAdded(filePath);
 
+                    string? artworkUrl = null;
+                    try
+                    {
+                        if (tagFile.Tag.Pictures != null && tagFile.Tag.Pictures.Length > 0)
+                        {
+                            var picture = System.Linq.Enumerable.FirstOrDefault(tagFile.Tag.Pictures, p => p.Type == TagLib.PictureType.FrontCover)
+                                          ?? tagFile.Tag.Pictures[0];
+                            if (picture?.Data?.Data != null && picture.Data.Data.Length > 0)
+                            {
+                                artworkUrl = await _artworkCacheManager.CacheBytesAsync(picture.Data.Data, picture.MimeType);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[Scanner] Non-fatal artwork extraction error on file '{filePath}': {ex.Message}");
+                    }
+
                     var artist = new Artist(artistId, artistName, null, null, true);
-                    var album = new Album(albumId, albumTitle, artistId, artistName, (int)tagFile.Tag.Year, null, "Local");
+                    var album = new Album(albumId, albumTitle, artistId, artistName, (int)tagFile.Tag.Year, artworkUrl, "Local");
 
                     string trackTitle = string.IsNullOrWhiteSpace(tagFile.Tag.Title)
                         ? Path.GetFileNameWithoutExtension(filePath)
@@ -206,6 +227,54 @@ public class LocalLibraryScanner
 
                 cleanCmd.CommandText = "DELETE FROM Artists WHERE Id NOT IN (SELECT DISTINCT ArtistId FROM Albums);";
                 await cleanCmd.ExecuteNonQueryAsync(ct);
+            }
+
+            // Artwork Cleanup Sweep
+            try
+            {
+                string cacheRoot = _artworkCacheManager.CacheRoot;
+                if (!string.IsNullOrWhiteSpace(cacheRoot) && Directory.Exists(cacheRoot))
+                {
+                    var dbArtworkTokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    using (var cmd = txConnection.CreateCommand())
+                    {
+                        cmd.Transaction = tx;
+                        cmd.CommandText = "SELECT DISTINCT ArtworkUrl FROM Albums WHERE ArtworkUrl IS NOT NULL;";
+                        using (var reader = await cmd.ExecuteReaderAsync(ct))
+                        {
+                            while (await reader.ReadAsync(ct))
+                            {
+                                dbArtworkTokens.Add(reader.GetString(0));
+                            }
+                        }
+                    }
+
+                    var physicalFiles = Directory.GetFiles(cacheRoot, "*.*");
+                    if (physicalFiles != null && physicalFiles.Length > 0)
+                    {
+                        foreach (var filePath in physicalFiles)
+                        {
+                            ct.ThrowIfCancellationRequested();
+                            string fileName = Path.GetFileName(filePath);
+                            string relativeToken = $"ArtworkCache/{fileName}";
+                            if (!dbArtworkTokens.Contains(relativeToken))
+                            {
+                                try
+                                {
+                                    File.Delete(filePath);
+                                }
+                                catch (Exception ex)
+                                {
+                                    Debug.WriteLine($"[Scanner] Failed to delete orphan artwork file '{filePath}': {ex.Message}");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Scanner] Non-fatal artwork cleanup sweep failure: {ex.Message}");
             }
 
             // Commit the transaction

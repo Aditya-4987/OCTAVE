@@ -27,6 +27,7 @@ public class QueueService : IQueueService
 
     private float _volume = 1.0f;
     private bool _isMuted = false;
+    private long _sequenceToken = 0;
 
     public QueueService(IAudioPlayerService audioPlayer, SqliteDbContext dbContext)
     {
@@ -517,14 +518,32 @@ public class QueueService : IQueueService
             Volume: _volume,
             IsMuted: _isMuted,
             IsShuffle: _isShuffle,
-            RepeatMode: _repeatMode
+            RepeatMode: _repeatMode,
+            SequenceToken: _sequenceToken
         );
     }
 
     private void EmitPlaybackStateChanged()
     {
-        var state = GetCurrentState();
-        CurrentState = state;
-        PlaybackStateChanged?.Invoke(this, state);
+        lock (_queueLock)
+        {
+            _sequenceToken++;
+            var state = GetCurrentState();
+            CurrentState = state;
+            PlaybackStateChanged?.Invoke(this, state);
+        }
+    }
+
+    public PlaybackState Seek(double positionSeconds)
+    {
+        lock (_queueLock)
+        {
+            _audioPlayer.Seek(positionSeconds);
+            _sequenceToken++;
+            var state = GetCurrentState();
+            CurrentState = state;
+            PlaybackStateChanged?.Invoke(this, state);
+            return state;
+        }
     }
 }

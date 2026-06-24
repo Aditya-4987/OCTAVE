@@ -21,6 +21,15 @@ public partial class ShellViewModel : ObservableObject
     private readonly SqliteDbContext _dbContext;
     private readonly Microsoft.UI.Dispatching.DispatcherQueue _dispatcher;
 
+    private CancellationTokenSource? _searchCts;
+    public System.Collections.ObjectModel.ObservableCollection<SearchSuggestion> Suggestions { get; } = new();
+
+    private string? _lastTrackId;
+    private long _lastSeekSequenceToken = 0;
+
+    [ObservableProperty]
+    private string? _currentArtworkUrl;
+
     [ObservableProperty]
     private string _trackTitle = "Ready to ignite";
 
@@ -79,9 +88,13 @@ public partial class ShellViewModel : ObservableObject
             });
         };
     }
-
     private void UpdatePropertiesFromState(PlaybackState state)
     {
+        if (state.SequenceToken < _lastSeekSequenceToken)
+        {
+            return;
+        }
+
         if (state.CurrentTrack != null)
         {
             TrackTitle = state.CurrentTrack.Title;
@@ -91,6 +104,20 @@ public partial class ShellViewModel : ObservableObject
         {
             TrackTitle = "No Track Loaded";
             ArtistName = "Unknown Artist";
+        }
+
+        if (state.CurrentTrack?.Id != _lastTrackId)
+        {
+            _lastTrackId = state.CurrentTrack?.Id;
+            
+            if (state.CurrentTrack == null)
+            {
+                CurrentArtworkUrl = null;
+            }
+            else
+            {
+                _ = LoadArtworkAsync(state.CurrentTrack.AlbumId);
+            }
         }
 
         IsPlaying = state.Status == PlaybackStatus.Playing;
@@ -104,6 +131,14 @@ public partial class ShellViewModel : ObservableObject
         RepeatMode = state.RepeatMode;
     }
 
+    private async Task LoadArtworkAsync(string albumId)
+    {
+        var album = await _libraryService.GetAlbumByIdAsync(albumId);
+        _dispatcher.TryEnqueue(() =>
+        {
+            CurrentArtworkUrl = album?.ArtworkUrl;
+        });
+    }
     [RelayCommand]
     private void Play() => _queueService.Resume();
 
@@ -114,8 +149,9 @@ public partial class ShellViewModel : ObservableObject
     private void SeekPlayback(double targetedSeconds)
     {
         double clamped = Math.Clamp(targetedSeconds, 0, DurationSeconds);
-        _audioPlayer.Seek(clamped);
-        PositionSeconds = clamped;
+        var newState = _queueService.Seek(clamped);
+        _lastSeekSequenceToken = newState.SequenceToken;
+        UpdatePropertiesFromState(newState);
         IsDragging = false;
     }
 
@@ -183,6 +219,81 @@ public partial class ShellViewModel : ObservableObject
         catch (Exception ex)
         {
             ConsoleOutput = $"[Harness] FAILED: {ex.Message}\n" + ConsoleOutput;
+        }
+    }
+
+    public async Task UpdateSearchSuggestionsAsync(string query)
+    {
+        if (_searchCts != null)
+        {
+            try
+            {
+                _searchCts.Cancel();
+            }
+            catch (ObjectDisposedException) { }
+            _searchCts.Dispose();
+            _searchCts = null;
+        }
+
+        if (string.IsNullOrWhiteSpace(query) || query.Length < 2)
+        {
+            _dispatcher.TryEnqueue(() => Suggestions.Clear());
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        _searchCts = cts;
+        var token = cts.Token;
+
+        try
+        {
+            await Task.Delay(300, token);
+
+            var results = await _libraryService.SearchLibraryAsync(query, limit: 8);
+
+            if (token.IsCancellationRequested) return;
+
+            _dispatcher.TryEnqueue(() =>
+            {
+                Suggestions.Clear();
+
+                foreach (var track in results.Tracks)
+                {
+                    Suggestions.Add(new SearchSuggestion(track.Title, EntityType.Track, track.Id));
+                }
+
+                foreach (var album in results.Albums)
+                {
+                    Suggestions.Add(new SearchSuggestion(album.Title, EntityType.Album, album.Id));
+                }
+
+                foreach (var artist in results.Artists)
+                {
+                    Suggestions.Add(new SearchSuggestion(artist.Name, EntityType.Artist, artist.Id));
+                }
+            });
+        }
+        catch (TaskCanceledException)
+        {
+            // Suppress cancellations
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Search Suggestions] Error: {ex}");
+        }
+    }
+
+    public async Task PlayTrackByIdAsync(string trackId)
+    {
+        var track = await _libraryService.GetTrackByIdAsync(trackId);
+        if (track != null)
+        {
+            _dispatcher.TryEnqueue(() =>
+            {
+                _queueService.Clear();
+                _queueService.Enqueue(track);
+                _queueService.PlayIndex(0);
+            });
         }
     }
 }

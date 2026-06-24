@@ -6,8 +6,13 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:models="using:Octave.Core.Models"
     xmlns:local="using:Octave_Desktop.Views"
+    xmlns:converters="using:Octave_Desktop.Converters"
     mc:Ignorable="d"
     Background="Transparent">
+
+    <Page.Resources>
+        <converters:ArtworkPathConverter x:Key="ArtworkPathConverter" />
+    </Page.Resources>
 
     <Grid Padding="24">
         <Grid.RowDefinitions>
@@ -22,9 +27,12 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <!-- Artwork / Icon Placeholder -->
-            <Grid Grid.Column="0" Width="120" Height="120" Background="#1E1E1E" CornerRadius="8" Margin="0,0,24,0">
-                <FontIcon Glyph="&#xE93C;" FontFamily="Segoe MDL2 Assets" FontSize="40" Foreground="#444444" />
+            <!-- Artwork / Icon Image -->
+            <Grid Grid.Column="0" Width="120" Height="120" Background="#1E1E1E" CornerRadius="6" Margin="0,0,24,0">
+                <Image Source="{x:Bind ViewModel.ArtworkUrl, Mode=OneWay, Converter={StaticResource ArtworkPathConverter}}" 
+                       Width="120" 
+                       Height="120" 
+                       Stretch="UniformToFill" />
             </Grid>
 
             <!-- Text details -->

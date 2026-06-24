@@ -16,6 +16,7 @@ public sealed partial class MainWindow : Window
     {
         ViewModel = App.Services.GetRequiredService<ShellViewModel>();
         InitializeComponent();
+        RootGrid.DataContext = this;
 
         // Default navigation
         ContentFrame.Navigated += ContentFrame_Navigated;
@@ -165,6 +166,43 @@ public sealed partial class MainWindow : Window
         if (sender is Slider slider && slider.FocusState == FocusState.Keyboard)
         {
             ViewModel.SeekPlaybackCommand.Execute(slider.Value);
+        }
+    }
+
+    public static string GetSuggestionGlyph(EntityType type)
+    {
+        return type switch
+        {
+            EntityType.Track => "\uE189",
+            EntityType.Artist => "\uE77B",
+            _ => "\uE93C"
+        };
+    }
+
+    private void GlobalSearchBox_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
+    {
+        if (args.Reason == AutoSuggestionBoxTextChangeReason.UserInput)
+        {
+            _ = ViewModel.UpdateSearchSuggestionsAsync(sender.Text);
+        }
+    }
+
+    private void GlobalSearchBox_QuerySubmitted(AutoSuggestBox sender, AutoSuggestBoxQuerySubmittedEventArgs args)
+    {
+        if (args.ChosenSuggestion is SearchSuggestion suggestion)
+        {
+            if (suggestion.Type == EntityType.Track)
+            {
+                _ = ViewModel.PlayTrackByIdAsync(suggestion.Id);
+            }
+            else
+            {
+                ContentFrame.Navigate(typeof(Views.EntityDetailPage), new EntityNavigationParameter(suggestion.Type, suggestion.Id));
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(args.QueryText))
+        {
+            ContentFrame.Navigate(typeof(Views.SearchResultsPage), args.QueryText);
         }
     }
 }

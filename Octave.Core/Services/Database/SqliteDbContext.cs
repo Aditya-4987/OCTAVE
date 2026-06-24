@@ -170,7 +170,7 @@ public class SqliteDbContext
                     ArtistId = excluded.ArtistId,
                     ArtistName = excluded.ArtistName,
                     Year = excluded.Year,
-                    ArtworkUrl = excluded.ArtworkUrl,
+                    ArtworkUrl = COALESCE(excluded.ArtworkUrl, Albums.ArtworkUrl),
                     Provider = excluded.Provider;";
 
             cmd.Parameters.Add(new SqliteParameter("@id", album.Id));
@@ -506,5 +506,172 @@ public class SqliteDbContext
         var conn = CreateConnection();
         await conn.OpenAsync();
         return (SqliteTransaction)await conn.BeginTransactionAsync();
+    }
+
+    public async Task<Track?> GetTrackByIdAsync(string trackId)
+    {
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded FROM Tracks WHERE Id = @trackId LIMIT 1;";
+        cmd.Parameters.Add(new SqliteParameter("@trackId", trackId));
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        if (await reader.ReadAsync())
+        {
+            var id = reader.GetString(0);
+            var title = reader.GetString(1);
+            var artistId = reader.GetString(2);
+            var artistName = reader.GetString(3);
+            var albumIdVal = reader.GetString(4);
+            var albumTitle = reader.GetString(5);
+            var durationSeconds = reader.GetDouble(6);
+            var sourceUri = reader.GetString(7);
+            var provider = reader.GetString(8);
+            var trackNumber = reader.GetInt32(9);
+            var year = reader.GetInt32(10);
+            var epochSeconds = reader.GetInt64(11);
+            var dateAdded = DateTimeOffset.FromUnixTimeSeconds(epochSeconds).UtcDateTime;
+
+            return new Track(id, title, artistId, artistName, albumIdVal, albumTitle, durationSeconds, sourceUri, provider, trackNumber, year, dateAdded);
+        }
+        return null;
+    }
+
+    public async Task<SearchResults> SearchLibraryAsync(string query, int? limit = null)
+    {
+        var tracks = new List<Track>();
+        var albums = new List<Album>();
+        var artists = new List<Artist>();
+
+        using var conn = CreateConnection();
+        string wildQuery = $"%{query}%";
+        string prefixQuery = $"{query}%";
+        string exactQuery = query;
+
+        // Query 1: Tracks
+        {
+            using var cmd = conn.CreateCommand();
+            string sql = @"
+                SELECT Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded 
+                FROM Tracks 
+                WHERE Title LIKE @q OR ArtistName LIKE @q OR AlbumTitle LIKE @q 
+                ORDER BY 
+                    CASE 
+                        WHEN Title = @exactQuery THEN 0 
+                        WHEN Title LIKE @prefixQuery THEN 1 
+                        ELSE 2 
+                    END, Title ASC";
+            if (limit.HasValue)
+            {
+                sql += " LIMIT @limit";
+                cmd.Parameters.Add(new SqliteParameter("@limit", limit.Value));
+            }
+            sql += ";";
+            cmd.CommandText = sql;
+            cmd.Parameters.Add(new SqliteParameter("@q", wildQuery));
+            cmd.Parameters.Add(new SqliteParameter("@prefixQuery", prefixQuery));
+            cmd.Parameters.Add(new SqliteParameter("@exactQuery", exactQuery));
+
+            using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var id = reader.GetString(0);
+                var title = reader.GetString(1);
+                var artistId = reader.GetString(2);
+                var artistName = reader.GetString(3);
+                var albumIdVal = reader.GetString(4);
+                var albumTitle = reader.GetString(5);
+                var durationSeconds = reader.GetDouble(6);
+                var sourceUri = reader.GetString(7);
+                var provider = reader.GetString(8);
+                var trackNumber = reader.GetInt32(9);
+                var year = reader.GetInt32(10);
+                var epochSeconds = reader.GetInt64(11);
+                var dateAdded = DateTimeOffset.FromUnixTimeSeconds(epochSeconds).UtcDateTime;
+
+                tracks.Add(new Track(
+                    id, title, artistId, artistName, albumIdVal, albumTitle,
+                    durationSeconds, sourceUri, provider, trackNumber, year, dateAdded
+                ));
+            }
+        }
+
+        // Query 2: Albums
+        {
+            using var cmd = conn.CreateCommand();
+            string sql = @"
+                SELECT Id, Title, ArtistId, ArtistName, Year, ArtworkUrl, Provider 
+                FROM Albums 
+                WHERE Title LIKE @q OR ArtistName LIKE @q 
+                ORDER BY 
+                    CASE 
+                        WHEN Title = @exactQuery THEN 0 
+                        WHEN Title LIKE @prefixQuery THEN 1 
+                        ELSE 2 
+                    END, Title ASC";
+            if (limit.HasValue)
+            {
+                sql += " LIMIT @limit";
+                cmd.Parameters.Add(new SqliteParameter("@limit", limit.Value));
+            }
+            sql += ";";
+            cmd.CommandText = sql;
+            cmd.Parameters.Add(new SqliteParameter("@q", wildQuery));
+            cmd.Parameters.Add(new SqliteParameter("@prefixQuery", prefixQuery));
+            cmd.Parameters.Add(new SqliteParameter("@exactQuery", exactQuery));
+
+            using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var id = reader.GetString(0);
+                var title = reader.GetString(1);
+                var artistId = reader.GetString(2);
+                var artistName = reader.GetString(3);
+                var year = reader.GetInt32(4);
+                var artworkUrl = reader.IsDBNull(5) ? null : reader.GetString(5);
+                var provider = reader.GetString(6);
+
+                albums.Add(new Album(id, title, artistId, artistName, year, artworkUrl, provider));
+            }
+        }
+
+        // Query 3: Artists
+        {
+            using var cmd = conn.CreateCommand();
+            string sql = @"
+                SELECT Id, Name, Bio, ArtworkUrl, IsLocal 
+                FROM Artists 
+                WHERE Name LIKE @q 
+                ORDER BY 
+                    CASE 
+                        WHEN Name = @exactQuery THEN 0 
+                        WHEN Name LIKE @prefixQuery THEN 1 
+                        ELSE 2 
+                    END, Name ASC";
+            if (limit.HasValue)
+            {
+                sql += " LIMIT @limit";
+                cmd.Parameters.Add(new SqliteParameter("@limit", limit.Value));
+            }
+            sql += ";";
+            cmd.CommandText = sql;
+            cmd.Parameters.Add(new SqliteParameter("@q", wildQuery));
+            cmd.Parameters.Add(new SqliteParameter("@prefixQuery", prefixQuery));
+            cmd.Parameters.Add(new SqliteParameter("@exactQuery", exactQuery));
+
+            using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var id = reader.GetString(0);
+                var name = reader.GetString(1);
+                var bio = reader.IsDBNull(2) ? null : reader.GetString(2);
+                var artworkUrl = reader.IsDBNull(3) ? null : reader.GetString(3);
+                var isLocal = reader.GetInt32(4) != 0;
+
+                artists.Add(new Artist(id, name, bio, artworkUrl, isLocal));
+            }
+        }
+
+        return new SearchResults(tracks, albums, artists);
     }
 }
