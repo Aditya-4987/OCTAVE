@@ -26,6 +26,7 @@ public sealed partial class EntityDetailPage : Page
     private void EntityDetailPage_Unloaded(object sender, RoutedEventArgs e)
     {
         ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+        ViewModel.Cleanup();
     }
 
     private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)

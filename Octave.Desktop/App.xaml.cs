@@ -59,7 +59,15 @@ public partial class App : Application
                 services.AddSingleton<IAudioPlayerService, ManagedBassAudioService>();
 
                 // Harvester (Singleton is critical to share events broadcast instance)
-                services.AddSingleton<LocalLibraryScanner>();
+                services.AddSingleton<ILibraryScanner, LocalLibraryScanner>();
+
+                // Watcher Service (registers after scanner is available)
+                services.AddSingleton<ILibraryWatcherService>(provider =>
+                {
+                    var scanner = provider.GetRequiredService<ILibraryScanner>();
+                    var monitoredPaths = new[] { System.Environment.GetFolderPath(System.Environment.SpecialFolder.MyMusic) };
+                    return new LibraryWatcherService(scanner, monitoredPaths);
+                });
 
                 // Facades
                 services.AddSingleton<ILibraryService, LibraryService>();
@@ -128,6 +136,10 @@ public partial class App : Application
             var dbContext = Services.GetRequiredService<SqliteDbContext>();
             await dbContext.InitializeAsync();
             System.Diagnostics.Debug.WriteLine("[Startup Diagnostics] Database Initialization: SUCCESS");
+
+            // Initialize Library Watcher Service strictly after database migration completes
+            var watcherService = Services.GetRequiredService<ILibraryWatcherService>();
+            System.Diagnostics.Debug.WriteLine("[Startup Diagnostics] Library Watcher Service: INITIALIZED");
         }
         catch (Exception ex)
         {

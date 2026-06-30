@@ -25,6 +25,7 @@ public sealed partial class SearchResultsPage : Page
     private void SearchResultsPage_Unloaded(object sender, RoutedEventArgs e)
     {
         ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+        ViewModel.Cleanup();
     }
 
     private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)

@@ -16,11 +16,24 @@ public partial class ArtistsViewModel : ObservableObject
 
     public ObservableCollection<Artist> Items { get; } = new();
 
+    private readonly EventHandler _libraryUpdatedHandler;
+
     public ArtistsViewModel(ILibraryService libraryService, IQueueService queueService)
     {
         _libraryService = libraryService ?? throw new ArgumentNullException(nameof(libraryService));
         _queueService = queueService ?? throw new ArgumentNullException(nameof(queueService));
         _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+
+        _libraryUpdatedHandler = (s, e) =>
+        {
+            _ = LoadAsync();
+        };
+        _libraryService.LibraryUpdated += _libraryUpdatedHandler;
+    }
+
+    public void Cleanup()
+    {
+        _libraryService.LibraryUpdated -= _libraryUpdatedHandler;
     }
 
     public async Task LoadAsync()

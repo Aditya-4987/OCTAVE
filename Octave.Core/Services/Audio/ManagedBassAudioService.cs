@@ -12,9 +12,19 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
     private bool _isInitialized = false;
     private bool _disposed = false;
 
+    // Persisted so a freshly created stream inherits the user's chosen volume
+    // instead of resetting to BASS's default (full) on every track change.
+    private float _volume = 1.0f;
+
     private readonly SyncProcedure _endSyncCallback;
     private Timer? _positionTimer;
     private readonly object _timerLock = new();
+
+    // Guards every access to the unmanaged stream handle. Play/Stop run on the
+    // UI thread, the position timer runs on a thread-pool thread, and the End
+    // sync fires on BASS's own unmanaged thread - without this lock those races
+    // can call into a freed handle.
+    private readonly object _streamLock = new();
 
     public event EventHandler<string>? TrackStarted;
     public event EventHandler? TrackEnded;
@@ -25,77 +35,153 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         _endSyncCallback = OnTrackEndedCallback;
     }
 
+    // Decoder add-ons that extend the core bass.dll (which only handles
+    // MP3/MP2/MP1/OGG/WAV/AIFF). Drop the matching un4seen binaries next to
+    // bass.dll and these formats start playing - missing ones are skipped.
+    private static readonly string[] PluginFileNames =
+    {
+        "bassflac.dll",  // FLAC
+        "bassopus.dll",  // Opus / .opus
+        "bass_aac.dll",  // AAC / M4A / MP4
+        "bassalac.dll",  // Apple Lossless (ALAC)
+        "basswma.dll",   // WMA
+        "bassdsd.dll",   // DSD (.dsf / .dff)
+        "bass_ape.dll"   // Monkey's Audio (APE)
+    };
+
     public bool Init()
     {
         if (_isInitialized) return true;
 
         // Init: -1 means "Default Windows Audio Device", 44.1kHz
         _isInitialized = Bass.Init(-1, 44100, DeviceInitFlags.Default, IntPtr.Zero);
-        
+
         if (!_isInitialized)
         {
             Debug.WriteLine($"[OCTAVE ENGINE] BASS Init Failed. Error: {Bass.LastError}");
+            return false;
         }
+
+        LoadPlugins();
         return _isInitialized;
+    }
+
+    private void LoadPlugins()
+    {
+        string baseDir = AppContext.BaseDirectory;
+        foreach (var name in PluginFileNames)
+        {
+            try
+            {
+                // Try the app directory first, then let BASS resolve by name.
+                string fullPath = System.IO.Path.Combine(baseDir, name);
+                string target = System.IO.File.Exists(fullPath) ? fullPath : name;
+
+                int handle = Bass.PluginLoad(target);
+                if (handle == 0)
+                {
+                    Debug.WriteLine($"[OCTAVE ENGINE] Decoder plugin not loaded: {name} (Error: {Bass.LastError})");
+                }
+                else
+                {
+                    Debug.WriteLine($"[OCTAVE ENGINE] Decoder plugin loaded: {name}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[OCTAVE ENGINE] Plugin load threw for {name}: {ex.Message}");
+            }
+        }
     }
 
     public void Play(string urlOrPath)
     {
         if (!_isInitialized) Init();
 
-        Stop(); // Kill any currently playing track
-
-        // Check if we were handed an HTTP web stream or a local hard drive path
-        if (urlOrPath.StartsWith("http://") || urlOrPath.StartsWith("https://"))
+        bool started = false;
+        lock (_streamLock)
         {
-            _currentStream = Bass.CreateStream(urlOrPath, 0, BassFlags.Default, null, IntPtr.Zero);
+            FreeStreamInternal(); // Kill any currently playing track
+
+            int stream;
+            // Check if we were handed an HTTP web stream or a local hard drive path
+            if (urlOrPath.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                urlOrPath.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                stream = Bass.CreateStream(urlOrPath, 0, BassFlags.Default, null, IntPtr.Zero);
+            }
+            else
+            {
+                stream = Bass.CreateStream(urlOrPath, 0, 0, BassFlags.Default);
+            }
+
+            if (stream != 0)
+            {
+                _currentStream = stream;
+
+                // Register end sync procedure
+                Bass.ChannelSetSync(stream, SyncFlags.End, 0, _endSyncCallback, IntPtr.Zero);
+
+                // Re-apply the persisted volume to the freshly created channel.
+                Bass.ChannelSetAttribute(stream, ChannelAttribute.Volume, _volume);
+
+                Bass.ChannelPlay(stream);
+                started = true;
+                Debug.WriteLine($"[OCTAVE ENGINE] Playing stream ID: {stream}");
+            }
+            else
+            {
+                Debug.WriteLine($"[OCTAVE ENGINE] Stream creation failed! BASS Error: {Bass.LastError}");
+            }
         }
-        else
+
+        if (started)
         {
-            _currentStream = Bass.CreateStream(urlOrPath, 0, 0, BassFlags.Default);
-        }
-
-        if (_currentStream != 0)
-        {
-            // Register end sync procedure
-            Bass.ChannelSetSync(_currentStream, SyncFlags.End, 0, _endSyncCallback, IntPtr.Zero);
-
-            Bass.ChannelPlay(_currentStream);
-            Debug.WriteLine($"[OCTAVE ENGINE] Playing stream ID: {_currentStream}");
-
-            // Start periodic position reporting
+            // Start periodic position reporting and notify listeners outside the
+            // lock so handlers can never reenter the engine while it is held.
             StartPositionTimer();
-
-            // Notify listeners that a track has successfully started
             TrackStarted?.Invoke(this, urlOrPath);
-        }
-        else
-        {
-            Debug.WriteLine($"[OCTAVE ENGINE] Stream creation failed! BASS Error: {Bass.LastError}");
         }
     }
 
     public void Pause()
     {
-        if (_currentStream != 0)
+        StopPositionTimer();
+        lock (_streamLock)
         {
-            Bass.ChannelPause(_currentStream);
-            StopPositionTimer();
+            if (_currentStream != 0)
+            {
+                Bass.ChannelPause(_currentStream);
+            }
         }
     }
-    
+
     public void Resume()
     {
-        if (_currentStream != 0)
+        bool resumed = false;
+        lock (_streamLock)
         {
-            Bass.ChannelPlay(_currentStream);
-            StartPositionTimer();
+            if (_currentStream != 0)
+            {
+                Bass.ChannelPlay(_currentStream);
+                resumed = true;
+            }
         }
+        if (resumed) StartPositionTimer();
     }
 
     public void Stop()
     {
         StopPositionTimer();
+        lock (_streamLock)
+        {
+            FreeStreamInternal();
+        }
+    }
+
+    // Frees the active stream. Caller MUST hold _streamLock.
+    private void FreeStreamInternal()
+    {
         if (_currentStream != 0)
         {
             Bass.ChannelStop(_currentStream);
@@ -104,51 +190,87 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         }
     }
 
-    public double GetDurationSeconds() => 
-        Bass.ChannelBytes2Seconds(_currentStream, Bass.ChannelGetLength(_currentStream));
+    public double GetDurationSeconds()
+    {
+        lock (_streamLock)
+        {
+            return _currentStream != 0
+                ? Bass.ChannelBytes2Seconds(_currentStream, Bass.ChannelGetLength(_currentStream))
+                : 0.0;
+        }
+    }
 
-    public double GetPositionSeconds() => 
-        Bass.ChannelBytes2Seconds(_currentStream, Bass.ChannelGetPosition(_currentStream));
+    public double GetPositionSeconds()
+    {
+        lock (_streamLock)
+        {
+            return _currentStream != 0
+                ? Bass.ChannelBytes2Seconds(_currentStream, Bass.ChannelGetPosition(_currentStream))
+                : 0.0;
+        }
+    }
 
-    public void SetVolume(float volume) => 
-        Bass.ChannelSetAttribute(_currentStream, ChannelAttribute.Volume, Math.Clamp(volume, 0f, 1f));
+    public void SetVolume(float volume)
+    {
+        float clamped = Math.Clamp(volume, 0f, 1f);
+        lock (_streamLock)
+        {
+            _volume = clamped;
+            if (_currentStream != 0)
+            {
+                Bass.ChannelSetAttribute(_currentStream, ChannelAttribute.Volume, clamped);
+            }
+        }
+    }
 
-    public double PositionSeconds => _currentStream != 0 
-        ? Bass.ChannelBytes2Seconds(_currentStream, Bass.ChannelGetPosition(_currentStream)) 
-        : 0.0;
+    public double PositionSeconds => GetPositionSeconds();
 
-    public double DurationSeconds => _currentStream != 0 
-        ? Bass.ChannelBytes2Seconds(_currentStream, Bass.ChannelGetLength(_currentStream)) 
-        : 0.0;
+    public double DurationSeconds => GetDurationSeconds();
 
     public PlaybackStatus Status
     {
         get
         {
-            if (_currentStream == 0) return PlaybackStatus.Stopped;
-            var active = Bass.ChannelIsActive(_currentStream);
-            return active switch
+            lock (_streamLock)
             {
-                ManagedBass.PlaybackState.Playing => PlaybackStatus.Playing,
-                ManagedBass.PlaybackState.Paused => PlaybackStatus.Paused,
-                ManagedBass.PlaybackState.Stalled => PlaybackStatus.Buffering,
-                _ => PlaybackStatus.Stopped
-            };
+                if (_currentStream == 0) return PlaybackStatus.Stopped;
+                var active = Bass.ChannelIsActive(_currentStream);
+                return active switch
+                {
+                    ManagedBass.PlaybackState.Playing => PlaybackStatus.Playing,
+                    ManagedBass.PlaybackState.Paused => PlaybackStatus.Paused,
+                    ManagedBass.PlaybackState.Stalled => PlaybackStatus.Buffering,
+                    _ => PlaybackStatus.Stopped
+                };
+            }
         }
     }
 
     public void Seek(double positionSeconds)
     {
-        if (_currentStream == 0) return;
-        double clampedPosition = Math.Clamp(positionSeconds, 0, DurationSeconds);
-        long bytePosition = Bass.ChannelSeconds2Bytes(_currentStream, clampedPosition);
-        Bass.ChannelSetPosition(_currentStream, bytePosition);
+        lock (_streamLock)
+        {
+            if (_currentStream == 0) return;
+            double duration = Bass.ChannelBytes2Seconds(_currentStream, Bass.ChannelGetLength(_currentStream));
+            double clampedPosition = Math.Clamp(positionSeconds, 0, duration);
+            long bytePosition = Bass.ChannelSeconds2Bytes(_currentStream, clampedPosition);
+            Bass.ChannelSetPosition(_currentStream, bytePosition);
+        }
     }
 
     private void OnTrackEndedCallback(int handle, int channel, int data, IntPtr user)
     {
+        // This executes on BASS's unmanaged sync thread. Freeing the stream or
+        // starting the next track from here (which the auto-advance does) is
+        // unsafe and can deadlock the engine. Stop the timer and marshal the
+        // TrackEnded notification onto a thread-pool thread so the callback can
+        // return immediately and the queue advances on a clean managed thread.
         StopPositionTimer();
-        TrackEnded?.Invoke(this, EventArgs.Empty);
+        var handler = TrackEnded;
+        if (handler != null)
+        {
+            ThreadPool.QueueUserWorkItem(_ => handler.Invoke(this, EventArgs.Empty));
+        }
     }
 
     private void StartPositionTimer()
@@ -171,11 +293,14 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
 
     private void OnPositionTimerTick(object? state)
     {
-        if (_currentStream != 0 && Bass.ChannelIsActive(_currentStream) == ManagedBass.PlaybackState.Playing)
+        double pos;
+        lock (_streamLock)
         {
-            double pos = GetPositionSeconds();
-            PositionChanged?.Invoke(this, pos);
+            if (_currentStream == 0 || Bass.ChannelIsActive(_currentStream) != ManagedBass.PlaybackState.Playing)
+                return;
+            pos = Bass.ChannelBytes2Seconds(_currentStream, Bass.ChannelGetPosition(_currentStream));
         }
+        PositionChanged?.Invoke(this, pos);
     }
 
     public void Dispose()
@@ -193,19 +318,22 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
                 StopPositionTimer();
             }
 
-            // Free BASS stream if open
-            if (_currentStream != 0)
+            lock (_streamLock)
             {
-                Bass.ChannelStop(_currentStream);
-                Bass.StreamFree(_currentStream);
-                _currentStream = 0;
-            }
+                // Free BASS stream if open
+                if (_currentStream != 0)
+                {
+                    Bass.ChannelStop(_currentStream);
+                    Bass.StreamFree(_currentStream);
+                    _currentStream = 0;
+                }
 
-            // Free BASS device context
-            if (_isInitialized)
-            {
-                Bass.Free();
-                _isInitialized = false;
+                // Free BASS device context
+                if (_isInitialized)
+                {
+                    Bass.Free();
+                    _isInitialized = false;
+                }
             }
 
             _disposed = true;

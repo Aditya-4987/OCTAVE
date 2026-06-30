@@ -39,6 +39,10 @@ public partial class EntityDetailViewModel : ObservableObject
 
     public ObservableCollection<Track> Tracks { get; } = new();
 
+    private readonly EventHandler _libraryUpdatedHandler;
+    private readonly EventHandler<PlaybackState> _playbackStateChangedHandler;
+    private EntityNavigationParameter? _currentParam;
+
     public EntityDetailViewModel(ILibraryService libraryService, IQueueService queueService)
     {
         _libraryService = libraryService ?? throw new ArgumentNullException(nameof(libraryService));
@@ -49,7 +53,7 @@ public partial class EntityDetailViewModel : ObservableObject
         CurrentPlayingTrackId = initialState?.CurrentTrack?.Id;
         IsCurrentlyPlaying = initialState?.Status == PlaybackStatus.Playing;
 
-        _queueService.PlaybackStateChanged += (s, state) =>
+        _playbackStateChangedHandler = (s, state) =>
         {
             _dispatcher.TryEnqueue(() =>
             {
@@ -57,6 +61,22 @@ public partial class EntityDetailViewModel : ObservableObject
                 IsCurrentlyPlaying = state.Status == PlaybackStatus.Playing;
             });
         };
+        _queueService.PlaybackStateChanged += _playbackStateChangedHandler;
+
+        _libraryUpdatedHandler = (s, e) =>
+        {
+            if (_currentParam != null)
+            {
+                _ = LoadEntityAsync(_currentParam);
+            }
+        };
+        _libraryService.LibraryUpdated += _libraryUpdatedHandler;
+    }
+
+    public void Cleanup()
+    {
+        _queueService.PlaybackStateChanged -= _playbackStateChangedHandler;
+        _libraryService.LibraryUpdated -= _libraryUpdatedHandler;
     }
 
     public void PausePlayback() => _queueService.Pause();
@@ -65,6 +85,7 @@ public partial class EntityDetailViewModel : ObservableObject
     public async Task LoadEntityAsync(EntityNavigationParameter param)
     {
         if (param == null) return;
+        _currentParam = param;
 
         if (param.Type == EntityType.Album)
         {
@@ -124,15 +145,15 @@ public partial class EntityDetailViewModel : ObservableObject
         if (targetedTrack == null) return;
 
         _queueService.Clear();
-        int selectedIndex = -1;
+        _queueService.EnqueueRange(Tracks);
 
+        int selectedIndex = -1;
         for (int i = 0; i < Tracks.Count; i++)
         {
-            var track = Tracks[i];
-            _queueService.Enqueue(track);
-            if (track.Id == targetedTrack.Id)
+            if (Tracks[i].Id == targetedTrack.Id)
             {
                 selectedIndex = i;
+                break;
             }
         }
 
@@ -148,10 +169,7 @@ public partial class EntityDetailViewModel : ObservableObject
         if (Tracks.Count == 0) return;
 
         _queueService.Clear();
-        foreach (var track in Tracks)
-        {
-            _queueService.Enqueue(track);
-        }
+        _queueService.EnqueueRange(Tracks);
         _queueService.PlayIndex(0);
     }
 }

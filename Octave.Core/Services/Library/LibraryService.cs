@@ -5,17 +5,23 @@ using System.Threading.Tasks;
 using Octave.Core.Models;
 using Octave.Core.Services.Database;
 
+using Octave.Core.Interfaces;
+
 namespace Octave.Core.Services.Library;
 
 public class LibraryService : ILibraryService
 {
     private readonly SqliteDbContext _dbContext;
-    private readonly LocalLibraryScanner _scanner;
+    private readonly ILibraryScanner _scanner;
 
-    public LibraryService(SqliteDbContext dbContext, LocalLibraryScanner scanner)
+    public event EventHandler? LibraryUpdated;
+
+    public LibraryService(SqliteDbContext dbContext, ILibraryScanner scanner)
     {
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
         _scanner = scanner ?? throw new ArgumentNullException(nameof(scanner));
+
+        _scanner.LibraryChanged += (s, e) => LibraryUpdated?.Invoke(this, EventArgs.Empty);
     }
 
     public Task ScanLocalLibraryAsync(string rootDir, CancellationToken ct) => 

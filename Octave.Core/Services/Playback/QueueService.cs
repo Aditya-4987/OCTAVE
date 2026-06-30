@@ -11,6 +11,7 @@ namespace Octave.Core.Services.Playback;
 public class QueueService : IQueueService
 {
     public event EventHandler<PlaybackState>? PlaybackStateChanged;
+    public event EventHandler<double>? PositionChanged;
 
     public PlaybackState CurrentState { get; private set; }
 
@@ -57,13 +58,10 @@ public class QueueService : IQueueService
             }
         };
 
-        _audioPlayer.PositionChanged += (s, pos) =>
-        {
-            lock (_queueLock)
-            {
-                EmitPlaybackStateChanged();
-            }
-        };
+        // Forward the high-frequency position ticks as a lightweight event only.
+        // Rebroadcasting the whole PlaybackState 4x/sec to every subscriber (and
+        // marshaling each to the UI thread) was needless churn.
+        _audioPlayer.PositionChanged += (s, pos) => PositionChanged?.Invoke(this, pos);
     }
 
     public IReadOnlyList<QueueItem> GetCurrentQueue()
@@ -89,6 +87,37 @@ public class QueueService : IQueueService
             _activeQueue.Add(item);
 
             EmitPlaybackStateChanged();
+        }
+    }
+
+    public void EnqueueRange(IEnumerable<Track> tracks)
+    {
+        if (tracks == null) return;
+
+        lock (_queueLock)
+        {
+            bool added = false;
+            foreach (var track in tracks)
+            {
+                var item = new QueueItem
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    Track = track,
+                    IsPlaying = false
+                };
+
+                _unshuffledQueue.Add(item);
+                _activeQueue.Add(item);
+                added = true;
+            }
+
+            // Emit a single state change for the whole batch instead of one per
+            // track - bulk-loading a large library used to fire thousands of
+            // broadcasts and flood the UI thread.
+            if (added)
+            {
+                EmitPlaybackStateChanged();
+            }
         }
     }
 

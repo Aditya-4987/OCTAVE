@@ -7,6 +7,7 @@ namespace Octave.Core.Services.Library;
 
 public interface ILibraryService
 {
+    event System.EventHandler? LibraryUpdated;
     Task ScanLocalLibraryAsync(string rootDir, CancellationToken ct);
 
     Task<List<Track>> GetAllTracksAsync();

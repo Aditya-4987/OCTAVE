@@ -25,6 +25,8 @@ public partial class SearchViewModel : ObservableObject
     public ObservableCollection<Album> Albums { get; } = new();
     public ObservableCollection<Artist> Artists { get; } = new();
 
+    private readonly EventHandler<PlaybackState> _playbackStateChangedHandler;
+
     public SearchViewModel(ILibraryService libraryService, IQueueService queueService)
     {
         _libraryService = libraryService ?? throw new ArgumentNullException(nameof(libraryService));
@@ -35,7 +37,10 @@ public partial class SearchViewModel : ObservableObject
         CurrentPlayingTrackId = initialState?.CurrentTrack?.Id;
         IsCurrentlyPlaying = initialState?.Status == PlaybackStatus.Playing;
 
-        _queueService.PlaybackStateChanged += (s, state) =>
+        // Stored in a field (not an inline lambda) so it can be detached in
+        // Cleanup() - this transient VM subscribes to a singleton service and
+        // would otherwise leak on every navigation to the search page.
+        _playbackStateChangedHandler = (s, state) =>
         {
             _dispatcher.TryEnqueue(() =>
             {
@@ -43,6 +48,12 @@ public partial class SearchViewModel : ObservableObject
                 IsCurrentlyPlaying = state.Status == PlaybackStatus.Playing;
             });
         };
+        _queueService.PlaybackStateChanged += _playbackStateChangedHandler;
+    }
+
+    public void Cleanup()
+    {
+        _queueService.PlaybackStateChanged -= _playbackStateChangedHandler;
     }
 
     public void PausePlayback() => _queueService.Pause();
@@ -91,15 +102,15 @@ public partial class SearchViewModel : ObservableObject
         if (targetedTrack == null) return;
 
         _queueService.Clear();
-        int selectedIndex = -1;
+        _queueService.EnqueueRange(Tracks);
 
+        int selectedIndex = -1;
         for (int i = 0; i < Tracks.Count; i++)
         {
-            var track = Tracks[i];
-            _queueService.Enqueue(track);
-            if (track.Id == targetedTrack.Id)
+            if (Tracks[i].Id == targetedTrack.Id)
             {
                 selectedIndex = i;
+                break;
             }
         }
 

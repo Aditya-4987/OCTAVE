@@ -8,10 +8,16 @@ public interface IQueueService
 {
     event EventHandler<PlaybackState>? PlaybackStateChanged;
 
+    // Lightweight, high-frequency position updates (seconds). Kept separate from
+    // PlaybackStateChanged so the 4x/sec playback ticks don't rebroadcast the
+    // entire state to every subscriber.
+    event EventHandler<double>? PositionChanged;
+
     PlaybackState CurrentState { get; }
 
     IReadOnlyList<QueueItem> GetCurrentQueue();
     void Enqueue(Track track);
+    void EnqueueRange(IEnumerable<Track> tracks);
     void EnqueueNext(Track track);
     void PlayIndex(int index);
     void RemoveAt(int index);

@@ -9,6 +9,8 @@ public class WindowsSmtcService : ISmtcService
 {
     private readonly IQueueService _queueService;
     private SystemMediaTransportControls? _systemControls;
+    private string? _lastTrackId;
+    private bool _hasPushedDisplay;
 
     public WindowsSmtcService(IQueueService queueService)
     {
@@ -78,11 +80,20 @@ public class WindowsSmtcService : ISmtcService
             _ => MediaPlaybackStatus.Closed
         };
 
-        // Update display details
-        var updater = _systemControls.DisplayUpdater;
-        updater.Type = MediaPlaybackType.Music;
-        updater.MusicProperties.Title = state.CurrentTrack?.Title ?? "No Track Loaded";
-        updater.MusicProperties.Artist = state.CurrentTrack?.ArtistName ?? "Octave Engine";
-        updater.Update();
+        // Only push display metadata when the track actually changes. The OS
+        // shell doesn't need Title/Artist re-sent on every play/pause/volume
+        // tweak, and DisplayUpdater.Update() is a comparatively heavy call.
+        var trackId = state.CurrentTrack?.Id;
+        if (trackId != _lastTrackId || !_hasPushedDisplay)
+        {
+            _lastTrackId = trackId;
+            _hasPushedDisplay = true;
+
+            var updater = _systemControls.DisplayUpdater;
+            updater.Type = MediaPlaybackType.Music;
+            updater.MusicProperties.Title = state.CurrentTrack?.Title ?? "No Track Loaded";
+            updater.MusicProperties.Artist = state.CurrentTrack?.ArtistName ?? "Octave Engine";
+            updater.Update();
+        }
     }
 }

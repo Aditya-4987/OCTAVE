@@ -503,8 +503,9 @@ public class SqliteDbContext
     // Public helper required for Ticket #003 Consumer Transaction batching
     public async Task<SqliteTransaction> BeginTransactionAsync()
     {
+        // CreateConnection() already opens the connection; opening it again is
+        // redundant (and ADO.NET throws on a second Open of an open connection).
         var conn = CreateConnection();
-        await conn.OpenAsync();
         return (SqliteTransaction)await conn.BeginTransactionAsync();
     }
 

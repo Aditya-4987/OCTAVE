@@ -34,6 +34,15 @@
       <Content Include="bass.dll">
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       </Content>
+      <!-- Optional BASS decoder add-ons (bassflac.dll, bassopus.dll, bass_aac.dll,
+           bassalac.dll, basswma.dll, bassdsd.dll, bass_ape.dll). Any DLL placed in
+           BassPlugins\ is copied flat next to bass.dll so the engine can load it.
+           The folder may be empty - the glob then matches nothing and the build
+           is unaffected. -->
+      <Content Include="BassPlugins\*.dll">
+        <Link>%(Filename)%(Extension)</Link>
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </Content>
   </ItemGroup>
 
   <ItemGroup>

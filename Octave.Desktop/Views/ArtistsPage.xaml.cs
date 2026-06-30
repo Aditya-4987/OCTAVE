@@ -18,6 +18,12 @@ public sealed partial class ArtistsPage : Page
         ViewModel = App.Services.GetRequiredService<ArtistsViewModel>();
         InitializeComponent();
         this.Loaded += ArtistsPage_Loaded;
+        this.Unloaded += ArtistsPage_Unloaded;
+    }
+
+    private void ArtistsPage_Unloaded(object sender, RoutedEventArgs e)
+    {
+        ViewModel.Cleanup();
     }
 
     private async void ArtistsPage_Loaded(object sender, RoutedEventArgs e)

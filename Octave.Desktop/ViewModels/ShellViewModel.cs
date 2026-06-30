@@ -17,7 +17,7 @@ public partial class ShellViewModel : ObservableObject
     private readonly ILibraryService _libraryService;
     private readonly IQueueService _queueService;
     private readonly IAudioPlayerService _audioPlayer;
-    private readonly LocalLibraryScanner _scanner;
+    private readonly ILibraryScanner _scanner;
     private readonly SqliteDbContext _dbContext;
     private readonly Microsoft.UI.Dispatching.DispatcherQueue _dispatcher;
 
@@ -64,7 +64,7 @@ public partial class ShellViewModel : ObservableObject
         ILibraryService libraryService,
         IQueueService queueService,
         IAudioPlayerService audioPlayer,
-        LocalLibraryScanner scanner,
+        ILibraryScanner scanner,
         SqliteDbContext dbContext)
     {
         _libraryService = libraryService ?? throw new ArgumentNullException(nameof(libraryService));
@@ -80,13 +80,40 @@ public partial class ShellViewModel : ObservableObject
             _dispatcher.TryEnqueue(() => UpdatePropertiesFromState(state));
         };
 
+        // High-frequency position ticks update only the timeline, not the whole
+        // state - and are suppressed while the user is scrubbing the slider.
+        _queueService.PositionChanged += (s, pos) =>
+        {
+            _dispatcher.TryEnqueue(() =>
+            {
+                if (!IsDragging)
+                {
+                    PositionSeconds = pos;
+                }
+            });
+        };
+
         _scanner.ScanProgressChanged += (s, args) =>
         {
             _dispatcher.TryEnqueue(() =>
             {
-                ConsoleOutput = $"[Ingesting] {args.FilesProcessed} files... -> {Path.GetFileName(args.CurrentProcessingFile)}\n" + ConsoleOutput;
+                AppendConsole($"[Ingesting] {args.FilesProcessed} files... -> {Path.GetFileName(args.CurrentProcessingFile)}");
             });
         };
+    }
+
+    private const int MaxConsoleChars = 8000;
+
+    // Prepends a line to the console log and caps total length so a large scan
+    // (a progress line every 25 files) can't grow the string without bound.
+    private void AppendConsole(string line)
+    {
+        string combined = line + "\n" + ConsoleOutput;
+        if (combined.Length > MaxConsoleChars)
+        {
+            combined = combined.Substring(0, MaxConsoleChars);
+        }
+        ConsoleOutput = combined;
     }
     private void UpdatePropertiesFromState(PlaybackState state)
     {
@@ -200,13 +227,9 @@ public partial class ShellViewModel : ObservableObject
             {
                 var tracks = await _libraryService.GetAllTracksAsync();
                 _queueService.Clear();
+                _queueService.EnqueueRange(tracks);
 
-                foreach (var track in tracks)
-                {
-                    _queueService.Enqueue(track);
-                }
-
-                ConsoleOutput = $"[Harness] Pushed {tracks.Count} tracks to play queue. Activating track at index 0...\n" + ConsoleOutput;
+                AppendConsole($"[Harness] Pushed {tracks.Count} tracks to play queue. Activating track at index 0...");
                 _queueService.PlayIndex(0);
             }
             else
