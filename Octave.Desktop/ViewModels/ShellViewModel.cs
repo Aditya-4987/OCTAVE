@@ -6,7 +6,10 @@ using Octave.Core.Services.Audio;
 using Octave.Core.Services.Database;
 using Octave.Core.Services.Library;
 using System;
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -24,6 +27,11 @@ public partial class ShellViewModel : ObservableObject
     private CancellationTokenSource? _searchCts;
     public System.Collections.ObjectModel.ObservableCollection<SearchSuggestion> Suggestions { get; } = new();
 
+    // Mirror of the current playback queue for the queue fly-out.
+    public ObservableCollection<QueueItem> QueueItems { get; } = new();
+    private bool _isRefreshingQueue;
+    private string _lastQueueSignature = "";
+
     private string? _lastTrackId;
     private long _lastSeekSequenceToken = 0;
 
@@ -37,6 +45,12 @@ public partial class ShellViewModel : ObservableObject
     private string _artistName = "Octave Core";
 
     [ObservableProperty]
+    private string _albumName = "";
+
+    [ObservableProperty]
+    private bool _isNowPlayingOpen;
+
+    [ObservableProperty]
     private bool _isPlaying;
 
     [ObservableProperty]
@@ -45,8 +59,22 @@ public partial class ShellViewModel : ObservableObject
     [ObservableProperty]
     private double _durationSeconds;
 
-    [ObservableProperty]
-    private float _volume = 1.0f;
+    public double Volume
+    {
+        get => _audioPlayer.Volume * 100.0;
+        set
+        {
+            float targetVolume = (float)(value / 100.0);
+            if (Math.Abs(_audioPlayer.Volume - targetVolume) > 0.001f)
+            {
+                _audioPlayer.Volume = targetVolume;
+                OnPropertyChanged(nameof(Volume));
+                OnPropertyChanged(nameof(IsMuted));
+            }
+        }
+    }
+
+    public bool IsMuted => _audioPlayer.IsMuted;
 
     [ObservableProperty]
     private bool _isShuffle;
@@ -100,6 +128,223 @@ public partial class ShellViewModel : ObservableObject
                 AppendConsole($"[Ingesting] {args.FilesProcessed} files... -> {Path.GetFileName(args.CurrentProcessingFile)}");
             });
         };
+
+        // Build the equalizer bands from the engine's frequency table.
+        var freqs = _audioPlayer.EqFrequencies;
+        var gains = _audioPlayer.GetEqGains();
+        for (int i = 0; i < freqs.Count; i++)
+        {
+            EqBands.Add(new EqBandViewModel(i, freqs[i], gains[i], (idx, g) => _audioPlayer.SetEqBand(idx, g)));
+        }
+
+        // Translate a user drag-reorder in the queue list into a queue operation.
+        QueueItems.CollectionChanged += OnQueueItemsChanged;
+
+        // Seed the queue mirror with anything already loaded (e.g. after resume).
+        RefreshQueue();
+    }
+
+    private void OnQueueItemsChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        // Ignore programmatic rebuilds; only react to user-initiated drag moves.
+        if (_isRefreshingQueue) return;
+        if (e.Action == NotifyCollectionChangedAction.Move)
+        {
+            _queueService.Reorder(e.OldStartingIndex, e.NewStartingIndex);
+        }
+    }
+
+    // Rebuilds the queue mirror only when the queue sequence actually changed, so
+    // play/pause transitions don't reset the fly-out list.
+    private void RefreshQueue()
+    {
+        var items = _queueService.GetCurrentQueue();
+        string signature = string.Join("|", items.Select(i => i.Id));
+        if (signature == _lastQueueSignature) return;
+        _lastQueueSignature = signature;
+
+        _isRefreshingQueue = true;
+        try
+        {
+            QueueItems.Clear();
+            foreach (var item in items)
+            {
+                QueueItems.Add(item);
+            }
+        }
+        finally
+        {
+            _isRefreshingQueue = false;
+        }
+    }
+
+    [RelayCommand]
+    private void PlayQueueItem(QueueItem? item)
+    {
+        if (item == null) return;
+        int index = QueueItems.IndexOf(item);
+        if (index >= 0) _queueService.PlayIndex(index);
+    }
+
+    [RelayCommand]
+    private void RemoveQueueItem(QueueItem? item)
+    {
+        if (item == null) return;
+        int index = QueueItems.IndexOf(item);
+        if (index >= 0) _queueService.RemoveAt(index);
+    }
+
+    [RelayCommand]
+    private void ClearQueue() => _queueService.Clear();
+
+    [RelayCommand]
+    private void ToggleNowPlaying() => IsNowPlayingOpen = !IsNowPlayingOpen;
+
+    // ---- Music folder management ------------------------------------------
+
+    public ObservableCollection<string> MonitoredFolders { get; } = new();
+
+    public async Task LoadFoldersAsync()
+    {
+        var folders = await _libraryService.GetMonitoredFoldersAsync();
+        _dispatcher.TryEnqueue(() =>
+        {
+            MonitoredFolders.Clear();
+            foreach (var f in folders) MonitoredFolders.Add(f);
+        });
+    }
+
+    // Called from the Settings page after the folder picker resolves.
+    public async Task AddFolderAsync(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        AppendConsole($"[Folders] Scanning new folder: {path}");
+        try
+        {
+            await _libraryService.AddFolderAsync(path, CancellationToken.None);
+            await LoadFoldersAsync();
+            AppendConsole($"[Folders] Added: {path}");
+        }
+        catch (Exception ex)
+        {
+            AppendConsole($"[Folders] Add failed: {ex.Message}");
+        }
+    }
+
+    [RelayCommand]
+    private async Task RemoveFolder(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        try
+        {
+            await _libraryService.RemoveFolderAsync(path);
+            await LoadFoldersAsync();
+            AppendConsole($"[Folders] Removed (restart to fully stop watching): {path}");
+        }
+        catch (Exception ex)
+        {
+            AppendConsole($"[Folders] Remove failed: {ex.Message}");
+        }
+    }
+
+    [RelayCommand]
+    private async Task RescanAll()
+    {
+        AppendConsole("[Folders] Rescanning all folders...");
+        try
+        {
+            await _libraryService.RescanAllAsync(CancellationToken.None);
+            AppendConsole("[Folders] Rescan complete.");
+        }
+        catch (Exception ex)
+        {
+            AppendConsole($"[Folders] Rescan failed: {ex.Message}");
+        }
+    }
+
+    // ---- Sleep timer ------------------------------------------------------
+
+    private Timer? _sleepTimer;
+
+    [ObservableProperty]
+    private string _sleepTimerStatus = "Off";
+
+    [RelayCommand]
+    private void SetSleepTimer(string? minutesText)
+    {
+        _sleepTimer?.Dispose();
+        _sleepTimer = null;
+
+        if (!int.TryParse(minutesText, out int minutes) || minutes <= 0)
+        {
+            SleepTimerStatus = "Off";
+            return;
+        }
+
+        SleepTimerStatus = $"Pausing in {minutes} min";
+        _sleepTimer = new Timer(_ =>
+        {
+            _dispatcher.TryEnqueue(() =>
+            {
+                _queueService.Pause();
+                SleepTimerStatus = "Off";
+                _sleepTimer?.Dispose();
+                _sleepTimer = null;
+            });
+        }, null, TimeSpan.FromMinutes(minutes), Timeout.InfiniteTimeSpan);
+    }
+
+    // ---- Equalizer --------------------------------------------------------
+
+    public ObservableCollection<EqBandViewModel> EqBands { get; } = new();
+
+    public bool EqEnabled
+    {
+        get => _audioPlayer.IsEqEnabled;
+        set
+        {
+            _audioPlayer.SetEqEnabled(value);
+            OnPropertyChanged();
+        }
+    }
+
+    [RelayCommand]
+    private void EqPreset(string? preset)
+    {
+        // Gain values (dB) per band for each preset, low -> high frequency.
+        double[] gains = preset switch
+        {
+            "BassBoost" => new double[] { 6, 5, 4, 2, 0, 0, 0, 0, 0, 0 },
+            "TrebleBoost" => new double[] { 0, 0, 0, 0, 0, 0, 2, 4, 5, 6 },
+            "Vocal" => new double[] { -2, -1, 0, 2, 4, 4, 3, 1, 0, -1 },
+            _ => new double[] { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 } // Flat
+        };
+
+        for (int i = 0; i < EqBands.Count && i < gains.Length; i++)
+        {
+            EqBands[i].Gain = gains[i]; // setter applies to the engine
+        }
+    }
+
+    // ---- Duplicate detection ----------------------------------------------
+
+    public ObservableCollection<DuplicateGroup> Duplicates { get; } = new();
+
+    [ObservableProperty]
+    private string _duplicatesSummary = "";
+
+    [RelayCommand]
+    private async Task FindDuplicates()
+    {
+        var groups = await _libraryService.GetDuplicatesAsync();
+        _dispatcher.TryEnqueue(() =>
+        {
+            Duplicates.Clear();
+            foreach (var g in groups) Duplicates.Add(g);
+            DuplicatesSummary = groups.Count == 0
+                ? "No duplicates found."
+                : $"{groups.Count} duplicate group(s) found.";
+        });
     }
 
     private const int MaxConsoleChars = 8000;
@@ -126,11 +371,13 @@ public partial class ShellViewModel : ObservableObject
         {
             TrackTitle = state.CurrentTrack.Title;
             ArtistName = state.CurrentTrack.ArtistName;
+            AlbumName = state.CurrentTrack.AlbumTitle;
         }
         else
         {
             TrackTitle = "No Track Loaded";
             ArtistName = "Unknown Artist";
+            AlbumName = "";
         }
 
         if (state.CurrentTrack?.Id != _lastTrackId)
@@ -153,9 +400,12 @@ public partial class ShellViewModel : ObservableObject
             PositionSeconds = state.PositionSeconds;
         }
         DurationSeconds = state.DurationSeconds;
-        Volume = state.Volume;
         IsShuffle = state.IsShuffle;
         RepeatMode = state.RepeatMode;
+        OnPropertyChanged(nameof(Volume));
+        OnPropertyChanged(nameof(IsMuted));
+
+        RefreshQueue();
     }
 
     private async Task LoadArtworkAsync(string albumId)
@@ -173,6 +423,14 @@ public partial class ShellViewModel : ObservableObject
     private void Pause() => _queueService.Pause();
 
     [RelayCommand]
+    private void ToggleMute()
+    {
+        _audioPlayer.ToggleMute();
+        OnPropertyChanged(nameof(Volume));
+        OnPropertyChanged(nameof(IsMuted));
+    }
+
+    [RelayCommand]
     private void SeekPlayback(double targetedSeconds)
     {
         double clamped = Math.Clamp(targetedSeconds, 0, DurationSeconds);
@@ -187,6 +445,19 @@ public partial class ShellViewModel : ObservableObject
 
     [RelayCommand]
     private void Previous() => _queueService.PlayPrevious();
+
+    [RelayCommand]
+    private void TogglePlayPause()
+    {
+        if (IsPlaying) _queueService.Pause();
+        else _queueService.Resume();
+    }
+
+    [RelayCommand]
+    private void VolumeUp() => Volume = Math.Min(100, Volume + 5);
+
+    [RelayCommand]
+    private void VolumeDown() => Volume = Math.Max(0, Volume - 5);
 
     [RelayCommand]
     private void ToggleShuffle() => _queueService.SetShuffle(!IsShuffle);

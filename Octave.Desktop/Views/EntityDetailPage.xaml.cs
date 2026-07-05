@@ -130,6 +130,6 @@ public sealed partial class EntityDetailPage : Page
         if (double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds < 0)
             return "0:00";
         var time = TimeSpan.FromSeconds(seconds);
-        return time.ToString(@"m\:ss");
+        return time.TotalHours >= 1 ? time.ToString(@"h\:mm\:ss") : time.ToString(@"m\:ss");
     }
 }

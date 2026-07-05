@@ -18,6 +18,14 @@
         <Grid.Resources>
             <converters:ArtworkPathConverter x:Key="ArtworkPathConverter" />
         </Grid.Resources>
+        <Grid.KeyboardAccelerators>
+            <KeyboardAccelerator Modifiers="Control" Key="P" Invoked="Accel_PlayPause" />
+            <KeyboardAccelerator Modifiers="Control" Key="Right" Invoked="Accel_Next" />
+            <KeyboardAccelerator Modifiers="Control" Key="Left" Invoked="Accel_Previous" />
+            <KeyboardAccelerator Modifiers="Control" Key="Up" Invoked="Accel_VolumeUp" />
+            <KeyboardAccelerator Modifiers="Control" Key="Down" Invoked="Accel_VolumeDown" />
+            <KeyboardAccelerator Modifiers="Control" Key="M" Invoked="Accel_Mute" />
+        </Grid.KeyboardAccelerators>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -60,13 +68,60 @@
                 </AutoSuggestBox>
             </NavigationView.Header>
             <NavigationView.MenuItems>
+                <NavigationViewItem Content="Home" Icon="Home" Tag="Home" x:Name="HomeItem" />
                 <NavigationViewItem Content="Library" Icon="Audio" Tag="Library" x:Name="LibraryItem" />
                 <NavigationViewItem Content="Albums" Icon="AllApps" Tag="Albums" />
                 <NavigationViewItem Content="Artists" Icon="Contact" Tag="Artists" />
+                <NavigationViewItem Content="Genres" Icon="Tag" Tag="Genres" />
+                <NavigationViewItem Content="Playlists" Icon="List" Tag="Playlists" />
             </NavigationView.MenuItems>
             
             <Frame x:Name="ContentFrame" />
         </NavigationView>
+
+        <!-- Now Playing detail drawer (overlays the content area) -->
+        <Border Grid.Row="1" HorizontalAlignment="Right" Width="340" Background="#181818"
+                BorderBrush="#2A2A2A" BorderThickness="1,0,0,0"
+                Visibility="{x:Bind BoolToVisibility(ViewModel.IsNowPlayingOpen), Mode=OneWay}">
+            <Grid Padding="20">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Button Grid.Row="0" HorizontalAlignment="Right" Command="{x:Bind ViewModel.ToggleNowPlayingCommand}"
+                        Background="Transparent" BorderBrush="Transparent" Padding="6" ToolTipService.ToolTip="Close">
+                    <FontIcon Glyph="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#888888" />
+                </Button>
+
+                <Border Grid.Row="1" Width="280" Height="280" CornerRadius="8" Background="#222222"
+                        HorizontalAlignment="Center" Margin="0,0,0,16">
+                    <Image Source="{Binding ViewModel.CurrentArtworkUrl, Converter={StaticResource ArtworkPathConverter}}" Stretch="UniformToFill" />
+                </Border>
+
+                <StackPanel Grid.Row="2" Spacing="2" Margin="0,0,0,20">
+                    <TextBlock Text="{x:Bind ViewModel.TrackTitle, Mode=OneWay}" FontSize="18" FontWeight="Bold" Foreground="White" TextWrapping="Wrap" />
+                    <TextBlock Text="{x:Bind ViewModel.ArtistName, Mode=OneWay}" FontSize="14" Foreground="#AAAAAA" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Text="{x:Bind ViewModel.AlbumName, Mode=OneWay}" FontSize="12" Foreground="#888888" TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+
+                <TextBlock Grid.Row="3" Text="Up Next" FontSize="14" FontWeight="SemiBold" Foreground="White" Margin="0,0,0,8" />
+
+                <ListView Grid.Row="4" ItemsSource="{x:Bind ViewModel.QueueItems, Mode=OneWay}" SelectionMode="None">
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="models:QueueItem">
+                            <StackPanel Padding="0,4">
+                                <TextBlock Text="{x:Bind Track.Title}" FontSize="13" Foreground="White" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{x:Bind Track.ArtistName}" FontSize="11" Foreground="#888888" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </Grid>
+        </Border>
 
         <!-- Bottom Playback Dashboard Bar -->
         <Grid Grid.Row="2" Background="#1C1C1C" Padding="24,12" BorderBrush="#2A2A2A" BorderThickness="0,1,0,0">
@@ -126,8 +181,65 @@
                 </StackPanel>
             </Grid>
 
-            <!-- Column 2: Interactive Controls (Shuffle/Repeat) -->
+            <!-- Column 2: Interactive Controls (Mini/Queue/Shuffle/Repeat/Mute/Volume) -->
             <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Spacing="16">
+                <!-- Now Playing Panel Button -->
+                <Button Command="{x:Bind ViewModel.ToggleNowPlayingCommand}" Background="Transparent" BorderBrush="Transparent" Padding="8" ToolTipService.ToolTip="Now playing">
+                    <FontIcon Glyph="&#xE70E;" FontFamily="Segoe MDL2 Assets" Foreground="White" FontSize="16" />
+                </Button>
+
+                <!-- Mini Player Button -->
+                <Button Click="MiniPlayer_Click" Background="Transparent" BorderBrush="Transparent" Padding="8" ToolTipService.ToolTip="Mini player">
+                    <FontIcon Glyph="&#xE944;" FontFamily="Segoe MDL2 Assets" Foreground="White" FontSize="16" />
+                </Button>
+
+                <!-- Queue Button + Fly-out -->
+                <Button Background="Transparent" BorderBrush="Transparent" Padding="8" ToolTipService.ToolTip="Queue">
+                    <Button.Flyout>
+                        <Flyout Placement="Top">
+                            <Grid Width="360" Height="440">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <Grid Grid.Row="0" Margin="0,0,0,8">
+                                    <TextBlock Text="Up Next" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                    <Button Content="Clear" HorizontalAlignment="Right" Padding="8,4"
+                                            Command="{x:Bind ViewModel.ClearQueueCommand}"
+                                            Background="Transparent" BorderBrush="Transparent" />
+                                </Grid>
+                                <ListView Grid.Row="1"
+                                          x:Name="QueueList"
+                                          ItemsSource="{x:Bind ViewModel.QueueItems, Mode=OneWay}"
+                                          CanReorderItems="True" AllowDrop="True" CanDragItems="True"
+                                          SelectionMode="None" IsItemClickEnabled="True"
+                                          ItemClick="QueueList_ItemClick">
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate x:DataType="models:QueueItem">
+                                            <Grid ColumnSpacing="8" Padding="0,4">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                                    <TextBlock Text="{x:Bind Track.Title}" TextTrimming="CharacterEllipsis" FontSize="13" />
+                                                    <TextBlock Text="{x:Bind Track.ArtistName}" TextTrimming="CharacterEllipsis" FontSize="11" Foreground="#888888" />
+                                                </StackPanel>
+                                                <Button Grid.Column="1" Click="QueueRemove_Click"
+                                                        Background="Transparent" BorderBrush="Transparent" Padding="6"
+                                                        ToolTipService.ToolTip="Remove from queue">
+                                                    <FontIcon Glyph="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="12" />
+                                                </Button>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+                            </Grid>
+                        </Flyout>
+                    </Button.Flyout>
+                    <FontIcon Glyph="&#xE8FD;" FontFamily="Segoe MDL2 Assets" Foreground="White" FontSize="16" />
+                </Button>
+
                 <!-- Shuffle Button -->
                 <Button Command="{x:Bind ViewModel.ToggleShuffleCommand}" Background="Transparent" BorderBrush="Transparent" Padding="8">
                     <FontIcon Glyph="&#xE8B1;" FontFamily="Segoe MDL2 Assets" 
@@ -141,6 +253,22 @@
                               Foreground="{x:Bind GetRepeatColor(ViewModel.RepeatMode), Mode=OneWay}" 
                               FontSize="16" />
                 </Button>
+
+                <!-- Mute Button -->
+                <Button Command="{x:Bind ViewModel.ToggleMuteCommand}" Background="Transparent" BorderBrush="Transparent" Padding="8">
+                    <FontIcon Glyph="{x:Bind GetMuteGlyph(ViewModel.IsMuted, ViewModel.Volume), Mode=OneWay}" FontFamily="Segoe MDL2 Assets" 
+                              Foreground="White" 
+                              FontSize="16" />
+                </Button>
+
+                <!-- Volume Slider -->
+                <Slider Minimum="0" 
+                        Maximum="100" 
+                        Value="{x:Bind ViewModel.Volume, Mode=TwoWay}" 
+                        Width="120" 
+                        VerticalAlignment="Center" 
+                        Margin="8,0,0,0"
+                        PointerWheelChanged="VolumeSlider_PointerWheelChanged"/>
             </StackPanel>
         </Grid>
     </Grid>

@@ -18,10 +18,13 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         RootGrid.DataContext = this;
 
+        // Apply the saved theme to the window root.
+        RootGrid.RequestedTheme = ThemeHelper.GetSavedTheme();
+
         // Default navigation
         ContentFrame.Navigated += ContentFrame_Navigated;
-        ContentFrame.Navigate(typeof(Views.LibraryPage));
-        NavView.SelectedItem = LibraryItem;
+        ContentFrame.Navigate(typeof(Views.HomePage));
+        NavView.SelectedItem = HomeItem;
 
         // Register pointer and manipulation handlers with handledEventsToo = true
         PlaybackSlider.AddHandler(UIElement.PointerPressedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(PlaybackSlider_PointerPressed), true);
@@ -43,9 +46,12 @@ public sealed partial class MainWindow : Window
         {
             Type? targetPageType = item.Tag?.ToString() switch
             {
+                "Home" => typeof(Views.HomePage),
                 "Library" => typeof(Views.LibraryPage),
                 "Albums" => typeof(Views.AlbumsPage),
                 "Artists" => typeof(Views.ArtistsPage),
+                "Genres" => typeof(Views.GenresPage),
+                "Playlists" => typeof(Views.PlaylistsPage),
                 _ => null
             };
 
@@ -75,9 +81,13 @@ public sealed partial class MainWindow : Window
         }
 
         string? tag = null;
-        if (ContentFrame.SourcePageType == typeof(Views.LibraryPage)) tag = "Library";
+        if (ContentFrame.SourcePageType == typeof(Views.HomePage)) tag = "Home";
+        else if (ContentFrame.SourcePageType == typeof(Views.LibraryPage)) tag = "Library";
         else if (ContentFrame.SourcePageType == typeof(Views.AlbumsPage)) tag = "Albums";
         else if (ContentFrame.SourcePageType == typeof(Views.ArtistsPage)) tag = "Artists";
+        else if (ContentFrame.SourcePageType == typeof(Views.GenresPage)) tag = "Genres";
+        else if (ContentFrame.SourcePageType == typeof(Views.PlaylistsPage)) tag = "Playlists";
+        else if (ContentFrame.SourcePageType == typeof(Views.PlaylistDetailPage)) tag = "Playlists";
 
         if (tag != null)
         {
@@ -92,7 +102,12 @@ public sealed partial class MainWindow : Window
         }
         else if (ContentFrame.SourcePageType == typeof(Views.EntityDetailPage) && e.Parameter is EntityNavigationParameter param)
         {
-            string parentTag = param.Type == EntityType.Album ? "Albums" : "Artists";
+            string parentTag = param.Type switch
+            {
+                EntityType.Album => "Albums",
+                EntityType.Genre => "Genres",
+                _ => "Artists"
+            };
             foreach (var item in NavView.MenuItems)
             {
                 if (item is NavigationViewItem navItem && navItem.Tag?.ToString() == parentTag)
@@ -113,7 +128,7 @@ public sealed partial class MainWindow : Window
         if (double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds < 0)
             return "0:00";
         var time = TimeSpan.FromSeconds(seconds);
-        return time.ToString(@"m\:ss");
+        return time.TotalHours >= 1 ? time.ToString(@"h\:mm\:ss") : time.ToString(@"m\:ss");
     }
 
     public Brush GetShuffleColor(bool isShuffle)
@@ -133,6 +148,42 @@ public sealed partial class MainWindow : Window
     public string GetRepeatGlyph(RepeatMode mode)
     {
         return mode == RepeatMode.Track ? "\uE8ED" : "\uE8EE";
+    }
+
+    public string GetMuteGlyph(bool isMuted, double volume)
+    {
+        if (isMuted || volume <= 0.01)
+        {
+            return "\uE74F"; // Volume Muted
+        }
+        if (volume < 33.3)
+        {
+            return "\uE992"; // Volume Low
+        }
+        if (volume < 66.6)
+        {
+            return "\uE993"; // Volume Medium
+        }
+        return "\uE994"; // Volume High
+    }
+
+    private void VolumeSlider_PointerWheelChanged(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (sender is Slider slider)
+        {
+            var delta = e.GetCurrentPoint(slider).Properties.MouseWheelDelta;
+            double step = 2.0; // standard: 2%
+            
+            var ctrlState = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control);
+            if (ctrlState.HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down))
+            {
+                step = 0.5; // fine adjustment: 0.5%
+            }
+            
+            double change = (delta > 0) ? step : -step;
+            slider.Value = Math.Clamp(slider.Value + change, 0, 100);
+            e.Handled = true;
+        }
     }
 
     private void PlaybackSlider_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
@@ -166,6 +217,66 @@ public sealed partial class MainWindow : Window
         if (sender is Slider slider && slider.FocusState == FocusState.Keyboard)
         {
             ViewModel.SeekPlaybackCommand.Execute(slider.Value);
+        }
+    }
+
+    // ---- Keyboard shortcuts ----------------------------------------------
+    private void Accel_PlayPause(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender, Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
+    {
+        ViewModel.TogglePlayPauseCommand.Execute(null);
+        args.Handled = true;
+    }
+
+    private void Accel_Next(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender, Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
+    {
+        ViewModel.NextCommand.Execute(null);
+        args.Handled = true;
+    }
+
+    private void Accel_Previous(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender, Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
+    {
+        ViewModel.PreviousCommand.Execute(null);
+        args.Handled = true;
+    }
+
+    private void Accel_VolumeUp(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender, Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
+    {
+        ViewModel.VolumeUpCommand.Execute(null);
+        args.Handled = true;
+    }
+
+    private void Accel_VolumeDown(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender, Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
+    {
+        ViewModel.VolumeDownCommand.Execute(null);
+        args.Handled = true;
+    }
+
+    private void Accel_Mute(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender, Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
+    {
+        ViewModel.ToggleMuteCommand.Execute(null);
+        args.Handled = true;
+    }
+
+    private void MiniPlayer_Click(object sender, RoutedEventArgs e)
+    {
+        var mini = new MiniPlayerWindow(this);
+        mini.Activate();
+        this.AppWindow.Hide(); // hide the main window while the mini overlay is up
+    }
+
+    private void QueueList_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is QueueItem item)
+        {
+            ViewModel.PlayQueueItemCommand.Execute(item);
+        }
+    }
+
+    private void QueueRemove_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement fe && fe.DataContext is QueueItem item)
+        {
+            ViewModel.RemoveQueueItemCommand.Execute(item);
         }
     }
 

@@ -15,6 +15,22 @@
           }
         }
       },
+      "ManagedBass.Fx/4.0.2": {
+        "type": "package",
+        "dependencies": {
+          "ManagedBass": "4.0.2"
+        },
+        "compile": {
+          "lib/net8.0/ManagedBass.Fx.dll": {
+            "related": ".xml"
+          }
+        },
+        "runtime": {
+          "lib/net8.0/ManagedBass.Fx.dll": {
+            "related": ".xml"
+          }
+        }
+      },
       "Microsoft.Data.Sqlite/10.0.9": {
         "type": "package",
         "dependencies": {
@@ -258,6 +274,25 @@
         "managedbass.nuspec"
       ]
     },
+    "ManagedBass.Fx/4.0.2": {
+      "sha512": "kG7pGxrICvytN3yXuM+z5CJqiEbGyGFndVyBax556rSW+vDyyZ8+UCShA8ampaqdoWoIj7K/seAOoe/r0Uen/w==",
+      "type": "package",
+      "path": "managedbass.fx/4.0.2",
+      "files": [
+        ".nupkg.metadata",
+        ".signature.p7s",
+        "LICENSE.md",
+        "icon.png",
+        "lib/net45/ManagedBass.Fx.dll",
+        "lib/net45/ManagedBass.Fx.xml",
+        "lib/net8.0/ManagedBass.Fx.dll",
+        "lib/net8.0/ManagedBass.Fx.xml",
+        "lib/netstandard2.0/ManagedBass.Fx.dll",
+        "lib/netstandard2.0/ManagedBass.Fx.xml",
+        "managedbass.fx.4.0.2.nupkg.sha512",
+        "managedbass.fx.nuspec"
+      ]
+    },
     "Microsoft.Data.Sqlite/10.0.9": {
       "sha512": "/eBwiZPcNisn0qZX+Zk4YCftlK/vnoWqv7hHnmSk8MjPxFdYYkmPObpogT0MfCCWN6oAIZnMCo0SoOtZlbbmgQ==",
       "type": "package",
@@ -422,6 +457,7 @@
   "projectFileDependencyGroups": {
     "net10.0": [
       "ManagedBass >= 4.0.2",
+      "ManagedBass.Fx >= 4.0.2",
       "Microsoft.Data.Sqlite >= 10.0.9",
       "SQLitePCLRaw.bundle_e_sqlite3 >= 3.0.3",
       "TagLibSharp >= 2.3.0"
@@ -480,6 +516,10 @@
         "targetAlias": "net10.0",
         "dependencies": {
           "ManagedBass": {
+            "target": "Package",
+            "version": "[4.0.2, )"
+          },
+          "ManagedBass.Fx": {
             "target": "Package",
             "version": "[4.0.2, )"
           },

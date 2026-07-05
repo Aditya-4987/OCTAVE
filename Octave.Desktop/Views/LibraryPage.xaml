@@ -9,13 +9,30 @@
     mc:Ignorable="d"
     Background="Transparent">
 
+    <Page.Resources>
+        <Storyboard x:Key="SkeletonPulse" RepeatBehavior="Forever" AutoReverse="True">
+            <DoubleAnimation Storyboard.TargetName="SkeletonPanel" Storyboard.TargetProperty="Opacity"
+                             From="0.35" To="0.85" Duration="0:0:0.9" />
+        </Storyboard>
+    </Page.Resources>
+
     <Grid Padding="24">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <TextBlock Text="Songs Library" FontSize="28" FontWeight="Bold" Margin="0,0,0,24" Foreground="White" />
+        <Grid Margin="0,0,0,24">
+            <TextBlock Text="Songs Library" FontSize="28" FontWeight="Bold" Foreground="White" VerticalAlignment="Center" />
+            <ComboBox Header="" SelectedIndex="{x:Bind ViewModel.SortIndex, Mode=TwoWay}"
+                      HorizontalAlignment="Right" VerticalAlignment="Center" MinWidth="150">
+                <ComboBoxItem Content="Sort: Title" />
+                <ComboBoxItem Content="Sort: Artist" />
+                <ComboBoxItem Content="Sort: Album" />
+                <ComboBoxItem Content="Sort: Date Added" />
+                <ComboBoxItem Content="Sort: Duration" />
+            </ComboBox>
+        </Grid>
 
         <ListView Grid.Row="1"
                   ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}"
@@ -24,7 +41,7 @@
                   SelectionMode="None">
             <ListView.ItemTemplate>
                 <DataTemplate x:DataType="models:Track">
-                    <Grid Padding="12,8" Background="Transparent" Height="52">
+                    <Grid Padding="12,8" Background="Transparent" Height="52" RightTapped="TrackRow_RightTapped">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="40" />
                             <ColumnDefinition Width="2*" />
@@ -70,5 +87,17 @@
                 </DataTemplate>
             </ListView.ItemTemplate>
         </ListView>
+
+        <!-- Skeleton placeholder shown while the library loads -->
+        <StackPanel x:Name="SkeletonPanel" Grid.Row="1" Spacing="10" VerticalAlignment="Top"
+                    Visibility="{x:Bind VisibleWhen(ViewModel.IsLoading), Mode=OneWay}">
+            <Border Height="44" CornerRadius="6" Background="#18FFFFFF" />
+            <Border Height="44" CornerRadius="6" Background="#18FFFFFF" />
+            <Border Height="44" CornerRadius="6" Background="#18FFFFFF" />
+            <Border Height="44" CornerRadius="6" Background="#18FFFFFF" />
+            <Border Height="44" CornerRadius="6" Background="#18FFFFFF" />
+            <Border Height="44" CornerRadius="6" Background="#18FFFFFF" />
+            <Border Height="44" CornerRadius="6" Background="#18FFFFFF" />
+        </StackPanel>
     </Grid>
 </Page>

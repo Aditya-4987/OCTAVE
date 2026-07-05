@@ -50,6 +50,14 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
         }
     }
 
+    public void RemoveMonitoredPath(string path)
+    {
+        lock (_monitoredPaths)
+        {
+            _monitoredPaths.Remove(path);
+        }
+    }
+
     public LocalLibraryScanner(SqliteDbContext dbContext, IArtworkCacheManager artworkCacheManager)
     {
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
@@ -186,6 +194,8 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
                         ? Path.GetFileNameWithoutExtension(filePath)
                         : tagFile.Tag.Title;
 
+                    string genre = tagFile.Tag.FirstGenre ?? "";
+
                     var track = new Track(
                         trackId,
                         trackTitle,
@@ -198,7 +208,8 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
                         "Local",
                         (int)tagFile.Tag.Track,
                         (int)tagFile.Tag.Year,
-                        dateAdded
+                        dateAdded,
+                        genre
                     );
 
                     await _dbContext.UpsertArtistAsync(artist, tx);
@@ -408,6 +419,8 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
                     ? Path.GetFileNameWithoutExtension(path)
                     : tagFile.Tag.Title;
 
+                string genre = tagFile.Tag.FirstGenre ?? "";
+
                 var track = new Track(
                     trackId,
                     trackTitle,
@@ -420,7 +433,8 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
                     "Local",
                     (int)tagFile.Tag.Track,
                     (int)tagFile.Tag.Year,
-                    dateAdded
+                    dateAdded,
+                    genre
                 );
 
                 await _dbContext.UpsertArtistAsync(artist, tx);

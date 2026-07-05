@@ -26,9 +26,13 @@ public class QueueService : IQueueService
     private bool _isShuffle = false;
     private RepeatMode _repeatMode = RepeatMode.None;
 
-    private float _volume = 1.0f;
-    private bool _isMuted = false;
     private long _sequenceToken = 0;
+
+    // Startup-resume: when the queue is restored from disk we don't auto-play, but
+    // remember where to seek so the first Play resumes at the saved position.
+    private int _resumeIndex = -1;
+    private double _resumePositionSeconds = 0;
+    private long _lastProgressSaveTicks = 0;
 
     public QueueService(IAudioPlayerService audioPlayer, SqliteDbContext dbContext)
     {
@@ -61,7 +65,105 @@ public class QueueService : IQueueService
         // Forward the high-frequency position ticks as a lightweight event only.
         // Rebroadcasting the whole PlaybackState 4x/sec to every subscriber (and
         // marshaling each to the UI thread) was needless churn.
-        _audioPlayer.PositionChanged += (s, pos) => PositionChanged?.Invoke(this, pos);
+        _audioPlayer.PositionChanged += (s, pos) =>
+        {
+            PositionChanged?.Invoke(this, pos);
+            MaybeSaveProgress(pos);
+        };
+    }
+
+    // ---- Persistence / startup resume -------------------------------------
+
+    // Snapshots the current queue and writes it asynchronously. Caller MUST hold
+    // _queueLock; the DB write itself runs off-thread (fire-and-forget).
+    private void PersistStateUnlocked()
+    {
+        var ids = new List<string>(_activeQueue.Count);
+        foreach (var it in _activeQueue) ids.Add(it.Track.Id);
+
+        int index = _currentIndex;
+        double pos = _audioPlayer.PositionSeconds;
+        float vol = _audioPlayer.Volume;
+        bool shuffle = _isShuffle;
+        RepeatMode repeat = _repeatMode;
+
+        _ = Task.Run(async () =>
+        {
+            try { await _dbContext.SavePlayerStateAsync(ids, index, pos, vol, shuffle, repeat); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[QueueService] Persist failed: {ex.Message}"); }
+        });
+    }
+
+    // Throttled lightweight progress write (position only) while playing.
+    private void MaybeSaveProgress(double pos)
+    {
+        long now = Environment.TickCount64;
+        if (now - _lastProgressSaveTicks < 5000) return;
+        _lastProgressSaveTicks = now;
+
+        int index;
+        bool shuffle;
+        RepeatMode repeat;
+        lock (_queueLock)
+        {
+            index = _currentIndex;
+            shuffle = _isShuffle;
+            repeat = _repeatMode;
+        }
+        float vol = _audioPlayer.Volume;
+
+        _ = Task.Run(async () =>
+        {
+            try { await _dbContext.UpdatePlaybackProgressAsync(index, pos, vol, shuffle, repeat); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[QueueService] Progress save failed: {ex.Message}"); }
+        });
+    }
+
+    // Rebuilds the queue from the last persisted snapshot without auto-playing.
+    // Non-blocking to call at startup; the UI updates via PlaybackStateChanged.
+    public async Task RestoreAsync()
+    {
+        PersistedPlayerState? saved;
+        try { saved = await _dbContext.LoadPlayerStateAsync(); }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[QueueService] Restore load failed: {ex.Message}"); return; }
+        if (saved == null || saved.TrackIds.Count == 0) return;
+
+        string? currentTrackId = (saved.CurrentIndex >= 0 && saved.CurrentIndex < saved.TrackIds.Count)
+            ? saved.TrackIds[saved.CurrentIndex]
+            : null;
+
+        var tracks = await _dbContext.GetTracksByIdsAsync(saved.TrackIds);
+        if (tracks.Count == 0) return;
+
+        lock (_queueLock)
+        {
+            if (_activeQueue.Count > 0) return; // never clobber an in-progress session
+
+            _activeQueue.Clear();
+            _unshuffledQueue.Clear();
+            foreach (var t in tracks)
+            {
+                var item = new QueueItem { Id = Guid.NewGuid().ToString(), Track = t, IsPlaying = false };
+                _activeQueue.Add(item);
+                _unshuffledQueue.Add(item);
+            }
+
+            _isShuffle = saved.IsShuffle;
+            _repeatMode = saved.RepeatMode;
+
+            int idx = 0;
+            if (currentTrackId != null)
+            {
+                int found = _activeQueue.FindIndex(i => i.Track.Id == currentTrackId);
+                if (found >= 0) idx = found;
+            }
+            _currentIndex = idx;
+            _resumeIndex = idx;
+            _resumePositionSeconds = saved.PositionSeconds;
+        }
+
+        _audioPlayer.Volume = saved.Volume;
+        EmitPlaybackStateChanged();
     }
 
     public IReadOnlyList<QueueItem> GetCurrentQueue()
@@ -416,8 +518,7 @@ public class QueueService : IQueueService
     {
         lock (_queueLock)
         {
-            _volume = Math.Clamp(volume, 0f, 1f);
-            _audioPlayer.SetVolume(_volume);
+            _audioPlayer.Volume = volume;
             EmitPlaybackStateChanged();
         }
     }
@@ -475,6 +576,15 @@ public class QueueService : IQueueService
         _activeQueue[_currentIndex].IsPlaying = true;
 
         _audioPlayer.Play(track.SourceUri);
+
+        // One-time startup resume: seek to the saved position on the first play
+        // of the restored track, then clear the marker.
+        if (index == _resumeIndex && _resumePositionSeconds > 0.5)
+        {
+            _audioPlayer.Seek(_resumePositionSeconds);
+        }
+        _resumeIndex = -1;
+        _resumePositionSeconds = 0;
 
         EmitPlaybackStateChanged();
     }
@@ -544,8 +654,8 @@ public class QueueService : IQueueService
             Status: _audioPlayer.Status,
             PositionSeconds: _audioPlayer.PositionSeconds,
             DurationSeconds: _audioPlayer.DurationSeconds,
-            Volume: _volume,
-            IsMuted: _isMuted,
+            Volume: _audioPlayer.Volume,
+            IsMuted: _audioPlayer.IsMuted,
             IsShuffle: _isShuffle,
             RepeatMode: _repeatMode,
             SequenceToken: _sequenceToken
@@ -560,6 +670,9 @@ public class QueueService : IQueueService
             var state = GetCurrentState();
             CurrentState = state;
             PlaybackStateChanged?.Invoke(this, state);
+            // Persist on every structural transition (this no longer fires on the
+            // 4x/sec position tick, so it's cheap enough to centralize here).
+            PersistStateUnlocked();
         }
     }
 
@@ -572,6 +685,7 @@ public class QueueService : IQueueService
             var state = GetCurrentState();
             CurrentState = state;
             PlaybackStateChanged?.Invoke(this, state);
+            PersistStateUnlocked();
             return state;
         }
     }

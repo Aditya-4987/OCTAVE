@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Octave.Core.Models;
 
 namespace Octave.Core.Interfaces;
@@ -33,4 +34,7 @@ public interface IQueueService
     void Resume();
     void SetVolume(float volume);
     PlaybackState Seek(double positionSeconds);
+
+    // Rebuild the queue from the last persisted snapshot (paused, ready to resume).
+    Task RestoreAsync();
 }

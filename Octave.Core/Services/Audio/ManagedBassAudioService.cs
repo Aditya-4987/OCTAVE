@@ -1,5 +1,7 @@
 using ManagedBass;
+using ManagedBass.Fx;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using Octave.Core.Models;
@@ -12,9 +14,15 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
     private bool _isInitialized = false;
     private bool _disposed = false;
 
-    // Persisted so a freshly created stream inherits the user's chosen volume
-    // instead of resetting to BASS's default (full) on every track change.
-    private float _volume = 1.0f;
+    private float _volume = 0.5f; // Master volume backup
+    private bool _isMuted = false;
+
+    // 10-band graphic EQ (ISO center frequencies). Gains persist across tracks;
+    // the FX is re-attached to each new stream. Requires bass_fx.dll at runtime.
+    private static readonly int[] EqFreqs = { 31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000 };
+    private readonly float[] _eqGains = new float[10];
+    private bool _eqEnabled;
+    private int _eqFxHandle;
 
     private readonly SyncProcedure _endSyncCallback;
     private Timer? _positionTimer;
@@ -63,6 +71,7 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         }
 
         LoadPlugins();
+        Bass.Volume = _volume;
         return _isInitialized;
     }
 
@@ -122,8 +131,12 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
                 // Register end sync procedure
                 Bass.ChannelSetSync(stream, SyncFlags.End, 0, _endSyncCallback, IntPtr.Zero);
 
-                // Re-apply the persisted volume to the freshly created channel.
-                Bass.ChannelSetAttribute(stream, ChannelAttribute.Volume, _volume);
+                // Channel volume is set to 1.0f since master volume (Bass.Volume) governs application volume.
+                Bass.ChannelSetAttribute(stream, ChannelAttribute.Volume, 1.0f);
+
+                // Re-attach the EQ to the new stream if it's enabled.
+                _eqFxHandle = 0;
+                if (_eqEnabled) SetupEqUnlocked();
 
                 Bass.ChannelPlay(stream);
                 started = true;
@@ -187,7 +200,82 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
             Bass.ChannelStop(_currentStream);
             Bass.StreamFree(_currentStream);
             _currentStream = 0;
+            _eqFxHandle = 0; // FX handles are freed together with the stream
         }
+    }
+
+    // ---- Equalizer --------------------------------------------------------
+
+    public IReadOnlyList<int> EqFrequencies => EqFreqs;
+
+    public bool IsEqEnabled => _eqEnabled;
+
+    public float[] GetEqGains() => (float[])_eqGains.Clone();
+
+    public void SetEqEnabled(bool enabled)
+    {
+        lock (_streamLock)
+        {
+            _eqEnabled = enabled;
+            if (_currentStream == 0) return;
+            if (enabled) SetupEqUnlocked();
+            else RemoveEqUnlocked();
+        }
+    }
+
+    public void SetEqBand(int index, float gainDb)
+    {
+        if (index < 0 || index >= _eqGains.Length) return;
+        gainDb = Math.Clamp(gainDb, -15f, 15f);
+        lock (_streamLock)
+        {
+            _eqGains[index] = gainDb;
+            if (_eqEnabled && _currentStream != 0 && _eqFxHandle != 0)
+                ApplyBandUnlocked(index);
+        }
+    }
+
+    // Caller MUST hold _streamLock and have a live _currentStream.
+    private void SetupEqUnlocked()
+    {
+        if (_currentStream == 0) return;
+        try
+        {
+            if (_eqFxHandle == 0)
+                _eqFxHandle = Bass.ChannelSetFX(_currentStream, EffectType.PeakEQ, 0);
+
+            if (_eqFxHandle == 0)
+            {
+                Debug.WriteLine($"[OCTAVE ENGINE] EQ unavailable (bass_fx.dll missing?). Error: {Bass.LastError}");
+                return;
+            }
+
+            for (int i = 0; i < EqFreqs.Length; i++)
+                ApplyBandUnlocked(i);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[OCTAVE ENGINE] EQ setup failed: {ex.Message}");
+        }
+    }
+
+    private void ApplyBandUnlocked(int index)
+    {
+        var p = new PeakEQParameters
+        {
+            fBandwidth = 2.5f,
+            fCenter = EqFreqs[index],
+            fGain = _eqGains[index],
+            lBand = index
+        };
+        Bass.FXSetParameters(_eqFxHandle, p);
+    }
+
+    private void RemoveEqUnlocked()
+    {
+        if (_eqFxHandle != 0 && _currentStream != 0)
+            Bass.ChannelRemoveFX(_currentStream, _eqFxHandle);
+        _eqFxHandle = 0;
     }
 
     public double GetDurationSeconds()
@@ -210,17 +298,42 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         }
     }
 
-    public void SetVolume(float volume)
+    public float Volume
     {
-        float clamped = Math.Clamp(volume, 0f, 1f);
-        lock (_streamLock)
+        get => _volume;
+        set
         {
+            float clamped = Math.Clamp(value, 0f, 1f);
             _volume = clamped;
-            if (_currentStream != 0)
+            if (_isMuted)
             {
-                Bass.ChannelSetAttribute(_currentStream, ChannelAttribute.Volume, clamped);
+                SetMuted(false);
+            }
+            // Only touch the native device volume once BASS is initialized.
+            // Setting Bass.Volume before Init() throws BASS_ERROR_INIT. The stored
+            // _volume is applied by Init() on the first Play().
+            else if (_isInitialized)
+            {
+                Bass.Volume = clamped;
             }
         }
+    }
+
+    public bool IsMuted => _isMuted;
+
+    public void SetMuted(bool isMuted)
+    {
+        if (_isMuted == isMuted) return;
+        _isMuted = isMuted;
+        if (_isInitialized)
+        {
+            Bass.Volume = _isMuted ? 0f : _volume;
+        }
+    }
+
+    public void ToggleMute()
+    {
+        SetMuted(!_isMuted);
     }
 
     public double PositionSeconds => GetPositionSeconds();

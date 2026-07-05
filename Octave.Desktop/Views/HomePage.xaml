@@ -1,0 +1,79 @@
+<Page
+    x:Class="Octave_Desktop.Views.HomePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:models="using:Octave.Core.Models"
+    mc:Ignorable="d"
+    Background="Transparent">
+
+    <Page.Resources>
+        <DataTemplate x:Key="TrackCardTemplate" x:DataType="models:Track">
+            <Grid Width="150" Margin="0,0,10,10">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Border Grid.Row="0" Width="150" Height="150" CornerRadius="8" Background="#222222">
+                    <FontIcon Glyph="&#xE8D6;" FontFamily="Segoe MDL2 Assets" FontSize="28" Foreground="#555555" />
+                </Border>
+                <TextBlock Grid.Row="1" Text="{x:Bind Title}" FontSize="13" FontWeight="SemiBold" Foreground="White"
+                           TextTrimming="CharacterEllipsis" Margin="2,8,0,0" />
+                <TextBlock Grid.Row="2" Text="{x:Bind ArtistName}" FontSize="11" Foreground="#888888"
+                           TextTrimming="CharacterEllipsis" Margin="2,0,0,0" />
+            </Grid>
+        </DataTemplate>
+    </Page.Resources>
+
+    <ScrollViewer>
+        <StackPanel Padding="24" Spacing="28">
+            <TextBlock Text="Home" FontSize="28" FontWeight="Bold" Foreground="White" />
+
+            <TextBlock Text="Nothing here yet. Play some music, add favorites, or scan a folder."
+                       Foreground="#888888"
+                       Visibility="{x:Bind AllEmptyVisibility(ViewModel.RecentlyPlayed.Count, ViewModel.MostPlayed.Count, ViewModel.LastAdded.Count, ViewModel.Favorites.Count), Mode=OneWay}" />
+
+            <!-- Recently Played -->
+            <StackPanel Spacing="12" Visibility="{x:Bind SectionVisibility(ViewModel.RecentlyPlayed.Count), Mode=OneWay}">
+                <TextBlock Text="Recently Played" FontSize="18" FontWeight="SemiBold" Foreground="White" />
+                <GridView ItemsSource="{x:Bind ViewModel.RecentlyPlayed, Mode=OneWay}"
+                          ItemTemplate="{StaticResource TrackCardTemplate}"
+                          SelectionMode="None" IsItemClickEnabled="True" ItemClick="Recently_ItemClick"
+                          ScrollViewer.VerticalScrollMode="Disabled" ScrollViewer.HorizontalScrollMode="Disabled"
+                          ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled" />
+            </StackPanel>
+
+            <!-- Most Played -->
+            <StackPanel Spacing="12" Visibility="{x:Bind SectionVisibility(ViewModel.MostPlayed.Count), Mode=OneWay}">
+                <TextBlock Text="Most Played" FontSize="18" FontWeight="SemiBold" Foreground="White" />
+                <GridView ItemsSource="{x:Bind ViewModel.MostPlayed, Mode=OneWay}"
+                          ItemTemplate="{StaticResource TrackCardTemplate}"
+                          SelectionMode="None" IsItemClickEnabled="True" ItemClick="Most_ItemClick"
+                          ScrollViewer.VerticalScrollMode="Disabled" ScrollViewer.HorizontalScrollMode="Disabled"
+                          ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled" />
+            </StackPanel>
+
+            <!-- Last Added -->
+            <StackPanel Spacing="12" Visibility="{x:Bind SectionVisibility(ViewModel.LastAdded.Count), Mode=OneWay}">
+                <TextBlock Text="Last Added" FontSize="18" FontWeight="SemiBold" Foreground="White" />
+                <GridView ItemsSource="{x:Bind ViewModel.LastAdded, Mode=OneWay}"
+                          ItemTemplate="{StaticResource TrackCardTemplate}"
+                          SelectionMode="None" IsItemClickEnabled="True" ItemClick="LastAdded_ItemClick"
+                          ScrollViewer.VerticalScrollMode="Disabled" ScrollViewer.HorizontalScrollMode="Disabled"
+                          ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled" />
+            </StackPanel>
+
+            <!-- Favorites -->
+            <StackPanel Spacing="12" Visibility="{x:Bind SectionVisibility(ViewModel.Favorites.Count), Mode=OneWay}">
+                <TextBlock Text="Favorites" FontSize="18" FontWeight="SemiBold" Foreground="White" />
+                <GridView ItemsSource="{x:Bind ViewModel.Favorites, Mode=OneWay}"
+                          ItemTemplate="{StaticResource TrackCardTemplate}"
+                          SelectionMode="None" IsItemClickEnabled="True" ItemClick="Favorites_ItemClick"
+                          ScrollViewer.VerticalScrollMode="Disabled" ScrollViewer.HorizontalScrollMode="Disabled"
+                          ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled" />
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

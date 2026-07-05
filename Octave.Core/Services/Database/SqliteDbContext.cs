@@ -66,6 +66,7 @@ public class SqliteDbContext
                 TrackNumber INTEGER NOT NULL DEFAULT 1,
                 Year INTEGER NOT NULL,
                 DateAdded INTEGER NOT NULL, -- Stored explicitly as Unix Epoch Seconds
+                Genre TEXT NOT NULL DEFAULT '',
                 FOREIGN KEY(ArtistId) REFERENCES Artists(Id) ON DELETE CASCADE,
                 FOREIGN KEY(AlbumId) REFERENCES Albums(Id) ON DELETE CASCADE
             ) STRICT;
@@ -94,11 +95,60 @@ public class SqliteDbContext
                 FOREIGN KEY(TrackId) REFERENCES Tracks(Id) ON DELETE CASCADE
             ) STRICT;
 
+            -- Single-row snapshot of the player so the queue can be resumed after restart.
+            CREATE TABLE IF NOT EXISTS PlayerState (
+                Id INTEGER PRIMARY KEY CHECK(Id = 1),
+                CurrentIndex INTEGER NOT NULL,
+                PositionSeconds REAL NOT NULL,
+                Volume REAL NOT NULL,
+                IsShuffle INTEGER NOT NULL CHECK(IsShuffle IN (0, 1)),
+                RepeatMode INTEGER NOT NULL,
+                UpdatedAt INTEGER NOT NULL
+            ) STRICT;
+
+            -- The persisted active queue order (track ids only). Rebuilt from Tracks on load.
+            CREATE TABLE IF NOT EXISTS SavedQueue (
+                SortOrder INTEGER PRIMARY KEY,
+                TrackId TEXT NOT NULL
+            ) STRICT;
+
+            -- User-managed set of library folders to scan and watch.
+            CREATE TABLE IF NOT EXISTS MonitoredFolders (
+                Path TEXT PRIMARY KEY
+            ) STRICT;
+
+            -- Favorited tracks.
+            CREATE TABLE IF NOT EXISTS Favorites (
+                TrackId TEXT PRIMARY KEY,
+                AddedAt INTEGER NOT NULL,
+                FOREIGN KEY(TrackId) REFERENCES Tracks(Id) ON DELETE CASCADE
+            ) STRICT;
+
             CREATE INDEX IF NOT EXISTS idx_tracks_artist ON Tracks(ArtistId);
             CREATE INDEX IF NOT EXISTS idx_tracks_album ON Tracks(AlbumId);
             CREATE INDEX IF NOT EXISTS idx_history_time ON PlaybackHistory(PlayedAt DESC);";
 
         await cmd.ExecuteNonQueryAsync();
+
+        // Lightweight migrations for databases created before a column existed.
+        await TryAddColumnAsync(conn, "Tracks", "Genre", "TEXT NOT NULL DEFAULT ''");
+    }
+
+    // Adds a column if it isn't already present (idempotent, STRICT-safe).
+    private static async Task TryAddColumnAsync(SqliteConnection conn, string table, string column, string definition)
+    {
+        bool exists = false;
+        using (var check = conn.CreateCommand())
+        {
+            check.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = @col;";
+            check.Parameters.Add(new SqliteParameter("@col", column));
+            exists = Convert.ToInt32(await check.ExecuteScalarAsync()) > 0;
+        }
+        if (exists) return;
+
+        using var alter = conn.CreateCommand();
+        alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {definition};";
+        await alter.ExecuteNonQueryAsync();
     }
 
     public async Task UpsertArtistAsync(Artist artist, SqliteTransaction? tx = null)
@@ -212,8 +262,8 @@ public class SqliteDbContext
             long epochSeconds = ((DateTimeOffset)track.DateAdded).ToUnixTimeSeconds();
 
             cmd.CommandText = @"
-                INSERT INTO Tracks (Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded)
-                VALUES (@id, @title, @artistId, @artistName, @albumId, @albumTitle, @durationSeconds, @sourceUri, @provider, @trackNumber, @year, @dateAdded)
+                INSERT INTO Tracks (Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded, Genre)
+                VALUES (@id, @title, @artistId, @artistName, @albumId, @albumTitle, @durationSeconds, @sourceUri, @provider, @trackNumber, @year, @dateAdded, @genre)
                 ON CONFLICT(Id) DO UPDATE SET
                     Title = excluded.Title,
                     ArtistId = excluded.ArtistId,
@@ -225,7 +275,8 @@ public class SqliteDbContext
                     Provider = excluded.Provider,
                     TrackNumber = excluded.TrackNumber,
                     Year = excluded.Year,
-                    DateAdded = excluded.DateAdded;";
+                    DateAdded = excluded.DateAdded,
+                    Genre = excluded.Genre;";
 
             cmd.Parameters.Add(new SqliteParameter("@id", track.Id));
             cmd.Parameters.Add(new SqliteParameter("@title", track.Title));
@@ -239,6 +290,7 @@ public class SqliteDbContext
             cmd.Parameters.Add(new SqliteParameter("@trackNumber", track.TrackNumber));
             cmd.Parameters.Add(new SqliteParameter("@year", track.Year));
             cmd.Parameters.Add(new SqliteParameter("@dateAdded", epochSeconds));
+            cmd.Parameters.Add(new SqliteParameter("@genre", track.Genre ?? ""));
 
             await cmd.ExecuteNonQueryAsync();
         }
@@ -536,6 +588,606 @@ public class SqliteDbContext
             return new Track(id, title, artistId, artistName, albumIdVal, albumTitle, durationSeconds, sourceUri, provider, trackNumber, year, dateAdded);
         }
         return null;
+    }
+
+    // ---- Duplicate detection ----------------------------------------------
+
+    // Clusters tracks that share a normalized (title | artist) key across more
+    // than one file (e.g. song.mp3 and song.flac). Awareness only - no deletes.
+    public async Task<List<DuplicateGroup>> GetDuplicatesAsync()
+    {
+        var groups = new List<DuplicateGroup>();
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $@"
+            SELECT {TrackColumns}
+            FROM Tracks
+            WHERE (LOWER(TRIM(Title)) || '|' || LOWER(TRIM(ArtistName))) IN (
+                SELECT LOWER(TRIM(Title)) || '|' || LOWER(TRIM(ArtistName))
+                FROM Tracks
+                GROUP BY 1
+                HAVING COUNT(*) > 1
+            )
+            ORDER BY LOWER(TRIM(Title)), LOWER(TRIM(ArtistName));";
+
+        var byKey = new Dictionary<string, List<Track>>(StringComparer.Ordinal);
+        var order = new List<string>();
+        using (var reader = await cmd.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                var track = ReadTrack(reader);
+                string key = (track.Title.Trim().ToLowerInvariant() + "|" + track.ArtistName.Trim().ToLowerInvariant());
+                if (!byKey.TryGetValue(key, out var list))
+                {
+                    list = new List<Track>();
+                    byKey[key] = list;
+                    order.Add(key);
+                }
+                list.Add(track);
+            }
+        }
+
+        foreach (var key in order)
+        {
+            var list = byKey[key];
+            groups.Add(new DuplicateGroup(list[0].Title, list[0].ArtistName, list));
+        }
+        return groups;
+    }
+
+    // ---- Home dashboards & favorites --------------------------------------
+
+    // Standard 13-column Track projection shared by the dashboard queries.
+    private const string TrackColumns =
+        "Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded, Genre";
+
+    private static Track ReadTrack(SqliteDataReader reader)
+    {
+        var dateAdded = DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(11)).UtcDateTime;
+        return new Track(
+            reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
+            reader.GetString(4), reader.GetString(5), reader.GetDouble(6), reader.GetString(7),
+            reader.GetString(8), reader.GetInt32(9), reader.GetInt32(10), dateAdded, reader.GetString(12));
+    }
+
+    public async Task<List<Track>> GetRecentlyPlayedAsync(int limit)
+    {
+        var tracks = new List<Track>();
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $@"
+            SELECT {PrefixColumns("t")}
+            FROM Tracks t
+            JOIN (SELECT TrackId, MAX(PlayedAt) AS LastPlayed FROM PlaybackHistory GROUP BY TrackId) h
+              ON h.TrackId = t.Id
+            ORDER BY h.LastPlayed DESC
+            LIMIT @limit;";
+        cmd.Parameters.Add(new SqliteParameter("@limit", limit));
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync()) tracks.Add(ReadTrack(reader));
+        return tracks;
+    }
+
+    public async Task<List<Track>> GetMostPlayedAsync(int limit)
+    {
+        var tracks = new List<Track>();
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $@"
+            SELECT {PrefixColumns("t")}
+            FROM Tracks t
+            JOIN PlaybackHistory ph ON ph.TrackId = t.Id
+            GROUP BY t.Id
+            ORDER BY COUNT(ph.Id) DESC
+            LIMIT @limit;";
+        cmd.Parameters.Add(new SqliteParameter("@limit", limit));
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync()) tracks.Add(ReadTrack(reader));
+        return tracks;
+    }
+
+    public async Task<List<Track>> GetLastAddedAsync(int limit)
+    {
+        var tracks = new List<Track>();
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"SELECT {TrackColumns} FROM Tracks ORDER BY DateAdded DESC LIMIT @limit;";
+        cmd.Parameters.Add(new SqliteParameter("@limit", limit));
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync()) tracks.Add(ReadTrack(reader));
+        return tracks;
+    }
+
+    public async Task<List<Track>> GetFavoritesAsync()
+    {
+        var tracks = new List<Track>();
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $@"
+            SELECT {PrefixColumns("t")}
+            FROM Tracks t
+            JOIN Favorites f ON f.TrackId = t.Id
+            ORDER BY f.AddedAt DESC;";
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync()) tracks.Add(ReadTrack(reader));
+        return tracks;
+    }
+
+    public async Task<HashSet<string>> GetFavoriteTrackIdsAsync()
+    {
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT TrackId FROM Favorites;";
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync()) ids.Add(reader.GetString(0));
+        return ids;
+    }
+
+    public async Task<bool> IsFavoriteAsync(string trackId)
+    {
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT 1 FROM Favorites WHERE TrackId = @id LIMIT 1;";
+        cmd.Parameters.Add(new SqliteParameter("@id", trackId));
+        var result = await cmd.ExecuteScalarAsync();
+        return result != null;
+    }
+
+    public async Task AddFavoriteAsync(string trackId)
+    {
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "INSERT OR IGNORE INTO Favorites (TrackId, AddedAt) VALUES (@id, @at);";
+        cmd.Parameters.Add(new SqliteParameter("@id", trackId));
+        cmd.Parameters.Add(new SqliteParameter("@at", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task RemoveFavoriteAsync(string trackId)
+    {
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM Favorites WHERE TrackId = @id;";
+        cmd.Parameters.Add(new SqliteParameter("@id", trackId));
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    // Qualifies the shared column list with a table alias (e.g. "t.Id, t.Title, ...").
+    private static string PrefixColumns(string alias) =>
+        string.Join(", ", System.Array.ConvertAll(TrackColumns.Split(", "), c => $"{alias}.{c}"));
+
+    // ---- Playlists --------------------------------------------------------
+
+    public async Task<Playlist> CreatePlaylistAsync(string title, string? description)
+    {
+        string id = Guid.NewGuid().ToString();
+        long created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "INSERT INTO Playlists (Id, Title, Description, CreatedAt, IsLocalOnly) VALUES (@id, @title, @desc, @created, 1);";
+        cmd.Parameters.Add(new SqliteParameter("@id", id));
+        cmd.Parameters.Add(new SqliteParameter("@title", title));
+        cmd.Parameters.Add(new SqliteParameter("@desc", (object?)description ?? DBNull.Value));
+        cmd.Parameters.Add(new SqliteParameter("@created", created));
+        await cmd.ExecuteNonQueryAsync();
+
+        return new Playlist(id, title, description, DateTimeOffset.FromUnixTimeSeconds(created).UtcDateTime, true, 0);
+    }
+
+    public async Task DeletePlaylistAsync(string id)
+    {
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM Playlists WHERE Id = @id;"; // PlaylistTracks cascade
+        cmd.Parameters.Add(new SqliteParameter("@id", id));
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task RenamePlaylistAsync(string id, string title)
+    {
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE Playlists SET Title = @title WHERE Id = @id;";
+        cmd.Parameters.Add(new SqliteParameter("@title", title));
+        cmd.Parameters.Add(new SqliteParameter("@id", id));
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task<List<Playlist>> GetPlaylistsAsync()
+    {
+        var playlists = new List<Playlist>();
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT p.Id, p.Title, p.Description, p.CreatedAt, p.IsLocalOnly, COUNT(pt.TrackId)
+            FROM Playlists p
+            LEFT JOIN PlaylistTracks pt ON pt.PlaylistId = p.Id
+            GROUP BY p.Id
+            ORDER BY p.Title COLLATE NOCASE ASC;";
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            playlists.Add(new Playlist(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.IsDBNull(2) ? null : reader.GetString(2),
+                DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(3)).UtcDateTime,
+                reader.GetInt32(4) != 0,
+                reader.GetInt32(5)));
+        }
+        return playlists;
+    }
+
+    public async Task<Playlist?> GetPlaylistByIdAsync(string id)
+    {
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT p.Id, p.Title, p.Description, p.CreatedAt, p.IsLocalOnly, COUNT(pt.TrackId)
+            FROM Playlists p
+            LEFT JOIN PlaylistTracks pt ON pt.PlaylistId = p.Id
+            WHERE p.Id = @id
+            GROUP BY p.Id;";
+        cmd.Parameters.Add(new SqliteParameter("@id", id));
+        using var reader = await cmd.ExecuteReaderAsync();
+        if (await reader.ReadAsync())
+        {
+            return new Playlist(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.IsDBNull(2) ? null : reader.GetString(2),
+                DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(3)).UtcDateTime,
+                reader.GetInt32(4) != 0,
+                reader.GetInt32(5));
+        }
+        return null;
+    }
+
+    public async Task<List<Track>> GetPlaylistTracksAsync(string playlistId)
+    {
+        var tracks = new List<Track>();
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT t.Id, t.Title, t.ArtistId, t.ArtistName, t.AlbumId, t.AlbumTitle, t.DurationSeconds, t.SourceUri, t.Provider, t.TrackNumber, t.Year, t.DateAdded, t.Genre
+            FROM PlaylistTracks pt
+            JOIN Tracks t ON t.Id = pt.TrackId
+            WHERE pt.PlaylistId = @id
+            ORDER BY pt.SortOrder ASC;";
+        cmd.Parameters.Add(new SqliteParameter("@id", playlistId));
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var dateAdded = DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(11)).UtcDateTime;
+            tracks.Add(new Track(
+                reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
+                reader.GetString(4), reader.GetString(5), reader.GetDouble(6), reader.GetString(7),
+                reader.GetString(8), reader.GetInt32(9), reader.GetInt32(10), dateAdded, reader.GetString(12)));
+        }
+        return tracks;
+    }
+
+    public async Task AddTrackToPlaylistAsync(string playlistId, string trackId)
+    {
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        // Append at the end; INSERT OR IGNORE keeps the (playlist, track) pair unique.
+        cmd.CommandText = @"
+            INSERT OR IGNORE INTO PlaylistTracks (PlaylistId, TrackId, SortOrder)
+            VALUES (@pid, @tid, (SELECT COALESCE(MAX(SortOrder), -1) + 1 FROM PlaylistTracks WHERE PlaylistId = @pid));";
+        cmd.Parameters.Add(new SqliteParameter("@pid", playlistId));
+        cmd.Parameters.Add(new SqliteParameter("@tid", trackId));
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task RemoveTrackFromPlaylistAsync(string playlistId, string trackId)
+    {
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM PlaylistTracks WHERE PlaylistId = @pid AND TrackId = @tid;";
+        cmd.Parameters.Add(new SqliteParameter("@pid", playlistId));
+        cmd.Parameters.Add(new SqliteParameter("@tid", trackId));
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task SetPlaylistOrderAsync(string playlistId, IReadOnlyList<string> orderedTrackIds)
+    {
+        if (orderedTrackIds == null || orderedTrackIds.Count == 0) return;
+
+        using var conn = CreateConnection();
+        using var tx = (SqliteTransaction)await conn.BeginTransactionAsync();
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = "UPDATE PlaylistTracks SET SortOrder = @order WHERE PlaylistId = @pid AND TrackId = @tid;";
+            var pOrder = cmd.Parameters.Add(new SqliteParameter("@order", 0));
+            var pPid = cmd.Parameters.Add(new SqliteParameter("@pid", playlistId));
+            var pTid = cmd.Parameters.Add(new SqliteParameter("@tid", ""));
+            for (int i = 0; i < orderedTrackIds.Count; i++)
+            {
+                pOrder.Value = i;
+                pTid.Value = orderedTrackIds[i];
+                await cmd.ExecuteNonQueryAsync();
+            }
+            await tx.CommitAsync();
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+    }
+
+    public async Task<List<string>> GetGenresAsync()
+    {
+        var genres = new List<string>();
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT DISTINCT Genre FROM Tracks WHERE Genre <> '' ORDER BY Genre COLLATE NOCASE ASC;";
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            genres.Add(reader.GetString(0));
+        }
+        return genres;
+    }
+
+    public async Task<List<Track>> GetTracksByGenreAsync(string genre)
+    {
+        var tracks = new List<Track>();
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded, Genre
+            FROM Tracks
+            WHERE Genre = @genre COLLATE NOCASE
+            ORDER BY ArtistName COLLATE NOCASE ASC, AlbumTitle COLLATE NOCASE ASC, TrackNumber ASC;";
+        cmd.Parameters.Add(new SqliteParameter("@genre", genre));
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var epochSeconds = reader.GetInt64(11);
+            var dateAdded = DateTimeOffset.FromUnixTimeSeconds(epochSeconds).UtcDateTime;
+            tracks.Add(new Track(
+                reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
+                reader.GetString(4), reader.GetString(5), reader.GetDouble(6), reader.GetString(7),
+                reader.GetString(8), reader.GetInt32(9), reader.GetInt32(10), dateAdded, reader.GetString(12)));
+        }
+        return tracks;
+    }
+
+    public async Task<List<string>> GetMonitoredFoldersAsync()
+    {
+        var folders = new List<string>();
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT Path FROM MonitoredFolders ORDER BY Path ASC;";
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            folders.Add(reader.GetString(0));
+        }
+        return folders;
+    }
+
+    public async Task AddMonitoredFolderAsync(string path)
+    {
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "INSERT OR IGNORE INTO MonitoredFolders (Path) VALUES (@path);";
+        cmd.Parameters.Add(new SqliteParameter("@path", path));
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task RemoveMonitoredFolderAsync(string path)
+    {
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM MonitoredFolders WHERE Path = @path;";
+        cmd.Parameters.Add(new SqliteParameter("@path", path));
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    // Deletes all tracks whose file lives under the given folder, then purges the
+    // albums/artists left orphaned. Used when a monitored folder is removed.
+    public async Task DeleteTracksUnderPathAsync(string folderPath)
+    {
+        string normalized = System.IO.Path.GetFullPath(folderPath)
+            .TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar)
+            + System.IO.Path.DirectorySeparatorChar;
+
+        // Escape LIKE wildcards in the prefix so odd folder names can't broaden the match.
+        string escaped = normalized.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
+        string likePrefix = escaped + "%";
+
+        using var conn = CreateConnection();
+        using var tx = (SqliteTransaction)await conn.BeginTransactionAsync();
+        try
+        {
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandText = "DELETE FROM Tracks WHERE SourceUri LIKE @prefix ESCAPE '\\';";
+                cmd.Parameters.Add(new SqliteParameter("@prefix", likePrefix));
+                await cmd.ExecuteNonQueryAsync();
+
+                cmd.Parameters.Clear();
+                cmd.CommandText = "DELETE FROM Albums WHERE Id NOT IN (SELECT DISTINCT AlbumId FROM Tracks);";
+                await cmd.ExecuteNonQueryAsync();
+
+                cmd.CommandText = "DELETE FROM Artists WHERE Id NOT IN (SELECT DISTINCT ArtistId FROM Albums);";
+                await cmd.ExecuteNonQueryAsync();
+            }
+            await tx.CommitAsync();
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+    }
+
+    public async Task<List<Track>> GetTracksByIdsAsync(IReadOnlyList<string> ids)
+    {
+        var result = new List<Track>();
+        if (ids == null || ids.Count == 0) return result;
+
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+
+        var paramNames = new List<string>(ids.Count);
+        for (int i = 0; i < ids.Count; i++)
+        {
+            string p = "@p" + i;
+            paramNames.Add(p);
+            cmd.Parameters.Add(new SqliteParameter(p, ids[i]));
+        }
+
+        cmd.CommandText =
+            "SELECT Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded " +
+            $"FROM Tracks WHERE Id IN ({string.Join(",", paramNames)});";
+
+        var byId = new Dictionary<string, Track>(StringComparer.Ordinal);
+        using (var reader = await cmd.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                var epochSeconds = reader.GetInt64(11);
+                var dateAdded = DateTimeOffset.FromUnixTimeSeconds(epochSeconds).UtcDateTime;
+                var track = new Track(
+                    reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
+                    reader.GetString(4), reader.GetString(5), reader.GetDouble(6), reader.GetString(7),
+                    reader.GetString(8), reader.GetInt32(9), reader.GetInt32(10), dateAdded);
+                byId[track.Id] = track;
+            }
+        }
+
+        // Preserve the requested order (and drop any ids no longer in the library).
+        foreach (var id in ids)
+        {
+            if (byId.TryGetValue(id, out var t))
+                result.Add(t);
+        }
+        return result;
+    }
+
+    public async Task SavePlayerStateAsync(
+        IReadOnlyList<string> orderedTrackIds, int currentIndex, double positionSeconds,
+        float volume, bool isShuffle, RepeatMode repeatMode)
+    {
+        using var conn = CreateConnection();
+        using var tx = (SqliteTransaction)await conn.BeginTransactionAsync();
+        try
+        {
+            using (var clear = conn.CreateCommand())
+            {
+                clear.Transaction = tx;
+                clear.CommandText = "DELETE FROM SavedQueue;";
+                await clear.ExecuteNonQueryAsync();
+            }
+
+            if (orderedTrackIds != null && orderedTrackIds.Count > 0)
+            {
+                using var insert = conn.CreateCommand();
+                insert.Transaction = tx;
+                insert.CommandText = "INSERT INTO SavedQueue (SortOrder, TrackId) VALUES (@order, @trackId);";
+                var pOrder = insert.Parameters.Add(new SqliteParameter("@order", 0));
+                var pTrack = insert.Parameters.Add(new SqliteParameter("@trackId", ""));
+                for (int i = 0; i < orderedTrackIds.Count; i++)
+                {
+                    pOrder.Value = i;
+                    pTrack.Value = orderedTrackIds[i];
+                    await insert.ExecuteNonQueryAsync();
+                }
+            }
+
+            await UpsertPlayerStateRowAsync(conn, tx, currentIndex, positionSeconds, volume, isShuffle, repeatMode);
+            await tx.CommitAsync();
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+    }
+
+    // Lightweight progress update - only touches the PlayerState row, not the queue.
+    public async Task UpdatePlaybackProgressAsync(
+        int currentIndex, double positionSeconds, float volume, bool isShuffle, RepeatMode repeatMode)
+    {
+        using var conn = CreateConnection();
+        await UpsertPlayerStateRowAsync(conn, null, currentIndex, positionSeconds, volume, isShuffle, repeatMode);
+    }
+
+    private static async Task UpsertPlayerStateRowAsync(
+        SqliteConnection conn, SqliteTransaction? tx, int currentIndex, double positionSeconds,
+        float volume, bool isShuffle, RepeatMode repeatMode)
+    {
+        using var cmd = conn.CreateCommand();
+        if (tx != null) cmd.Transaction = tx;
+        cmd.CommandText = @"
+            INSERT INTO PlayerState (Id, CurrentIndex, PositionSeconds, Volume, IsShuffle, RepeatMode, UpdatedAt)
+            VALUES (1, @index, @pos, @vol, @shuffle, @repeat, @updated)
+            ON CONFLICT(Id) DO UPDATE SET
+                CurrentIndex = excluded.CurrentIndex,
+                PositionSeconds = excluded.PositionSeconds,
+                Volume = excluded.Volume,
+                IsShuffle = excluded.IsShuffle,
+                RepeatMode = excluded.RepeatMode,
+                UpdatedAt = excluded.UpdatedAt;";
+        cmd.Parameters.Add(new SqliteParameter("@index", currentIndex));
+        cmd.Parameters.Add(new SqliteParameter("@pos", positionSeconds));
+        cmd.Parameters.Add(new SqliteParameter("@vol", (double)volume));
+        cmd.Parameters.Add(new SqliteParameter("@shuffle", isShuffle ? 1 : 0));
+        cmd.Parameters.Add(new SqliteParameter("@repeat", (int)repeatMode));
+        cmd.Parameters.Add(new SqliteParameter("@updated", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task<PersistedPlayerState?> LoadPlayerStateAsync()
+    {
+        using var conn = CreateConnection();
+
+        int currentIndex;
+        double position;
+        float volume;
+        bool isShuffle;
+        RepeatMode repeatMode;
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "SELECT CurrentIndex, PositionSeconds, Volume, IsShuffle, RepeatMode FROM PlayerState WHERE Id = 1 LIMIT 1;";
+            using var reader = await cmd.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+                return null;
+
+            currentIndex = reader.GetInt32(0);
+            position = reader.GetDouble(1);
+            volume = (float)reader.GetDouble(2);
+            isShuffle = reader.GetInt32(3) != 0;
+            repeatMode = (RepeatMode)reader.GetInt32(4);
+        }
+
+        var trackIds = new List<string>();
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "SELECT TrackId FROM SavedQueue ORDER BY SortOrder ASC;";
+            using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                trackIds.Add(reader.GetString(0));
+            }
+        }
+
+        if (trackIds.Count == 0)
+            return null;
+
+        return new PersistedPlayerState(trackIds, currentIndex, position, volume, isShuffle, repeatMode);
     }
 
     public async Task<SearchResults> SearchLibraryAsync(string query, int? limit = null)

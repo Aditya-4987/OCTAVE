@@ -4,6 +4,9 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:models="using:Octave.Core.Models"
+    xmlns:local="using:Octave_Desktop.Views"
+    xmlns:vm="using:Octave_Desktop.ViewModels"
     mc:Ignorable="d"
     Background="Transparent">
 
@@ -15,7 +18,121 @@
 
         <TextBlock Text="Settings &amp; Diagnostics" FontSize="28" FontWeight="Bold" Margin="0,0,0,24" Foreground="White" />
 
-        <StackPanel Grid.Row="1" Spacing="24" MaxWidth="600" HorizontalAlignment="Left">
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled">
+        <StackPanel Spacing="24" MaxWidth="600" HorizontalAlignment="Left" Padding="0,0,0,32">
+            <!-- Appearance -->
+            <StackPanel Spacing="12">
+                <TextBlock Text="Appearance" FontSize="18" FontWeight="SemiBold" Foreground="White" />
+                <ComboBox x:Name="ThemeSelector" Header="Theme" Width="200" SelectionChanged="ThemeSelector_SelectionChanged">
+                    <ComboBoxItem Content="Use system setting" Tag="Default" />
+                    <ComboBoxItem Content="Light" Tag="Light" />
+                    <ComboBoxItem Content="Dark" Tag="Dark" />
+                </ComboBox>
+            </StackPanel>
+
+            <!-- Sleep Timer -->
+            <StackPanel Spacing="12">
+                <TextBlock Text="Sleep Timer" FontSize="18" FontWeight="SemiBold" Foreground="White" />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Content="Off" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="0" />
+                    <Button Content="15 min" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="15" />
+                    <Button Content="30 min" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="30" />
+                    <Button Content="45 min" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="45" />
+                    <Button Content="60 min" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="60" />
+                    <TextBlock Text="{x:Bind ViewModel.SleepTimerStatus, Mode=OneWay}" Foreground="#888888" VerticalAlignment="Center" />
+                </StackPanel>
+            </StackPanel>
+
+            <!-- Equalizer -->
+            <StackPanel Spacing="12">
+                <TextBlock Text="Equalizer" FontSize="18" FontWeight="SemiBold" Foreground="White" />
+                <TextBlock Text="10-band graphic EQ. Requires bass_fx.dll (drop it in BassPlugins\)."
+                           FontSize="12" Foreground="#888888" />
+                <ToggleSwitch Header="Enable equalizer" IsOn="{x:Bind ViewModel.EqEnabled, Mode=TwoWay}" />
+
+                <ItemsControl ItemsSource="{x:Bind ViewModel.EqBands, Mode=OneWay}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal" Spacing="4" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:EqBandViewModel">
+                            <StackPanel Width="40" HorizontalAlignment="Center">
+                                <Slider Orientation="Vertical" Height="130" Minimum="-15" Maximum="15"
+                                        Value="{x:Bind Gain, Mode=TwoWay}" HorizontalAlignment="Center"
+                                        IsThumbToolTipEnabled="True" />
+                                <TextBlock Text="{x:Bind Label}" FontSize="10" Foreground="#888888"
+                                           HorizontalAlignment="Center" Margin="0,4,0,0" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Content="Flat" Command="{x:Bind ViewModel.EqPresetCommand}" CommandParameter="Flat" />
+                    <Button Content="Bass Boost" Command="{x:Bind ViewModel.EqPresetCommand}" CommandParameter="BassBoost" />
+                    <Button Content="Treble Boost" Command="{x:Bind ViewModel.EqPresetCommand}" CommandParameter="TrebleBoost" />
+                    <Button Content="Vocal" Command="{x:Bind ViewModel.EqPresetCommand}" CommandParameter="Vocal" />
+                </StackPanel>
+            </StackPanel>
+
+            <!-- Music Folders -->
+            <StackPanel Spacing="12">
+                <TextBlock Text="Music Folders" FontSize="18" FontWeight="SemiBold" Foreground="White" />
+                <TextBlock Text="Folders Octave scans and watches for music."
+                           FontSize="12" Foreground="#888888" />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Content="Add Folder" Click="AddFolder_Click" />
+                    <Button Content="Rescan All" Command="{x:Bind ViewModel.RescanAllCommand}" />
+                </StackPanel>
+                <ItemsControl ItemsSource="{x:Bind ViewModel.MonitoredFolders, Mode=OneWay}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="x:String">
+                            <Grid Padding="0,4" ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="{x:Bind}" VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis" Foreground="White" FontSize="13" />
+                                <Button Grid.Column="1" Content="Remove" Click="RemoveFolder_Click"
+                                        Background="Transparent" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+
+            <!-- Duplicate Tracks -->
+            <StackPanel Spacing="12">
+                <TextBlock Text="Duplicate Tracks" FontSize="18" FontWeight="SemiBold" Foreground="White" />
+                <TextBlock Text="Find the same song stored in multiple formats (e.g. MP3 and FLAC)."
+                           FontSize="12" Foreground="#888888" />
+                <StackPanel Orientation="Horizontal" Spacing="12">
+                    <Button Content="Scan for Duplicates" Command="{x:Bind ViewModel.FindDuplicatesCommand}" />
+                    <TextBlock Text="{x:Bind ViewModel.DuplicatesSummary, Mode=OneWay}" Foreground="#888888" VerticalAlignment="Center" />
+                </StackPanel>
+                <ItemsControl ItemsSource="{x:Bind ViewModel.Duplicates, Mode=OneWay}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="models:DuplicateGroup">
+                            <Grid Padding="0,6" ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="{x:Bind Title}" Foreground="White" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{x:Bind ArtistName}" Foreground="#888888" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <TextBlock Grid.Column="1" Text="{x:Bind local:SettingsPage.DuplicateSummary(Tracks)}"
+                                           Foreground="#888888" FontSize="12" VerticalAlignment="Center" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+
             <TextBlock Text="Engine Diagnostic Harness" FontSize="18" FontWeight="SemiBold" Foreground="White" />
             
             <Button Content="Ignite Main Engines (Run Static Fire)" 
@@ -30,5 +147,6 @@
                            TextWrapping="Wrap" FontFamily="Consolas" Foreground="#00FF66"/>
             </ScrollViewer>
         </StackPanel>
+        </ScrollViewer>
     </Grid>
 </Page>

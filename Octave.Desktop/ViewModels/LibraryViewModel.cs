@@ -4,7 +4,9 @@ using Octave.Core.Interfaces;
 using Octave.Core.Models;
 using Octave.Core.Services.Library;
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace Octave_Desktop.ViewModels;
@@ -21,7 +23,15 @@ public partial class LibraryViewModel : ObservableObject
     [ObservableProperty]
     public partial bool IsCurrentlyPlaying { get; set; }
 
+    [ObservableProperty]
+    public partial bool IsLoading { get; set; }
+
+    // 0=Title, 1=Artist, 2=Album, 3=Date Added, 4=Duration
+    [ObservableProperty]
+    public partial int SortIndex { get; set; }
+
     public ObservableCollection<Track> Items { get; } = new();
+    private List<Track> _allTracks = new();
 
     private readonly EventHandler _libraryUpdatedHandler;
     private readonly EventHandler<PlaybackState> _playbackStateChangedHandler;
@@ -64,15 +74,34 @@ public partial class LibraryViewModel : ObservableObject
 
     public async Task LoadAsync()
     {
+        _dispatcher.TryEnqueue(() => IsLoading = Items.Count == 0);
         var tracks = await _libraryService.GetAllTracksAsync();
         _dispatcher.TryEnqueue(() =>
         {
-            Items.Clear();
-            foreach (var track in tracks)
-            {
-                Items.Add(track);
-            }
+            _allTracks = tracks;
+            ApplySort();
+            IsLoading = false;
         });
+    }
+
+    partial void OnSortIndexChanged(int value) => ApplySort();
+
+    private void ApplySort()
+    {
+        IEnumerable<Track> sorted = SortIndex switch
+        {
+            1 => _allTracks.OrderBy(t => t.ArtistName, StringComparer.OrdinalIgnoreCase)
+                           .ThenBy(t => t.AlbumTitle, StringComparer.OrdinalIgnoreCase)
+                           .ThenBy(t => t.TrackNumber),
+            2 => _allTracks.OrderBy(t => t.AlbumTitle, StringComparer.OrdinalIgnoreCase)
+                           .ThenBy(t => t.TrackNumber),
+            3 => _allTracks.OrderByDescending(t => t.DateAdded),
+            4 => _allTracks.OrderBy(t => t.DurationSeconds),
+            _ => _allTracks.OrderBy(t => t.Title, StringComparer.OrdinalIgnoreCase)
+        };
+
+        Items.Clear();
+        foreach (var track in sorted) Items.Add(track);
     }
 
     [RelayCommand]

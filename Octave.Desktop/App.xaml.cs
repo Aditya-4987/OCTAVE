@@ -33,6 +33,9 @@ public partial class App : Application
 
     public static IServiceProvider Services { get; private set; } = null!;
 
+    // Native handle of the main window, exposed for WinRT pickers that require it.
+    public static IntPtr MainWindowHandle { get; private set; }
+
     public App()
     {
         InitializeComponent();
@@ -61,25 +64,39 @@ public partial class App : Application
                 // Harvester (Singleton is critical to share events broadcast instance)
                 services.AddSingleton<ILibraryScanner, LocalLibraryScanner>();
 
-                // Watcher Service (registers after scanner is available)
+                // Watcher Service (registers after scanner is available). Resolved
+                // lazily after the DB is initialized, so it can seed from the
+                // persisted MonitoredFolders (defaulting to MyMusic on first run).
                 services.AddSingleton<ILibraryWatcherService>(provider =>
                 {
                     var scanner = provider.GetRequiredService<ILibraryScanner>();
-                    var monitoredPaths = new[] { System.Environment.GetFolderPath(System.Environment.SpecialFolder.MyMusic) };
-                    return new LibraryWatcherService(scanner, monitoredPaths);
+                    var db = provider.GetRequiredService<SqliteDbContext>();
+                    var folders = db.GetMonitoredFoldersAsync().GetAwaiter().GetResult();
+                    if (folders.Count == 0)
+                    {
+                        string myMusic = System.Environment.GetFolderPath(System.Environment.SpecialFolder.MyMusic);
+                        db.AddMonitoredFolderAsync(myMusic).GetAwaiter().GetResult();
+                        folders = new System.Collections.Generic.List<string> { myMusic };
+                    }
+                    return new LibraryWatcherService(scanner, folders);
                 });
 
                 // Facades
                 services.AddSingleton<ILibraryService, LibraryService>();
                 services.AddSingleton<IQueueService, QueueService>();
+                services.AddSingleton<IPlaylistService, PlaylistService>();
                 services.AddSingleton<ISmtcService, WindowsSmtcService>();
 
                 // ViewModels
                 services.AddSingleton<MainViewModel>();
                 services.AddSingleton<ShellViewModel>();
+                services.AddTransient<HomeViewModel>();
                 services.AddTransient<LibraryViewModel>();
                 services.AddTransient<AlbumsViewModel>();
                 services.AddTransient<ArtistsViewModel>();
+                services.AddTransient<GenresViewModel>();
+                services.AddTransient<PlaylistsViewModel>();
+                services.AddTransient<PlaylistDetailViewModel>();
                 services.AddTransient<EntityDetailViewModel>();
                 services.AddTransient<SearchViewModel>();
             })
@@ -151,9 +168,15 @@ public partial class App : Application
 
         // Retrieve native window handle and initialize SMTC platform controller
         IntPtr hwnd = WinRT.Interop.WindowNative.GetWindowHandle(_window);
+        MainWindowHandle = hwnd;
         var smtcService = Services.GetRequiredService<ISmtcService>();
         smtcService.Initialize(hwnd);
 
         _window.Activate();
+
+        // Restore the previous session's queue AFTER the window is shown, so the
+        // resume work never delays the initial UI boot (Milestone 4 gate).
+        var queueService = Services.GetRequiredService<IQueueService>();
+        _ = queueService.RestoreAsync();
     }
 }

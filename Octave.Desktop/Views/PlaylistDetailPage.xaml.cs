@@ -1,28 +1,39 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.Extensions.DependencyInjection;
 using Octave_Desktop.ViewModels;
 using Octave.Core.Models;
 using System;
-using System.Threading.Tasks;
 
 namespace Octave_Desktop.Views;
 
-public sealed partial class SearchResultsPage : Page
+public sealed partial class PlaylistDetailPage : Page
 {
-    public SearchViewModel ViewModel { get; }
+    public PlaylistDetailViewModel ViewModel { get; }
+
     private readonly System.Collections.Generic.List<Button> _playButtons = new();
 
-    public SearchResultsPage()
+    public PlaylistDetailPage()
     {
-        ViewModel = App.Services.GetRequiredService<SearchViewModel>();
+        ViewModel = App.Services.GetRequiredService<PlaylistDetailViewModel>();
         InitializeComponent();
-        this.Unloaded += SearchResultsPage_Unloaded;
+        this.Unloaded += PlaylistDetailPage_Unloaded;
+
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
     }
 
-    private void SearchResultsPage_Unloaded(object sender, RoutedEventArgs e)
+    protected override async void OnNavigatedTo(NavigationEventArgs e)
+    {
+        base.OnNavigatedTo(e);
+        if (e.Parameter is string playlistId)
+        {
+            await ViewModel.LoadAsync(playlistId);
+        }
+    }
+
+    private void PlaylistDetailPage_Unloaded(object sender, RoutedEventArgs e)
     {
         ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
         ViewModel.Cleanup();
@@ -30,8 +41,8 @@ public sealed partial class SearchResultsPage : Page
 
     private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(SearchViewModel.CurrentPlayingTrackId) ||
-            e.PropertyName == nameof(SearchViewModel.IsCurrentlyPlaying))
+        if (e.PropertyName == nameof(PlaylistDetailViewModel.CurrentPlayingTrackId) ||
+            e.PropertyName == nameof(PlaylistDetailViewModel.IsCurrentlyPlaying))
         {
             DispatcherQueue.TryEnqueue(() =>
             {
@@ -41,17 +52,6 @@ public sealed partial class SearchResultsPage : Page
                     UpdatePlayButtonIcon(btn);
                 }
             });
-        }
-    }
-
-    protected override async void OnNavigatedTo(NavigationEventArgs e)
-    {
-        base.OnNavigatedTo(e);
-
-        if (e.Parameter is string query)
-        {
-            SearchQueryText.Text = $"Results for \"{query}\"";
-            await ViewModel.ExecuteSearchAsync(query);
         }
     }
 
@@ -86,7 +86,7 @@ public sealed partial class SearchResultsPage : Page
         {
             bool isCurrent = track.Id == ViewModel.CurrentPlayingTrackId;
             bool isPlaying = ViewModel.IsCurrentlyPlaying;
-            fontIcon.Glyph = (isCurrent && isPlaying) ? "\uE769" : "\uE768";
+            fontIcon.Glyph = (isCurrent && isPlaying) ? "" : "";
         }
     }
 
@@ -96,14 +96,8 @@ public sealed partial class SearchResultsPage : Page
         {
             if (track.Id == ViewModel.CurrentPlayingTrackId)
             {
-                if (ViewModel.IsCurrentlyPlaying)
-                {
-                    ViewModel.PausePlayback();
-                }
-                else
-                {
-                    ViewModel.ResumePlayback();
-                }
+                if (ViewModel.IsCurrentlyPlaying) ViewModel.PausePlayback();
+                else ViewModel.ResumePlayback();
             }
             else
             {
@@ -112,35 +106,31 @@ public sealed partial class SearchResultsPage : Page
         }
     }
 
-    private void AlbumGrid_ItemClick(object sender, ItemClickEventArgs e)
+    private void TrackRow_RightTapped(object sender, RightTappedRoutedEventArgs e)
     {
-        if (e.ClickedItem is Album album)
-        {
-            Frame.Navigate(typeof(EntityDetailPage), new EntityNavigationParameter(EntityType.Album, album.Id));
-        }
+        if (sender is not FrameworkElement fe || fe.DataContext is not Track track) return;
+
+        var flyout = new MenuFlyout();
+        var remove = new MenuFlyoutItem { Text = "Remove from playlist" };
+        remove.Click += (s, a) => ViewModel.RemoveTrackCommand.Execute(track);
+        flyout.Items.Add(remove);
+        flyout.ShowAt(fe, e.GetPosition(fe));
     }
 
-    private void ArtistGrid_ItemClick(object sender, ItemClickEventArgs e)
+    private void DeletePlaylist_Click(object sender, RoutedEventArgs e)
     {
-        if (e.ClickedItem is Artist artist)
-        {
-            Frame.Navigate(typeof(EntityDetailPage), new EntityNavigationParameter(EntityType.Artist, artist.Id));
-        }
+        ViewModel.DeleteSelfCommand.Execute(null);
+        if (Frame.CanGoBack) Frame.GoBack();
     }
 
-    public Visibility VisibilityFromCount(int count)
+    private void BackButton_Click(object sender, RoutedEventArgs e)
     {
-        return count > 0 ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    public Visibility NoResultsVisibility(int trackCount, int albumCount, int artistCount)
-    {
-        return (trackCount == 0 && albumCount == 0 && artistCount == 0) ? Visibility.Visible : Visibility.Collapsed;
+        if (Frame.CanGoBack) Frame.GoBack();
     }
 
     public static string GetProviderGlyph(string provider)
     {
-        return provider.Equals("Local", StringComparison.OrdinalIgnoreCase) ? "\uE770" : "\uE774";
+        return provider.Equals("Local", StringComparison.OrdinalIgnoreCase) ? "" : "";
     }
 
     public static string FormatDuration(double seconds)

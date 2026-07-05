@@ -23,5 +23,13 @@ Download each add-on ZIP from https://www.un4seen.com/, extract the **x64**
 build of the DLL, and place it here. Use the same architecture as `bass.dll`
 (currently x64) or the plugin will fail to load.
 
+## Equalizer add-on
+
+The 10-band equalizer (Settings → Equalizer) needs **`bass_fx.dll`** (the BASS_FX
+add-on from un4seen). Drop the x64 `bass_fx.dll` here as well. Unlike the decoder
+add-ons above, it is *not* loaded via `PluginLoad` — the `ManagedBass.Fx` API loads
+it on demand, so it only needs to sit next to `bass.dll` in the output folder.
+Without it, the EQ controls are inert (the engine logs and no-ops).
+
 > The list of plugin filenames the engine attempts to load lives in
 > `Octave.Core/Services/Audio/ManagedBassAudioService.cs` (`PluginFileNames`).

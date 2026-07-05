@@ -16,4 +16,5 @@ public interface ILibraryScanner
     Task RequestFullReconciliationAsync();
     IReadOnlyList<string> MonitoredPaths { get; }
     void AddMonitoredPath(string path);
+    void RemoveMonitoredPath(string path);
 }

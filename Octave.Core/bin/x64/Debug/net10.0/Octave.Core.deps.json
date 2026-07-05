@@ -9,6 +9,7 @@
       "Octave.Core/1.0.0": {
         "dependencies": {
           "ManagedBass": "4.0.2",
+          "ManagedBass.Fx": "4.0.2",
           "Microsoft.Data.Sqlite": "10.0.9",
           "SQLitePCLRaw.bundle_e_sqlite3": "3.0.3",
           "TagLibSharp": "2.3.0"
@@ -20,6 +21,17 @@
       "ManagedBass/4.0.2": {
         "runtime": {
           "lib/net8.0/ManagedBass.dll": {
+            "assemblyVersion": "4.0.2.0",
+            "fileVersion": "4.0.2.0"
+          }
+        }
+      },
+      "ManagedBass.Fx/4.0.2": {
+        "dependencies": {
+          "ManagedBass": "4.0.2"
+        },
+        "runtime": {
+          "lib/net8.0/ManagedBass.Fx.dll": {
             "assemblyVersion": "4.0.2.0",
             "fileVersion": "4.0.2.0"
           }
@@ -260,6 +272,13 @@
       "sha512": "sha512-EzVnBGxqjSzRgLuo94Muauvk1SPwD3LOOHp+4c33iC1EBez+mDW71+gJL35E9V5U5Sb/WNeJxnzHtUNOeOfqdw==",
       "path": "managedbass/4.0.2",
       "hashPath": "managedbass.4.0.2.nupkg.sha512"
+    },
+    "ManagedBass.Fx/4.0.2": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-kG7pGxrICvytN3yXuM+z5CJqiEbGyGFndVyBax556rSW+vDyyZ8+UCShA8ampaqdoWoIj7K/seAOoe/r0Uen/w==",
+      "path": "managedbass.fx/4.0.2",
+      "hashPath": "managedbass.fx.4.0.2.nupkg.sha512"
     },
     "Microsoft.Data.Sqlite/10.0.9": {
       "type": "package",

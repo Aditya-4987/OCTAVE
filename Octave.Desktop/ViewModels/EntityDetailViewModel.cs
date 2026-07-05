@@ -137,6 +137,26 @@ public partial class EntityDetailViewModel : ObservableObject
                 TrackCount = Tracks.Count;
             });
         }
+        else if (param.Type == EntityType.Genre)
+        {
+            // The genre name is carried directly in the navigation Id.
+            var tracks = await _libraryService.GetTracksByGenreAsync(param.Id);
+
+            _dispatcher.TryEnqueue(() =>
+            {
+                Title = param.Id;
+                ArtworkUrl = null;
+                Description = null;
+
+                Tracks.Clear();
+                foreach (var track in tracks)
+                {
+                    Tracks.Add(track);
+                }
+                Subtitle = $"{Tracks.Count} Tracks";
+                TrackCount = Tracks.Count;
+            });
+        }
     }
 
     [RelayCommand]
