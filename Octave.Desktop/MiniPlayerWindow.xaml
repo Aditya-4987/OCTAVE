@@ -27,9 +27,14 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
-            <Border Grid.Column="0" Width="56" Height="56" CornerRadius="6" Background="#222222">
-                <Image Source="{Binding ViewModel.CurrentArtworkUrl, Converter={StaticResource ArtworkPathConverter}}" Stretch="UniformToFill" />
-            </Border>
+            <Grid Grid.Column="0" Width="56" Height="56">
+                <Border CornerRadius="6" Background="{ThemeResource SystemControlHighlightAccentBrush}" Opacity="0.15">
+                    <FontIcon Glyph="&#xE8D6;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" />
+                </Border>
+                <Border CornerRadius="6">
+                    <Image Source="{Binding ViewModel.CurrentArtworkUrl, Converter={StaticResource ArtworkPathConverter}}" Stretch="UniformToFill" />
+                </Border>
+            </Grid>
 
             <StackPanel Grid.Column="1" VerticalAlignment="Center">
                 <TextBlock Text="{x:Bind ViewModel.TrackTitle, Mode=OneWay}" FontWeight="SemiBold" FontSize="14" Foreground="White" TextTrimming="CharacterEllipsis" />

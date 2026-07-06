@@ -34,7 +34,7 @@ public class QueueService : IQueueService
     private double _resumePositionSeconds = 0;
     private long _lastProgressSaveTicks = 0;
 
-    public QueueService(IAudioPlayerService audioPlayer, SqliteDbContext dbContext)
+    public QueueService(IAudioPlayerService audioPlayer, SqliteDbContext dbContext, ILibraryScanner libraryScanner)
     {
         _audioPlayer = audioPlayer ?? throw new ArgumentNullException(nameof(audioPlayer));
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
@@ -59,6 +59,51 @@ public class QueueService : IQueueService
             lock (_queueLock)
             {
                 EmitPlaybackStateChanged();
+            }
+        };
+
+        libraryScanner.LibraryChanged += (s, e) =>
+        {
+            lock (_queueLock)
+            {
+                bool queueChanged = false;
+                
+                // Purge missing files from both queues
+                for (int i = _activeQueue.Count - 1; i >= 0; i--)
+                {
+                    var track = _activeQueue[i].Track;
+                    bool isLocal = !track.SourceUri.StartsWith("http", StringComparison.OrdinalIgnoreCase);
+                    if (isLocal && !System.IO.File.Exists(track.SourceUri))
+                    {
+                        if (_currentIndex == i)
+                        {
+                            _audioPlayer.Stop();
+                            _currentIndex = -1;
+                        }
+                        else if (_currentIndex > i)
+                        {
+                            _currentIndex--;
+                        }
+                        
+                        _activeQueue.RemoveAt(i);
+                        queueChanged = true;
+                    }
+                }
+                
+                for (int i = _unshuffledQueue.Count - 1; i >= 0; i--)
+                {
+                    var track = _unshuffledQueue[i].Track;
+                    bool isLocal = !track.SourceUri.StartsWith("http", StringComparison.OrdinalIgnoreCase);
+                    if (isLocal && !System.IO.File.Exists(track.SourceUri))
+                    {
+                        _unshuffledQueue.RemoveAt(i);
+                    }
+                }
+
+                if (queueChanged)
+                {
+                    EmitPlaybackStateChanged();
+                }
             }
         };
 
@@ -575,7 +620,7 @@ public class QueueService : IQueueService
         _currentIndex = index;
         _activeQueue[_currentIndex].IsPlaying = true;
 
-        _audioPlayer.Play(track.SourceUri);
+        _audioPlayer.Play(track.SourceUri, track.ReplayGain);
 
         // One-time startup resume: seek to the saved position on the first play
         // of the restored track, then clear the marker.

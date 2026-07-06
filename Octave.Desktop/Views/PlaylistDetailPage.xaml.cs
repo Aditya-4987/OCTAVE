@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Navigation;
 using Microsoft.Extensions.DependencyInjection;
 using Octave_Desktop.ViewModels;
 using Octave.Core.Models;
+using Octave.Core.Interfaces;
 using System;
 
 namespace Octave_Desktop.Views;
@@ -106,15 +107,32 @@ public sealed partial class PlaylistDetailPage : Page
         }
     }
 
-    private void TrackRow_RightTapped(object sender, RightTappedRoutedEventArgs e)
+    private async void TrackRow_RightTapped(object sender, RightTappedRoutedEventArgs e)
     {
         if (sender is not FrameworkElement fe || fe.DataContext is not Track track) return;
 
-        var flyout = new MenuFlyout();
-        var remove = new MenuFlyoutItem { Text = "Remove from playlist" };
-        remove.Click += (s, a) => ViewModel.RemoveTrackCommand.Execute(track);
-        flyout.Items.Add(remove);
-        flyout.ShowAt(fe, e.GetPosition(fe));
+        var libraryService = App.Services.GetRequiredService<Octave.Core.Services.Library.ILibraryService>();
+        var playlistService = App.Services.GetRequiredService<IPlaylistService>();
+        var queueService = App.Services.GetRequiredService<IQueueService>();
+
+        await Helpers.TrackContextMenu.ShowAsync(
+            fe, track, libraryService, playlistService, queueService, this.XamlRoot,
+            onRemoveFromPlaylist: (t) => ViewModel.RemoveTrackCommand.Execute(t)
+        );
+    }
+
+    private async void MoreMenuButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.DataContext is not Track track) return;
+
+        var libraryService = App.Services.GetRequiredService<Octave.Core.Services.Library.ILibraryService>();
+        var playlistService = App.Services.GetRequiredService<IPlaylistService>();
+        var queueService = App.Services.GetRequiredService<IQueueService>();
+
+        await Helpers.TrackContextMenu.ShowAsync(
+            fe, track, libraryService, playlistService, queueService, this.XamlRoot,
+            onRemoveFromPlaylist: (t) => ViewModel.RemoveTrackCommand.Execute(t)
+        );
     }
 
     private void DeletePlaylist_Click(object sender, RoutedEventArgs e)

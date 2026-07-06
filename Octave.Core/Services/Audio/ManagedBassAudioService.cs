@@ -48,6 +48,7 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
     // bass.dll and these formats start playing - missing ones are skipped.
     private static readonly string[] PluginFileNames =
     {
+        "bass_fx.dll",   // EQ & DSP
         "bassflac.dll",  // FLAC
         "bassopus.dll",  // Opus / .opus
         "bass_aac.dll",  // AAC / M4A / MP4
@@ -63,6 +64,10 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
 
         // Init: -1 means "Default Windows Audio Device", 44.1kHz
         _isInitialized = Bass.Init(-1, 44100, DeviceInitFlags.Default, IntPtr.Zero);
+        
+        // Tells BASS to dynamically follow the default Windows output device (e.g. bluetooth disconnect)
+        Bass.Configure(Configuration.IncludeDefaultDevice, true);
+        Bass.Configure(Configuration.DevNonStop, true);
 
         if (!_isInitialized)
         {
@@ -71,6 +76,16 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         }
 
         LoadPlugins();
+        
+        try 
+        {
+            _ = ManagedBass.Fx.BassFx.Version; 
+        } 
+        catch (Exception ex) 
+        {
+            Debug.WriteLine($"[OCTAVE ENGINE] Failed to initialize BASS_FX: {ex.Message}");
+        }
+
         Bass.Volume = _volume;
         return _isInitialized;
     }
@@ -103,7 +118,7 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         }
     }
 
-    public void Play(string urlOrPath)
+    public void Play(string urlOrPath, double replayGain = 0.0)
     {
         if (!_isInitialized) Init();
 
@@ -129,14 +144,35 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
                 _currentStream = stream;
 
                 // Register end sync procedure
-                Bass.ChannelSetSync(stream, SyncFlags.End, 0, _endSyncCallback, IntPtr.Zero);
+                Bass.ChannelSetSync(stream, SyncFlags.End | SyncFlags.Mixtime, 0, _endSyncCallback, IntPtr.Zero);
 
-                // Channel volume is set to 1.0f since master volume (Bass.Volume) governs application volume.
-                Bass.ChannelSetAttribute(stream, ChannelAttribute.Volume, 1.0f);
+                // Convert ReplayGain (dB) to a linear scalar (10^(dB/20)).
+                // If ReplayGain is 0.0, this naturally results in 1.0f.
+                float targetGain = (float)Math.Pow(10, replayGain / 20.0);
+                
+                // Cap the ReplayGain amplifier to prevent clipping. 
+                // A maximum multiplier of 2.0 corresponds to roughly +6dB.
+                targetGain = Math.Clamp(targetGain, 0.1f, 2.0f);
+
+                // Channel volume is set to targetGain since master volume (Bass.Volume) governs application volume.
+                Bass.ChannelSetAttribute(stream, ChannelAttribute.Volume, targetGain);
 
                 // Re-attach the EQ to the new stream if it's enabled.
                 _eqFxHandle = 0;
+                _limiterFxHandle = 0;
                 if (_eqEnabled) SetupEqUnlocked();
+                
+                // Read streaming quality (e.g. 16-bit 44.1kHz)
+                if (Bass.ChannelGetInfo(stream, out var info))
+                {
+                    int bits = (info.OriginalResolution > 0) ? info.OriginalResolution : 16;
+                    double khz = info.Frequency / 1000.0;
+                    StreamingQuality = $"{bits}-bit {khz:0.0}kHz";
+                }
+                else
+                {
+                    StreamingQuality = "Unknown";
+                }
 
                 Bass.ChannelPlay(stream);
                 started = true;
@@ -235,6 +271,8 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         }
     }
 
+    private int _limiterFxHandle = 0;
+
     // Caller MUST hold _streamLock and have a live _currentStream.
     private void SetupEqUnlocked()
     {
@@ -243,6 +281,9 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         {
             if (_eqFxHandle == 0)
                 _eqFxHandle = Bass.ChannelSetFX(_currentStream, EffectType.PeakEQ, 0);
+
+            if (_limiterFxHandle == 0)
+                _limiterFxHandle = Bass.ChannelSetFX(_currentStream, EffectType.Compressor, 1);
 
             if (_eqFxHandle == 0)
             {
@@ -276,6 +317,10 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         if (_eqFxHandle != 0 && _currentStream != 0)
             Bass.ChannelRemoveFX(_currentStream, _eqFxHandle);
         _eqFxHandle = 0;
+        
+        if (_limiterFxHandle != 0 && _currentStream != 0)
+            Bass.ChannelRemoveFX(_currentStream, _limiterFxHandle);
+        _limiterFxHandle = 0;
     }
 
     public double GetDurationSeconds()
@@ -358,6 +403,8 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
             }
         }
     }
+
+    public string StreamingQuality { get; private set; } = "Unknown";
 
     public void Seek(double positionSeconds)
     {

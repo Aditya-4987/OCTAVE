@@ -4,8 +4,12 @@ using Microsoft.UI.Xaml.Navigation;
 using Microsoft.Extensions.DependencyInjection;
 using Octave_Desktop.ViewModels;
 using Octave.Core.Models;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
+using Octave.Core.Services;
+using Octave.Core.Services.Library;
+using Octave.Core.Interfaces;
 using System;
-using System.Threading.Tasks;
 
 namespace Octave_Desktop.Views;
 
@@ -149,5 +153,46 @@ public sealed partial class SearchResultsPage : Page
             return "0:00";
         var time = TimeSpan.FromSeconds(seconds);
         return time.TotalHours >= 1 ? time.ToString(@"h\:mm\:ss") : time.ToString(@"m\:ss");
+    }
+
+    private async void TrackRow_RightTapped(object sender, Microsoft.UI.Xaml.Input.RightTappedRoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.DataContext is not Track track) return;
+
+        var libraryService = App.Services.GetRequiredService<ILibraryService>();
+        var playlistService = App.Services.GetRequiredService<IPlaylistService>();
+        var queueService = App.Services.GetRequiredService<IQueueService>();
+
+        await Helpers.TrackContextMenu.ShowAsync(fe, track, libraryService, playlistService, queueService, this.XamlRoot);
+    }
+
+    private async void MoreMenuButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement fe && fe.DataContext is Track track)
+        {
+            var libraryService = App.Services.GetRequiredService<ILibraryService>();
+            var playlistService = App.Services.GetRequiredService<IPlaylistService>();
+            var queueService = App.Services.GetRequiredService<IQueueService>();
+            await Helpers.TrackContextMenu.ShowAsync(fe, track, libraryService, playlistService, queueService, this.XamlRoot);
+        }
+    }
+
+    private void Card_PointerEntered(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is Grid grid)
+        {
+            if (Application.Current.Resources.TryGetValue("SystemControlHighlightAccentBrush", out var accentObj) && accentObj is SolidColorBrush accent)
+            {
+                grid.BorderBrush = accent;
+            }
+        }
+    }
+
+    private void Card_PointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is Grid grid)
+        {
+            grid.BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.Transparent) { Color = Microsoft.UI.ColorHelper.FromArgb(255, 42, 42, 42) }; // #2A2A2A
+        }
     }
 }

@@ -37,7 +37,8 @@ public record Track(
     int TrackNumber,
     int Year,
     DateTime DateAdded,
-    string Genre = ""       // Trailing default so existing constructors are unaffected
+    string Genre = "",      // Trailing default so existing constructors are unaffected
+    double ReplayGain = 0.0 // Applied in playback to normalize loudness
 );
 
 public record Playlist(

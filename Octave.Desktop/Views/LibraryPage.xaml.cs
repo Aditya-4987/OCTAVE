@@ -34,67 +34,19 @@ public sealed partial class LibraryPage : Page
     {
         if (sender is not FrameworkElement fe || fe.DataContext is not Track track) return;
 
-        var flyout = new MenuFlyout();
-
-        // Favorite toggle.
-        bool isFavorite = await _libraryService.IsFavoriteAsync(track.Id);
-        var favItem = new MenuFlyoutItem { Text = isFavorite ? "Remove from favorites" : "Add to favorites" };
-        favItem.Click += async (s, a) =>
-        {
-            try { await _libraryService.ToggleFavoriteAsync(track.Id); }
-            catch (System.Exception ex) { System.Diagnostics.Debug.WriteLine($"[Library] Favorite toggle failed: {ex}"); }
-        };
-        flyout.Items.Add(favItem);
-        flyout.Items.Add(new MenuFlyoutSeparator());
-
-        var playlists = await _playlistService.GetPlaylistsAsync();
-        foreach (var playlist in playlists)
-        {
-            string playlistId = playlist.Id;
-            var item = new MenuFlyoutItem { Text = playlist.Title };
-            item.Click += async (s, a) =>
-            {
-                try { await _playlistService.AddTrackAsync(playlistId, track.Id); }
-                catch (System.Exception ex) { System.Diagnostics.Debug.WriteLine($"[Library] Add to playlist failed: {ex}"); }
-            };
-            flyout.Items.Add(item);
-        }
-        if (playlists.Count > 0) flyout.Items.Add(new MenuFlyoutSeparator());
-
-        var newItem = new MenuFlyoutItem { Text = "New playlist…" };
-        newItem.Click += async (s, a) => await CreatePlaylistWithTrackAsync(track.Id);
-        flyout.Items.Add(newItem);
-
-        flyout.ShowAt(fe, e.GetPosition(fe));
+        var queueService = App.Services.GetRequiredService<IQueueService>();
+        await Helpers.TrackContextMenu.ShowAsync(fe, track, _libraryService, _playlistService, queueService, this.XamlRoot);
     }
 
-    private async Task CreatePlaylistWithTrackAsync(string trackId)
+    private async void MoreMenuButton_Click(object sender, RoutedEventArgs e)
     {
-        try
-        {
-            if (this.XamlRoot is null) return;
+        if (sender is not FrameworkElement fe || fe.DataContext is not Track track) return;
 
-            var input = new TextBox { PlaceholderText = "Playlist name" };
-            var dialog = new ContentDialog
-            {
-                Title = "New Playlist",
-                Content = input,
-                PrimaryButtonText = "Create",
-                CloseButtonText = "Cancel",
-                DefaultButton = ContentDialogButton.Primary,
-                XamlRoot = this.XamlRoot
-            };
-            if (await dialog.ShowAsync() == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(input.Text))
-            {
-                var playlist = await _playlistService.CreatePlaylistAsync(input.Text.Trim());
-                await _playlistService.AddTrackAsync(playlist.Id, trackId);
-            }
-        }
-        catch (System.Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"[Library] Create playlist dialog failed: {ex}");
-        }
+        var queueService = App.Services.GetRequiredService<IQueueService>();
+        await Helpers.TrackContextMenu.ShowAsync(fe, track, _libraryService, _playlistService, queueService, this.XamlRoot);
     }
+
+    // Old CreatePlaylistWithTrackAsync moved to helper
 
     private void LibraryPage_Unloaded(object sender, RoutedEventArgs e)
     {

@@ -132,4 +132,26 @@ public sealed partial class EntityDetailPage : Page
         var time = TimeSpan.FromSeconds(seconds);
         return time.TotalHours >= 1 ? time.ToString(@"h\:mm\:ss") : time.ToString(@"m\:ss");
     }
+
+    private async void TrackRow_RightTapped(object sender, Microsoft.UI.Xaml.Input.RightTappedRoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.DataContext is not Track track) return;
+
+        var libraryService = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<Octave.Core.Services.Library.ILibraryService>(App.Services);
+        var playlistService = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<Octave.Core.Interfaces.IPlaylistService>(App.Services);
+        var queueService = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<Octave.Core.Interfaces.IQueueService>(App.Services);
+
+        await Helpers.TrackContextMenu.ShowAsync(fe, track, libraryService, playlistService, queueService, this.XamlRoot);
+    }
+
+    private async void MoreMenuButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.DataContext is not Track track) return;
+
+        var libraryService = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<Octave.Core.Services.Library.ILibraryService>(App.Services);
+        var playlistService = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<Octave.Core.Interfaces.IPlaylistService>(App.Services);
+        var queueService = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<Octave.Core.Interfaces.IQueueService>(App.Services);
+
+        await Helpers.TrackContextMenu.ShowAsync(fe, track, libraryService, playlistService, queueService, this.XamlRoot);
+    }
 }

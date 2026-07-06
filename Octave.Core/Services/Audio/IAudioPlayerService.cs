@@ -10,7 +10,7 @@ public interface IAudioPlayerService
     event EventHandler<double>? PositionChanged;
 
     bool Init();
-    void Play(string urlOrPath);
+    void Play(string urlOrPath, double replayGain = 0.0);
     void Pause();
     void Resume();
     void Stop();
@@ -24,6 +24,7 @@ public interface IAudioPlayerService
     double PositionSeconds { get; }
     double DurationSeconds { get; }
     PlaybackStatus Status { get; }
+    string StreamingQuality { get; }
     void Seek(double positionSeconds);
 
     // 10-band graphic equalizer (requires bass_fx.dll at runtime).

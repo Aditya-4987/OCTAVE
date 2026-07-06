@@ -22,6 +22,7 @@ public partial class ShellViewModel : ObservableObject
     private readonly IAudioPlayerService _audioPlayer;
     private readonly ILibraryScanner _scanner;
     private readonly SqliteDbContext _dbContext;
+    private readonly IPlaylistService _playlistService;
     private readonly Microsoft.UI.Dispatching.DispatcherQueue _dispatcher;
 
     private CancellationTokenSource? _searchCts;
@@ -36,28 +37,46 @@ public partial class ShellViewModel : ObservableObject
     private long _lastSeekSequenceToken = 0;
 
     [ObservableProperty]
-    private string? _currentArtworkUrl;
+    public partial string? CurrentArtworkUrl { get; set; }
 
     [ObservableProperty]
-    private string _trackTitle = "Ready to ignite";
+    public partial string TrackTitle { get; set; } = "Ready to ignite";
 
     [ObservableProperty]
-    private string _artistName = "Octave Core";
+    public partial string ArtistName { get; set; } = "Octave Core";
 
     [ObservableProperty]
-    private string _albumName = "";
+    public partial string AlbumName { get; set; } = "";
 
     [ObservableProperty]
-    private bool _isNowPlayingOpen;
+    public partial string StreamingQuality { get; set; } = "";
+    
+    [ObservableProperty]
+    public partial string InfoBitrate { get; set; } = "";
 
     [ObservableProperty]
-    private bool _isPlaying;
+    public partial string InfoSampleRate { get; set; } = "";
 
     [ObservableProperty]
-    private double _positionSeconds;
+    public partial string InfoFileSize { get; set; } = "";
 
     [ObservableProperty]
-    private double _durationSeconds;
+    public partial string InfoFormat { get; set; } = "";
+
+    [ObservableProperty]
+    public partial string InfoLocation { get; set; } = "";
+
+    [ObservableProperty]
+    public partial bool IsNowPlayingOpen { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsPlaying { get; set; }
+
+    [ObservableProperty]
+    public partial double PositionSeconds { get; set; }
+
+    [ObservableProperty]
+    public partial double DurationSeconds { get; set; }
 
     public double Volume
     {
@@ -77,35 +96,42 @@ public partial class ShellViewModel : ObservableObject
     public bool IsMuted => _audioPlayer.IsMuted;
 
     [ObservableProperty]
-    private bool _isShuffle;
+    public partial bool IsShuffle { get; set; }
 
     [ObservableProperty]
-    private RepeatMode _repeatMode = RepeatMode.None;
+    public partial RepeatMode RepeatMode { get; set; } = RepeatMode.None;
 
     [ObservableProperty]
-    private string _consoleOutput = "[System Ready]\n";
+    public partial string ConsoleOutput { get; set; } = "[System Ready]\n";
 
     [ObservableProperty]
-    private bool _isDragging;
+    public partial bool IsDragging { get; set; }
 
     public ShellViewModel(
         ILibraryService libraryService,
         IQueueService queueService,
         IAudioPlayerService audioPlayer,
         ILibraryScanner scanner,
-        SqliteDbContext dbContext)
+        SqliteDbContext dbContext,
+        IPlaylistService playlistService)
     {
         _libraryService = libraryService ?? throw new ArgumentNullException(nameof(libraryService));
         _queueService = queueService ?? throw new ArgumentNullException(nameof(queueService));
         _audioPlayer = audioPlayer ?? throw new ArgumentNullException(nameof(audioPlayer));
         _scanner = scanner ?? throw new ArgumentNullException(nameof(scanner));
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+        _playlistService = playlistService ?? throw new ArgumentNullException(nameof(playlistService));
 
         _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
 
         _queueService.PlaybackStateChanged += (s, state) =>
         {
             _dispatcher.TryEnqueue(() => UpdatePropertiesFromState(state));
+        };
+        
+        _libraryService.FavoritesChanged += (s, e) =>
+        {
+            _ = RefreshFavoriteStatusAsync();
         };
 
         // High-frequency position ticks update only the timeline, not the whole
@@ -200,6 +226,72 @@ public partial class ShellViewModel : ObservableObject
     [RelayCommand]
     private void ToggleNowPlaying() => IsNowPlayingOpen = !IsNowPlayingOpen;
 
+    // ---- Context Menu Commands (Global) -----------------------------------
+
+    [RelayCommand]
+    private void PlayNext(Track? track)
+    {
+        if (track != null) _queueService.EnqueueNext(track);
+    }
+
+    [RelayCommand]
+    private void AddToQueue(Track? track)
+    {
+        if (track != null) _queueService.Enqueue(track);
+    }
+
+    [RelayCommand]
+    private async Task ToggleFavorite(Track? track)
+    {
+        if (track != null)
+        {
+            await _libraryService.ToggleFavoriteAsync(track.Id);
+        }
+    }
+
+    [RelayCommand]
+    private async Task ToggleCurrentTrackFavorite()
+    {
+        if (_lastKnownTrackId != null)
+        {
+            await _libraryService.ToggleFavoriteAsync(_lastKnownTrackId);
+        }
+    }
+
+    [RelayCommand]
+    private async Task AddToPlaylist(object parameter)
+    {
+        // Parameter expected as string "playlistId|trackId"
+        if (parameter is string payload && payload.Contains('|'))
+        {
+            var parts = payload.Split('|');
+            await _playlistService.AddTrackAsync(parts[0], parts[1]);
+        }
+    }
+
+    [RelayCommand]
+    private async Task RemoveFromPlaylist(object parameter)
+    {
+        // Parameter expected as string "playlistId|trackId"
+        if (parameter is string payload && payload.Contains('|'))
+        {
+            var parts = payload.Split('|');
+            await _playlistService.RemoveTrackAsync(parts[0], parts[1]);
+        }
+    }
+
+    public ObservableCollection<Playlist> AvailablePlaylists { get; } = new();
+
+    public async Task LoadAvailablePlaylistsAsync()
+    {
+        var lists = await _playlistService.GetPlaylistsAsync();
+        _dispatcher.TryEnqueue(() =>
+        {
+            AvailablePlaylists.Clear();
+            foreach (var p in lists) AvailablePlaylists.Add(p);
+        });
+    }
+
     // ---- Music folder management ------------------------------------------
 
     public ObservableCollection<string> MonitoredFolders { get; } = new();
@@ -218,6 +310,7 @@ public partial class ShellViewModel : ObservableObject
     public async Task AddFolderAsync(string path)
     {
         if (string.IsNullOrWhiteSpace(path)) return;
+        IsProcessing = true;
         AppendConsole($"[Folders] Scanning new folder: {path}");
         try
         {
@@ -228,6 +321,10 @@ public partial class ShellViewModel : ObservableObject
         catch (Exception ex)
         {
             AppendConsole($"[Folders] Add failed: {ex.Message}");
+        }
+        finally
+        {
+            IsProcessing = false;
         }
     }
 
@@ -250,6 +347,7 @@ public partial class ShellViewModel : ObservableObject
     [RelayCommand]
     private async Task RescanAll()
     {
+        IsProcessing = true;
         AppendConsole("[Folders] Rescanning all folders...");
         try
         {
@@ -260,6 +358,10 @@ public partial class ShellViewModel : ObservableObject
         {
             AppendConsole($"[Folders] Rescan failed: {ex.Message}");
         }
+        finally
+        {
+            IsProcessing = false;
+        }
     }
 
     // ---- Sleep timer ------------------------------------------------------
@@ -267,7 +369,7 @@ public partial class ShellViewModel : ObservableObject
     private Timer? _sleepTimer;
 
     [ObservableProperty]
-    private string _sleepTimerStatus = "Off";
+    public partial string SleepTimerStatus { get; set; } = "Off";
 
     [RelayCommand]
     private void SetSleepTimer(string? minutesText)
@@ -317,6 +419,8 @@ public partial class ShellViewModel : ObservableObject
             "BassBoost" => new double[] { 6, 5, 4, 2, 0, 0, 0, 0, 0, 0 },
             "TrebleBoost" => new double[] { 0, 0, 0, 0, 0, 0, 2, 4, 5, 6 },
             "Vocal" => new double[] { -2, -1, 0, 2, 4, 4, 3, 1, 0, -1 },
+            "Electronic" => new double[] { 4, 3, 0, -2, -3, -3, -1, 2, 4, 5 },
+            "Acoustic" => new double[] { 3, 4, 3, 1, 1, 1, 2, 2, 1, 0 },
             _ => new double[] { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 } // Flat
         };
 
@@ -331,7 +435,13 @@ public partial class ShellViewModel : ObservableObject
     public ObservableCollection<DuplicateGroup> Duplicates { get; } = new();
 
     [ObservableProperty]
-    private string _duplicatesSummary = "";
+    public partial string DuplicatesSummary { get; set; } = "";
+    
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsNotProcessing))]
+    public partial bool IsProcessing { get; set; }
+
+    public bool IsNotProcessing => !IsProcessing;
 
     [RelayCommand]
     private async Task FindDuplicates()
@@ -347,6 +457,31 @@ public partial class ShellViewModel : ObservableObject
         });
     }
 
+    [RelayCommand]
+    private async Task DeleteAllDuplicates()
+    {
+        foreach (var group in Duplicates)
+        {
+            // Delete all except the very first track in the duplicate group
+            for (int i = 1; i < group.Tracks.Count; i++)
+            {
+                try
+                {
+                    var track = group.Tracks[i];
+                    if (File.Exists(track.SourceUri))
+                    {
+                        File.Delete(track.SourceUri);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Failed to delete duplicate {group.Tracks[i].SourceUri}: {ex.Message}");
+                }
+            }
+        }
+        await FindDuplicates();
+    }
+
     private const int MaxConsoleChars = 8000;
 
     // Prepends a line to the console log and caps total length so a large scan
@@ -360,6 +495,25 @@ public partial class ShellViewModel : ObservableObject
         }
         ConsoleOutput = combined;
     }
+    
+    [ObservableProperty]
+    public partial bool IsCurrentTrackFavorite { get; set; }
+    
+    private string? _lastKnownTrackId;
+
+    private async Task RefreshFavoriteStatusAsync()
+    {
+        if (_lastKnownTrackId != null)
+        {
+            var isFav = await _libraryService.IsFavoriteAsync(_lastKnownTrackId);
+            _dispatcher.TryEnqueue(() => IsCurrentTrackFavorite = isFav);
+        }
+        else
+        {
+            _dispatcher.TryEnqueue(() => IsCurrentTrackFavorite = false);
+        }
+    }
+
     private void UpdatePropertiesFromState(PlaybackState state)
     {
         if (state.SequenceToken < _lastSeekSequenceToken)
@@ -369,15 +523,50 @@ public partial class ShellViewModel : ObservableObject
 
         if (state.CurrentTrack != null)
         {
+            _lastKnownTrackId = state.CurrentTrack.Id;
+            _ = RefreshFavoriteStatusAsync();
             TrackTitle = state.CurrentTrack.Title;
             ArtistName = state.CurrentTrack.ArtistName;
             AlbumName = state.CurrentTrack.AlbumTitle;
+            StreamingQuality = _audioPlayer.StreamingQuality;
+            
+            try
+            {
+                var uri = state.CurrentTrack.SourceUri;
+                InfoLocation = uri;
+                InfoFormat = Path.GetExtension(uri).TrimStart('.').ToUpperInvariant();
+                
+                if (File.Exists(uri))
+                {
+                    var fileInfo = new FileInfo(uri);
+                    InfoFileSize = $"{(fileInfo.Length / (1024.0 * 1024.0)):0.00} MB";
+
+                    using var tfile = TagLib.File.Create(uri);
+                    if (tfile.Properties != null)
+                    {
+                        InfoBitrate = $"{tfile.Properties.AudioBitrate} kbps";
+                        InfoSampleRate = $"{tfile.Properties.AudioSampleRate} Hz";
+                    }
+                }
+            }
+            catch
+            {
+                InfoFileSize = "Unknown";
+                InfoBitrate = "Unknown";
+                InfoSampleRate = "Unknown";
+            }
         }
         else
         {
             TrackTitle = "No Track Loaded";
             ArtistName = "Unknown Artist";
             AlbumName = "";
+            StreamingQuality = "";
+            InfoLocation = "";
+            InfoFormat = "";
+            InfoFileSize = "";
+            InfoBitrate = "";
+            InfoSampleRate = "";
         }
 
         if (state.CurrentTrack?.Id != _lastTrackId)

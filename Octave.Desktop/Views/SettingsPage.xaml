@@ -7,8 +7,13 @@
     xmlns:models="using:Octave.Core.Models"
     xmlns:local="using:Octave_Desktop.Views"
     xmlns:vm="using:Octave_Desktop.ViewModels"
+    xmlns:converters="using:Octave_Desktop.Converters"
     mc:Ignorable="d"
     Background="Transparent">
+
+    <Page.Resources>
+        <converters:DbFormatConverter x:Key="DbFormatConverter" />
+    </Page.Resources>
 
     <Grid Padding="24">
         <Grid.RowDefinitions>
@@ -53,17 +58,20 @@
                 <ItemsControl ItemsSource="{x:Bind ViewModel.EqBands, Mode=OneWay}">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
-                            <StackPanel Orientation="Horizontal" Spacing="4" />
+                            <StackPanel Orientation="Horizontal" Spacing="8" />
                         </ItemsPanelTemplate>
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="vm:EqBandViewModel">
-                            <StackPanel Width="40" HorizontalAlignment="Center">
-                                <Slider Orientation="Vertical" Height="130" Minimum="-15" Maximum="15"
+                            <StackPanel Width="50" HorizontalAlignment="Center">
+                                <TextBlock Text="{x:Bind Gain, Mode=OneWay, Converter={StaticResource DbFormatConverter}}" 
+                                           FontSize="12" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" 
+                                           HorizontalAlignment="Center" Margin="0,0,0,8" />
+                                <Slider Orientation="Vertical" Height="220" Minimum="-15" Maximum="15" StepFrequency="0.5"
                                         Value="{x:Bind Gain, Mode=TwoWay}" HorizontalAlignment="Center"
-                                        IsThumbToolTipEnabled="True" />
-                                <TextBlock Text="{x:Bind Label}" FontSize="10" Foreground="#888888"
-                                           HorizontalAlignment="Center" Margin="0,4,0,0" />
+                                        IsThumbToolTipEnabled="False" />
+                                <TextBlock Text="{x:Bind Label}" FontSize="12" Foreground="#888888"
+                                           HorizontalAlignment="Center" Margin="0,10,0,0" />
                             </StackPanel>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
@@ -74,6 +82,8 @@
                     <Button Content="Bass Boost" Command="{x:Bind ViewModel.EqPresetCommand}" CommandParameter="BassBoost" />
                     <Button Content="Treble Boost" Command="{x:Bind ViewModel.EqPresetCommand}" CommandParameter="TrebleBoost" />
                     <Button Content="Vocal" Command="{x:Bind ViewModel.EqPresetCommand}" CommandParameter="Vocal" />
+                    <Button Content="Electronic" Command="{x:Bind ViewModel.EqPresetCommand}" CommandParameter="Electronic" />
+                    <Button Content="Acoustic" Command="{x:Bind ViewModel.EqPresetCommand}" CommandParameter="Acoustic" />
                 </StackPanel>
             </StackPanel>
 
@@ -83,8 +93,12 @@
                 <TextBlock Text="Folders Octave scans and watches for music."
                            FontSize="12" Foreground="#888888" />
                 <StackPanel Orientation="Horizontal" Spacing="8">
-                    <Button Content="Add Folder" Click="AddFolder_Click" />
-                    <Button Content="Rescan All" Command="{x:Bind ViewModel.RescanAllCommand}" />
+                    <Button Content="Add Folder" Click="AddFolder_Click" IsEnabled="{x:Bind ViewModel.IsNotProcessing, Mode=OneWay}" />
+                    <Button Content="Rescan All" Command="{x:Bind ViewModel.RescanAllCommand}" IsEnabled="{x:Bind ViewModel.IsNotProcessing, Mode=OneWay}" />
+                    <StackPanel Orientation="Horizontal" Spacing="8" Visibility="{x:Bind BoolToVisibility(ViewModel.IsProcessing), Mode=OneWay}" VerticalAlignment="Center" Margin="16,0,0,0">
+                        <ProgressRing IsActive="True" Width="16" Height="16" />
+                        <TextBlock Text="Processing folders..." Foreground="#888888" FontSize="12" VerticalAlignment="Center" />
+                    </StackPanel>
                 </StackPanel>
                 <ItemsControl ItemsSource="{x:Bind ViewModel.MonitoredFolders, Mode=OneWay}">
                     <ItemsControl.ItemTemplate>
@@ -111,6 +125,7 @@
                            FontSize="12" Foreground="#888888" />
                 <StackPanel Orientation="Horizontal" Spacing="12">
                     <Button Content="Scan for Duplicates" Command="{x:Bind ViewModel.FindDuplicatesCommand}" />
+                    <Button Content="Delete All Duplicates" Command="{x:Bind ViewModel.DeleteAllDuplicatesCommand}" Foreground="#EF5350" />
                     <TextBlock Text="{x:Bind ViewModel.DuplicatesSummary, Mode=OneWay}" Foreground="#888888" VerticalAlignment="Center" />
                 </StackPanel>
                 <ItemsControl ItemsSource="{x:Bind ViewModel.Duplicates, Mode=OneWay}">
@@ -120,6 +135,7 @@
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0">
                                     <TextBlock Text="{x:Bind Title}" Foreground="White" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
@@ -127,6 +143,29 @@
                                 </StackPanel>
                                 <TextBlock Grid.Column="1" Text="{x:Bind local:SettingsPage.DuplicateSummary(Tracks)}"
                                            Foreground="#888888" FontSize="12" VerticalAlignment="Center" />
+                                <Button Grid.Column="2" Content="Manage" Margin="16,0,0,0">
+                                    <Button.Flyout>
+                                        <Flyout>
+                                            <ListView ItemsSource="{x:Bind Tracks}">
+                                                <ListView.ItemTemplate>
+                                                    <DataTemplate x:DataType="models:Track">
+                                                        <Grid Padding="4" ColumnSpacing="8" Width="400">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Grid.Column="0" Text="{x:Bind SourceUri}" FontSize="11" Foreground="#AAAAAA" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                                                <Button Content="Move" Click="MoveDuplicate_Click" />
+                                                                <Button Content="Delete" Click="DeleteDuplicate_Click" />
+                                                            </StackPanel>
+                                                        </Grid>
+                                                    </DataTemplate>
+                                                </ListView.ItemTemplate>
+                                            </ListView>
+                                        </Flyout>
+                                    </Button.Flyout>
+                                </Button>
                             </Grid>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>

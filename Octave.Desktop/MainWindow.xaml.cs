@@ -18,6 +18,10 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         RootGrid.DataContext = this;
 
+        Octave_Desktop.Helpers.WindowMinSizeHelper.SetMinSize(this, 750, 500);
+
+        RootGrid.SizeChanged += RootGrid_SizeChanged;
+
         // Apply the saved theme to the window root.
         RootGrid.RequestedTheme = ThemeHelper.GetSavedTheme();
 
@@ -31,6 +35,22 @@ public sealed partial class MainWindow : Window
         PlaybackSlider.AddHandler(UIElement.PointerReleasedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(PlaybackSlider_PointerReleased), true);
         PlaybackSlider.AddHandler(UIElement.ManipulationStartedEvent, new Microsoft.UI.Xaml.Input.ManipulationStartedEventHandler(PlaybackSlider_ManipulationStarted), true);
         PlaybackSlider.AddHandler(UIElement.ManipulationCompletedEvent, new Microsoft.UI.Xaml.Input.ManipulationCompletedEventHandler(PlaybackSlider_ManipulationCompleted), true);
+    }
+
+    private void RootGrid_SizeChanged(object sender, Microsoft.UI.Xaml.SizeChangedEventArgs e)
+    {
+        if (e.NewSize.Width < 950)
+        {
+            ExtraControlsPanel.Visibility = Visibility.Collapsed;
+            MoreOptionsButton.Visibility = Visibility.Visible;
+            TrackDetailsColumn.MaxWidth = 200;
+        }
+        else
+        {
+            ExtraControlsPanel.Visibility = Visibility.Visible;
+            MoreOptionsButton.Visibility = Visibility.Collapsed;
+            TrackDetailsColumn.MaxWidth = 350;
+        }
     }
 
     private void NavigationView_ItemInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
@@ -59,6 +79,32 @@ public sealed partial class MainWindow : Window
             {
                 ContentFrame.Navigate(targetPageType);
             }
+        }
+    }
+
+    private void TrackDetails_Click(object sender, RoutedEventArgs e)
+    {
+        if (!ViewModel.IsNowPlayingOpen)
+        {
+            ViewModel.IsNowPlayingOpen = true;
+        }
+        
+        // Select Info tab (index 0)
+        SidebarPivot.SelectedIndex = 0;
+    }
+
+    private void QueueButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.IsNowPlayingOpen && SidebarPivot.SelectedIndex == 1)
+        {
+            // Close if already open on Queue tab
+            ViewModel.IsNowPlayingOpen = false;
+        }
+        else
+        {
+            // Open and select Queue tab (index 1)
+            ViewModel.IsNowPlayingOpen = true;
+            SidebarPivot.SelectedIndex = 1;
         }
     }
 
@@ -119,6 +165,25 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void BackgroundImage_ImageOpened(object sender, RoutedEventArgs e)
+    {
+        if (sender is Image img)
+        {
+            var storyboard = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
+            var fade = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
+            {
+                From = 0.0,
+                To = 0.3,
+                Duration = new Duration(TimeSpan.FromMilliseconds(500)),
+                EasingFunction = new Microsoft.UI.Xaml.Media.Animation.QuadraticEase { EasingMode = Microsoft.UI.Xaml.Media.Animation.EasingMode.EaseOut }
+            };
+            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(fade, img);
+            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(fade, "Opacity");
+            storyboard.Children.Add(fade);
+            storyboard.Begin();
+        }
+    }
+
     // Helper methods for XAML bindings
     public Visibility BoolToVisibility(bool isPlaying) => isPlaying ? Visibility.Visible : Visibility.Collapsed;
     public Visibility BoolToVisibilityNegation(bool isPlaying) => isPlaying ? Visibility.Collapsed : Visibility.Visible;
@@ -138,6 +203,16 @@ public sealed partial class MainWindow : Window
             : new SolidColorBrush(Windows.UI.Color.FromArgb(255, 136, 136, 136));
     }
 
+    public Brush GetActiveColor(bool isActive)
+    {
+        return isActive ? (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"] : new SolidColorBrush(Microsoft.UI.Colors.White);
+    }
+
+    public Brush GetFavoriteColor(bool isFavorite)
+    {
+        return isFavorite ? (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"] : new SolidColorBrush(Microsoft.UI.Colors.White);
+    }
+
     public Brush GetRepeatColor(RepeatMode mode)
     {
         return mode != RepeatMode.None 
@@ -147,7 +222,12 @@ public sealed partial class MainWindow : Window
 
     public string GetRepeatGlyph(RepeatMode mode)
     {
-        return mode == RepeatMode.Track ? "\uE8ED" : "\uE8EE";
+        return mode == RepeatMode.Track ? "\uE8ED" : "\uE8EE"; // RepeatOne vs RepeatAll
+    }
+
+    public string GetFavoriteGlyph(bool isFavorite)
+    {
+        return isFavorite ? "\uEB52" : "\uEB51"; // Filled Heart vs Outline Heart
     }
 
     public string GetMuteGlyph(bool isMuted, double volume)

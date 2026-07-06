@@ -16,14 +16,14 @@
         </Storyboard>
     </Page.Resources>
 
-    <Grid Padding="24">
+    <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <Grid Margin="0,0,0,24">
-            <TextBlock Text="Songs Library" FontSize="28" FontWeight="Bold" Foreground="White" VerticalAlignment="Center" />
+        <Grid Margin="0,0,0,16" Padding="32,48,32,0">
+            <TextBlock Text="Songs Library" FontSize="36" FontWeight="Bold" Foreground="White" VerticalAlignment="Center" />
             <ComboBox Header="" SelectedIndex="{x:Bind ViewModel.SortIndex, Mode=TwoWay}"
                       HorizontalAlignment="Right" VerticalAlignment="Center" MinWidth="150">
                 <ComboBoxItem Content="Sort: Title" />
@@ -38,16 +38,18 @@
                   ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}"
                   IsItemClickEnabled="True"
                   ItemClick="ListView_ItemClick"
-                  SelectionMode="None">
+                  SelectionMode="None"
+                  Padding="32,0,32,32">
             <ListView.ItemTemplate>
                 <DataTemplate x:DataType="models:Track">
-                    <Grid Padding="12,8" Background="Transparent" Height="52" RightTapped="TrackRow_RightTapped">
+                    <Grid Padding="16,8" Background="Transparent" Height="56" RightTapped="TrackRow_RightTapped" CornerRadius="4" Margin="0,0,0,4">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="40" />
                             <ColumnDefinition Width="2*" />
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="1*" />
                             <ColumnDefinition Width="80" />
+                            <ColumnDefinition Width="40" />
                         </Grid.ColumnDefinitions>
 
                         <!-- Play/Pause Button -->
@@ -82,7 +84,18 @@
                         <TextBlock Grid.Column="3" Text="{x:Bind ArtistName}" VerticalAlignment="Center" Foreground="#888888" TextTrimming="CharacterEllipsis"/>
 
                         <!-- Duration -->
-                        <TextBlock Grid.Column="4" Text="{x:Bind local:LibraryPage.FormatDuration(DurationSeconds)}" VerticalAlignment="Center" Foreground="#888888" HorizontalAlignment="Right"/>
+                        <TextBlock Grid.Column="4" Text="{x:Bind local:LibraryPage.FormatDuration(DurationSeconds)}" VerticalAlignment="Center" Foreground="#888888" HorizontalAlignment="Right" Margin="0,0,8,0"/>
+
+                        <!-- More Menu -->
+                        <Button Grid.Column="5" 
+                                Background="Transparent" 
+                                BorderBrush="Transparent" 
+                                Padding="4"
+                                Click="MoreMenuButton_Click"
+                                HorizontalAlignment="Center" 
+                                VerticalAlignment="Center">
+                            <FontIcon Glyph="&#xE712;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#888888"/>
+                        </Button>
                     </Grid>
                 </DataTemplate>
             </ListView.ItemTemplate>
