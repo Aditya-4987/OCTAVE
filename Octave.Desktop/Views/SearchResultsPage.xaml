@@ -153,11 +153,45 @@
 
                                     <!-- Circular Artwork Image -->
                                     <Border Grid.Row="0" Width="120" Height="120" CornerRadius="60" HorizontalAlignment="Center" Background="#222222" Margin="0,0,0,12">
-                                        <Image Source="{x:Bind ArtworkUrl, Mode=OneWay, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Artist}" Stretch="UniformToFill"/>
+                                        <Image Source="{x:Bind ArtworkUrl, Mode=OneTime, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Artist}" Stretch="UniformToFill"/>
                                     </Border>
 
                                     <!-- Name -->
                                     <TextBlock Grid.Row="1" Text="{x:Bind Name}" FontWeight="Bold" FontSize="14" Foreground="White" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center"/>
+                                </Grid>
+                            </DataTemplate>
+                        </GridView.ItemTemplate>
+                    </GridView>
+                </StackPanel>
+
+                <!-- Section 4: Playlists -->
+                <StackPanel x:Name="PlaylistsSection" Visibility="{x:Bind VisibilityFromCount(ViewModel.Playlists.Count), Mode=OneWay}">
+                    <TextBlock Text="Playlists" FontSize="20" FontWeight="Bold" Foreground="White" Margin="32,0,0,12" />
+                    <GridView ItemsSource="{x:Bind ViewModel.Playlists, Mode=OneWay}"
+                              SelectionMode="None"
+                              IsItemClickEnabled="True"
+                              ItemClick="PlaylistGrid_ItemClick"
+                              Padding="32,0"
+                              ItemContainerStyle="{StaticResource CleanGridViewItemStyle}">
+                        <GridView.ItemTemplate>
+                            <DataTemplate x:DataType="models:Playlist">
+                                <Grid Width="160" Height="210" Style="{StaticResource StandardCardStyle}"
+                                      PointerEntered="Card_PointerEntered" PointerExited="Card_PointerExited">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                    </Grid.RowDefinitions>
+
+                                    <!-- Playlist Icon Container -->
+                                    <Border Grid.Row="0" Width="120" Height="120" CornerRadius="8" HorizontalAlignment="Center" Background="#222222" Margin="0,0,0,12">
+                                        <FontIcon Glyph="&#xE8FD;" FontFamily="Segoe MDL2 Assets" FontSize="40" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+
+                                    <!-- Title & Track Count -->
+                                    <StackPanel Grid.Row="1" HorizontalAlignment="Center">
+                                        <TextBlock Text="{x:Bind Title}" FontWeight="Bold" FontSize="14" Foreground="White" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="{x:Bind local:SearchResultsPage.TrackCountText(TrackCount)}" FontSize="12" Foreground="#888888" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" Margin="0,2,0,0"/>
+                                    </StackPanel>
                                 </Grid>
                             </DataTemplate>
                         </GridView.ItemTemplate>
@@ -170,7 +204,7 @@
                            Foreground="#888888" 
                            HorizontalAlignment="Center" 
                            Margin="0,48,0,0"
-                           Visibility="{x:Bind NoResultsVisibility(ViewModel.Tracks.Count, ViewModel.Albums.Count, ViewModel.Artists.Count), Mode=OneWay}"/>
+                           Visibility="{x:Bind NoResultsVisibility(ViewModel.Tracks.Count, ViewModel.Albums.Count, ViewModel.Artists.Count, ViewModel.Playlists.Count), Mode=OneWay}"/>
             </StackPanel>
         </ScrollViewer>
     </Grid>

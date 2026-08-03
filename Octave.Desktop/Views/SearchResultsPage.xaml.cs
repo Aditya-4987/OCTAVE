@@ -132,15 +132,25 @@ public sealed partial class SearchResultsPage : Page
         }
     }
 
+    private void PlaylistGrid_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is Playlist playlist)
+        {
+            Frame.Navigate(typeof(PlaylistDetailPage), playlist.Id);
+        }
+    }
+
     public Visibility VisibilityFromCount(int count)
     {
         return count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    public Visibility NoResultsVisibility(int trackCount, int albumCount, int artistCount)
+    public Visibility NoResultsVisibility(int trackCount, int albumCount, int artistCount, int playlistCount)
     {
-        return (trackCount == 0 && albumCount == 0 && artistCount == 0) ? Visibility.Visible : Visibility.Collapsed;
+        return (trackCount == 0 && albumCount == 0 && artistCount == 0 && playlistCount == 0) ? Visibility.Visible : Visibility.Collapsed;
     }
+
+    public static string TrackCountText(int count) => $"{count} tracks";
 
     public static string GetProviderGlyph(string provider)
     {

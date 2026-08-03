@@ -171,23 +171,7 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
                         string trackId = IdGenerator.FromTrackUri(filePath);
                         DateTime dateAdded = IdGenerator.ResolveFileDateAdded(filePath);
 
-                        string? artworkUrl = null;
-                        try
-                        {
-                            if (tagFile.Tag.Pictures != null && tagFile.Tag.Pictures.Length > 0)
-                            {
-                                var picture = System.Linq.Enumerable.FirstOrDefault(tagFile.Tag.Pictures, p => p.Type == TagLib.PictureType.FrontCover)
-                                              ?? tagFile.Tag.Pictures[0];
-                                if (picture?.Data?.Data != null && picture.Data.Data.Length > 0)
-                                {
-                                    artworkUrl = await _artworkCacheManager.CacheBytesAsync(picture.Data.Data, picture.MimeType);
-                                }
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.WriteLine($"[Scanner] Non-fatal artwork extraction error on file '{filePath}': {ex.Message}");
-                        }
+                        string? artworkUrl = await ExtractHighestQualityArtworkAsync(tagFile, filePath);
 
                         var artist = new Artist(artistId, artistName, null, null, true);
                         var album = new Album(albumId, albumTitle, artistId, artistName, (int)tagFile.Tag.Year, artworkUrl, "Local");
@@ -419,23 +403,7 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
                 string trackId = IdGenerator.FromTrackUri(path);
                 DateTime dateAdded = IdGenerator.ResolveFileDateAdded(path);
 
-                string? artworkUrl = null;
-                try
-                {
-                    if (tagFile.Tag.Pictures != null && tagFile.Tag.Pictures.Length > 0)
-                    {
-                        var picture = System.Linq.Enumerable.FirstOrDefault(tagFile.Tag.Pictures, p => p.Type == TagLib.PictureType.FrontCover)
-                                      ?? tagFile.Tag.Pictures[0];
-                        if (picture?.Data?.Data != null && picture.Data.Data.Length > 0)
-                        {
-                            artworkUrl = await _artworkCacheManager.CacheBytesAsync(picture.Data.Data, picture.MimeType);
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"[Scanner] Non-fatal artwork extraction error on file '{path}': {ex.Message}");
-                }
+                string? artworkUrl = await ExtractHighestQualityArtworkAsync(tagFile, path);
 
                 var artist = new Artist(artistId, artistName, null, null, true);
                 var album = new Album(albumId, albumTitle, artistId, artistName, (int)tagFile.Tag.Year, artworkUrl, "Local");
@@ -616,5 +584,54 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
 
             return _activeReconciliationTask;
         }
+    }
+
+    private async Task<string?> ExtractHighestQualityArtworkAsync(TagLib.File tagFile, string filePath)
+    {
+        try
+        {
+            if (tagFile.Tag.Pictures != null && tagFile.Tag.Pictures.Length > 0)
+            {
+                // 1. Prefer FrontCover frame if available with valid byte data
+                var picture = System.Linq.Enumerable.FirstOrDefault(tagFile.Tag.Pictures, p => p.Type == TagLib.PictureType.FrontCover && p.Data?.Data != null && p.Data.Data.Length > 0);
+
+                // 2. Otherwise pick the picture with the largest data payload (highest resolution)
+                if (picture == null)
+                {
+                    picture = System.Linq.Enumerable.OrderByDescending(tagFile.Tag.Pictures, p => p.Data?.Data?.Length ?? 0).FirstOrDefault();
+                }
+
+                if (picture?.Data?.Data != null && picture.Data.Data.Length > 512)
+                {
+                    return await _artworkCacheManager.CacheBytesAsync(picture.Data.Data, picture.MimeType);
+                }
+            }
+
+            // Fallback: Check track directory for high-res folder images
+            string? dir = Path.GetDirectoryName(filePath);
+            if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+            {
+                string[] candidateNames = { "cover.jpg", "cover.png", "folder.jpg", "folder.png", "album.jpg", "album.png", "front.jpg", "front.png" };
+                foreach (var name in candidateNames)
+                {
+                    string candidatePath = Path.Combine(dir, name);
+                    if (File.Exists(candidatePath))
+                    {
+                        byte[] bytes = await File.ReadAllBytesAsync(candidatePath);
+                        if (bytes.Length > 512)
+                        {
+                            string mime = name.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ? "image/png" : "image/jpeg";
+                            return await _artworkCacheManager.CacheBytesAsync(bytes, mime);
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[Scanner] Non-fatal artwork extraction error on file '{filePath}': {ex.Message}");
+        }
+
+        return null;
     }
 }

@@ -58,16 +58,26 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         "bass_ape.dll"   // Monkey's Audio (APE)
     };
 
+    private float _currentReplayGainScale = 1.0f;
+
     public bool Init()
     {
         if (_isInitialized) return true;
 
-        // Init: -1 means "Default Windows Audio Device", 44.1kHz
-        _isInitialized = Bass.Init(-1, 44100, DeviceInitFlags.Default, IntPtr.Zero);
-        
-        // Tells BASS to dynamically follow the default Windows output device (e.g. bluetooth disconnect)
+        // Tells BASS to dynamically follow the default Windows output device (e.g. bluetooth disconnect).
+        // Must be configured BEFORE calling Bass.Init.
         Bass.Configure(Configuration.IncludeDefaultDevice, true);
         Bass.Configure(Configuration.DevNonStop, true);
+
+        // Attempt 1: Init with Default Windows Audio Device (-1), 44.1kHz
+        _isInitialized = Bass.Init(-1, 44100, DeviceInitFlags.Default, IntPtr.Zero);
+
+        if (!_isInitialized)
+        {
+            Debug.WriteLine($"[OCTAVE ENGINE] BASS Init (-1) Failed (Error: {Bass.LastError}). Falling back to No Sound device (0)...");
+            // Attempt 2: Fallback to No Sound device (0) so engine calls remain safe
+            _isInitialized = Bass.Init(0, 44100, DeviceInitFlags.Default, IntPtr.Zero);
+        }
 
         if (!_isInitialized)
         {
@@ -86,7 +96,6 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
             Debug.WriteLine($"[OCTAVE ENGINE] Failed to initialize BASS_FX: {ex.Message}");
         }
 
-        Bass.Volume = _volume;
         return _isInitialized;
     }
 
@@ -125,7 +134,7 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         bool started = false;
         lock (_streamLock)
         {
-            FreeStreamInternal(); // Kill any currently playing track
+            FreeStreamInternal(); // Kill any currently playing track and remove FX handles
 
             int stream;
             // Check if we were handed an HTTP web stream or a local hard drive path
@@ -152,10 +161,10 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
                 
                 // Cap the ReplayGain amplifier to prevent clipping. 
                 // A maximum multiplier of 2.0 corresponds to roughly +6dB.
-                targetGain = Math.Clamp(targetGain, 0.1f, 2.0f);
+                _currentReplayGainScale = Math.Clamp(targetGain, 0.1f, 2.0f);
 
-                // Channel volume is set to targetGain since master volume (Bass.Volume) governs application volume.
-                Bass.ChannelSetAttribute(stream, ChannelAttribute.Volume, targetGain);
+                // Channel volume is set directly on the stream using process volume and ReplayGain scalar.
+                UpdateStreamVolumeUnlocked();
 
                 // Re-attach the EQ to the new stream if it's enabled.
                 _eqFxHandle = 0;
@@ -180,7 +189,8 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
             }
             else
             {
-                Debug.WriteLine($"[OCTAVE ENGINE] Stream creation failed! BASS Error: {Bass.LastError}");
+                Debug.WriteLine($"[OCTAVE ENGINE] Stream creation failed! Path: {urlOrPath}, BASS Error: {Bass.LastError}");
+                _currentStream = 0;
             }
         }
 
@@ -190,6 +200,11 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
             // lock so handlers can never reenter the engine while it is held.
             StartPositionTimer();
             TrackStarted?.Invoke(this, urlOrPath);
+        }
+        else
+        {
+            // On stream load failure (corrupted file, unsupported format), auto-advance queue
+            TrackEnded?.Invoke(this, EventArgs.Empty);
         }
     }
 
@@ -233,10 +248,10 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
     {
         if (_currentStream != 0)
         {
+            RemoveEqUnlocked(); // Explicitly detach active FX handles before freeing stream
             Bass.ChannelStop(_currentStream);
             Bass.StreamFree(_currentStream);
             _currentStream = 0;
-            _eqFxHandle = 0; // FX handles are freed together with the stream
         }
     }
 
@@ -343,6 +358,15 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         }
     }
 
+    private void UpdateStreamVolumeUnlocked()
+    {
+        if (_currentStream != 0)
+        {
+            float effectiveVolume = _isMuted ? 0f : Math.Clamp(_volume * _currentReplayGainScale, 0f, 2f);
+            Bass.ChannelSetAttribute(_currentStream, ChannelAttribute.Volume, effectiveVolume);
+        }
+    }
+
     public float Volume
     {
         get => _volume;
@@ -350,16 +374,13 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         {
             float clamped = Math.Clamp(value, 0f, 1f);
             _volume = clamped;
-            if (_isMuted)
+            if (_isMuted && clamped > 0f)
             {
-                SetMuted(false);
+                _isMuted = false;
             }
-            // Only touch the native device volume once BASS is initialized.
-            // Setting Bass.Volume before Init() throws BASS_ERROR_INIT. The stored
-            // _volume is applied by Init() on the first Play().
-            else if (_isInitialized)
+            lock (_streamLock)
             {
-                Bass.Volume = clamped;
+                UpdateStreamVolumeUnlocked();
             }
         }
     }
@@ -370,9 +391,9 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
     {
         if (_isMuted == isMuted) return;
         _isMuted = isMuted;
-        if (_isInitialized)
+        lock (_streamLock)
         {
-            Bass.Volume = _isMuted ? 0f : _volume;
+            UpdateStreamVolumeUnlocked();
         }
     }
 

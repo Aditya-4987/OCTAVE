@@ -77,7 +77,7 @@ public record PlaybackState(
     long SequenceToken = 0
 );
 
-public enum EntityType { Album, Artist, Track, Genre }
+public enum EntityType { Album, Artist, Track, Genre, Playlist }
 public record EntityNavigationParameter(EntityType Type, string Id);
 
 // Snapshot of the player used to resume the queue after an app restart.
@@ -90,7 +90,12 @@ public record PersistedPlayerState(
     RepeatMode RepeatMode
 );
 
-public record SearchResults(System.Collections.Generic.List<Track> Tracks, System.Collections.Generic.List<Album> Albums, System.Collections.Generic.List<Artist> Artists);
+public record SearchResults(
+    System.Collections.Generic.List<Track> Tracks,
+    System.Collections.Generic.List<Album> Albums,
+    System.Collections.Generic.List<Artist> Artists,
+    System.Collections.Generic.List<Playlist>? Playlists = null
+);
 public record SearchSuggestion(string Title, EntityType Type, string Id);
 
 // A cluster of tracks that appear to be the same composition across formats.

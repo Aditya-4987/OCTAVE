@@ -17,9 +17,24 @@ public static class IdGenerator
         GenerateDeterministicGuid(
             $"album:{artistName.Trim().ToLowerInvariant()}||{albumTitle.Trim().ToLowerInvariant()}");
 
-    public static string FromTrackUri(string absoluteUriOrPath) =>
-        GenerateDeterministicGuid(
-            $"track:{absoluteUriOrPath.Trim().ToLowerInvariant()}");
+    public static string FromTrackUri(string absoluteUriOrPath)
+    {
+        string canonical = absoluteUriOrPath;
+        try
+        {
+            if (!absoluteUriOrPath.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+                !absoluteUriOrPath.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                canonical = Path.GetFullPath(absoluteUriOrPath);
+            }
+        }
+        catch
+        {
+            // Fallback if path string cannot be resolved by GetFullPath
+        }
+        canonical = canonical.Replace('/', '\\').Trim().ToLowerInvariant();
+        return GenerateDeterministicGuid($"track:{canonical}");
+    }
 
     private static string GenerateDeterministicGuid(string input)
     {

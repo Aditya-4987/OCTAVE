@@ -35,6 +35,9 @@ public sealed partial class MainWindow : Window
         PlaybackSlider.AddHandler(UIElement.PointerReleasedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(PlaybackSlider_PointerReleased), true);
         PlaybackSlider.AddHandler(UIElement.ManipulationStartedEvent, new Microsoft.UI.Xaml.Input.ManipulationStartedEventHandler(PlaybackSlider_ManipulationStarted), true);
         PlaybackSlider.AddHandler(UIElement.ManipulationCompletedEvent, new Microsoft.UI.Xaml.Input.ManipulationCompletedEventHandler(PlaybackSlider_ManipulationCompleted), true);
+
+        // Global Spacebar Play/Pause handler before UI controls consume Space for selection
+        RootGrid.PreviewKeyDown += RootGrid_PreviewKeyDown;
     }
 
     private void RootGrid_SizeChanged(object sender, Microsoft.UI.Xaml.SizeChangedEventArgs e)
@@ -70,7 +73,6 @@ public sealed partial class MainWindow : Window
                 "Library" => typeof(Views.LibraryPage),
                 "Albums" => typeof(Views.AlbumsPage),
                 "Artists" => typeof(Views.ArtistsPage),
-                "Genres" => typeof(Views.GenresPage),
                 "Playlists" => typeof(Views.PlaylistsPage),
                 _ => null
             };
@@ -131,7 +133,6 @@ public sealed partial class MainWindow : Window
         else if (ContentFrame.SourcePageType == typeof(Views.LibraryPage)) tag = "Library";
         else if (ContentFrame.SourcePageType == typeof(Views.AlbumsPage)) tag = "Albums";
         else if (ContentFrame.SourcePageType == typeof(Views.ArtistsPage)) tag = "Artists";
-        else if (ContentFrame.SourcePageType == typeof(Views.GenresPage)) tag = "Genres";
         else if (ContentFrame.SourcePageType == typeof(Views.PlaylistsPage)) tag = "Playlists";
         else if (ContentFrame.SourcePageType == typeof(Views.PlaylistDetailPage)) tag = "Playlists";
 
@@ -151,7 +152,6 @@ public sealed partial class MainWindow : Window
             string parentTag = param.Type switch
             {
                 EntityType.Album => "Albums",
-                EntityType.Genre => "Genres",
                 _ => "Artists"
             };
             foreach (var item in NavView.MenuItems)
@@ -277,6 +277,17 @@ public sealed partial class MainWindow : Window
         {
             ViewModel.SeekPlaybackCommand.Execute(slider.Value);
         }
+        ViewModel.IsDragging = false;
+    }
+
+    private void PlaybackSlider_PointerCaptureLost(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        ViewModel.IsDragging = false;
+    }
+
+    private void PlaybackSlider_PointerCanceled(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        ViewModel.IsDragging = false;
     }
 
     private void PlaybackSlider_ManipulationStarted(object sender, Microsoft.UI.Xaml.Input.ManipulationStartedRoutedEventArgs e)
@@ -290,6 +301,7 @@ public sealed partial class MainWindow : Window
         {
             ViewModel.SeekPlaybackCommand.Execute(slider.Value);
         }
+        ViewModel.IsDragging = false;
     }
 
     private void PlaybackSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
@@ -301,6 +313,22 @@ public sealed partial class MainWindow : Window
     }
 
     // ---- Keyboard shortcuts ----------------------------------------------
+    private void RootGrid_PreviewKeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        if (e.Key == Windows.System.VirtualKey.Space)
+        {
+            var focused = Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(this.Content?.XamlRoot);
+            if (focused is TextBox || focused is AutoSuggestBox || focused is PasswordBox)
+            {
+                return; // Do not intercept spacebar when user is actively typing in a text field
+            }
+
+            // Intercept space globally so buttons, lists, cards, and sidebar items do not consume it for UI selection
+            e.Handled = true;
+            ViewModel.TogglePlayPauseCommand.Execute(null);
+        }
+    }
+
     private void Accel_PlayPause(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender, Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
     {
         ViewModel.TogglePlayPauseCommand.Execute(null);
@@ -366,6 +394,7 @@ public sealed partial class MainWindow : Window
         {
             EntityType.Track => "\uE189",
             EntityType.Artist => "\uE77B",
+            EntityType.Playlist => "\uE8FD",
             _ => "\uE93C"
         };
     }
@@ -385,6 +414,10 @@ public sealed partial class MainWindow : Window
             if (suggestion.Type == EntityType.Track)
             {
                 _ = ViewModel.PlayTrackByIdAsync(suggestion.Id);
+            }
+            else if (suggestion.Type == EntityType.Playlist)
+            {
+                ContentFrame.Navigate(typeof(Views.PlaylistDetailPage), suggestion.Id);
             }
             else
             {

@@ -29,7 +29,7 @@
 
             <!-- Artwork -->
             <Border Grid.Column="0" Width="232" Height="232" CornerRadius="8" Background="#222222" Margin="0,0,32,0">
-                <Image Source="{x:Bind ViewModel.ArtworkUrl, Mode=OneWay, Converter={StaticResource ArtworkPathConverter}}" Stretch="UniformToFill" />
+                <Image Source="{x:Bind ViewModel.ArtworkUrl, Mode=OneWay, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Large}" Stretch="UniformToFill" />
             </Border>
 
             <!-- Text details -->

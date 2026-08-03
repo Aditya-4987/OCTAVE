@@ -25,16 +25,6 @@
 
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled">
         <StackPanel Spacing="24" MaxWidth="600" HorizontalAlignment="Left" Padding="0,0,0,32">
-            <!-- Appearance -->
-            <StackPanel Spacing="12">
-                <TextBlock Text="Appearance" FontSize="18" FontWeight="SemiBold" Foreground="White" />
-                <ComboBox x:Name="ThemeSelector" Header="Theme" Width="200" SelectionChanged="ThemeSelector_SelectionChanged">
-                    <ComboBoxItem Content="Use system setting" Tag="Default" />
-                    <ComboBoxItem Content="Light" Tag="Light" />
-                    <ComboBoxItem Content="Dark" Tag="Dark" />
-                </ComboBox>
-            </StackPanel>
-
             <!-- Sleep Timer -->
             <StackPanel Spacing="12">
                 <TextBlock Text="Sleep Timer" FontSize="18" FontWeight="SemiBold" Foreground="White" />

@@ -470,8 +470,12 @@ public partial class ShellViewModel : ObservableObject
                     var track = group.Tracks[i];
                     if (File.Exists(track.SourceUri))
                     {
-                        File.Delete(track.SourceUri);
+                        Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(
+                            track.SourceUri,
+                            Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                            Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
                     }
+                    await _libraryService.DeleteTrackAsync(track.Id);
                 }
                 catch (Exception ex)
                 {
@@ -753,6 +757,14 @@ public partial class ShellViewModel : ObservableObject
                 foreach (var artist in results.Artists)
                 {
                     Suggestions.Add(new SearchSuggestion(artist.Name, EntityType.Artist, artist.Id));
+                }
+
+                if (results.Playlists != null)
+                {
+                    foreach (var playlist in results.Playlists)
+                    {
+                        Suggestions.Add(new SearchSuggestion(playlist.Title, EntityType.Playlist, playlist.Id));
+                    }
                 }
             });
         }

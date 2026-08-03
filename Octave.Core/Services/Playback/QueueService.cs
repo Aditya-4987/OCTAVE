@@ -33,6 +33,7 @@ public class QueueService : IQueueService
     private int _resumeIndex = -1;
     private double _resumePositionSeconds = 0;
     private long _lastProgressSaveTicks = 0;
+    private readonly System.Threading.SemaphoreSlim _persistenceSemaphore = new(1, 1);
 
     public QueueService(IAudioPlayerService audioPlayer, SqliteDbContext dbContext, ILibraryScanner libraryScanner)
     {
@@ -134,8 +135,10 @@ public class QueueService : IQueueService
 
         _ = Task.Run(async () =>
         {
+            await _persistenceSemaphore.WaitAsync();
             try { await _dbContext.SavePlayerStateAsync(ids, index, pos, vol, shuffle, repeat); }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[QueueService] Persist failed: {ex.Message}"); }
+            finally { _persistenceSemaphore.Release(); }
         });
     }
 
@@ -159,8 +162,10 @@ public class QueueService : IQueueService
 
         _ = Task.Run(async () =>
         {
+            await _persistenceSemaphore.WaitAsync();
             try { await _dbContext.UpdatePlaybackProgressAsync(index, pos, vol, shuffle, repeat); }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[QueueService] Progress save failed: {ex.Message}"); }
+            finally { _persistenceSemaphore.Release(); }
         });
     }
 
@@ -709,29 +714,31 @@ public class QueueService : IQueueService
 
     private void EmitPlaybackStateChanged()
     {
+        PlaybackState state;
         lock (_queueLock)
         {
             _sequenceToken++;
-            var state = GetCurrentState();
+            state = GetCurrentState();
             CurrentState = state;
-            PlaybackStateChanged?.Invoke(this, state);
             // Persist on every structural transition (this no longer fires on the
             // 4x/sec position tick, so it's cheap enough to centralize here).
             PersistStateUnlocked();
         }
+        PlaybackStateChanged?.Invoke(this, state);
     }
 
     public PlaybackState Seek(double positionSeconds)
     {
+        PlaybackState state;
         lock (_queueLock)
         {
             _audioPlayer.Seek(positionSeconds);
             _sequenceToken++;
-            var state = GetCurrentState();
+            state = GetCurrentState();
             CurrentState = state;
-            PlaybackStateChanged?.Invoke(this, state);
             PersistStateUnlocked();
-            return state;
         }
+        PlaybackStateChanged?.Invoke(this, state);
+        return state;
     }
 }

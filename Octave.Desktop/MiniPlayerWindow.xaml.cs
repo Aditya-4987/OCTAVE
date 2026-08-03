@@ -37,6 +37,16 @@ public sealed partial class MiniPlayerWindow : Window
         MiniSeek.AddHandler(UIElement.PointerReleasedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(MiniSeek_PointerReleased), true);
 
         this.Closed += MiniPlayerWindow_Closed;
+        RootGrid.PreviewKeyDown += RootGrid_PreviewKeyDown;
+    }
+
+    private void RootGrid_PreviewKeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        if (e.Key == Windows.System.VirtualKey.Space)
+        {
+            e.Handled = true;
+            ViewModel.TogglePlayPauseCommand.Execute(null);
+        }
     }
 
     // Bound helpers (mirrors MainWindow's play/pause visibility toggling).
@@ -61,6 +71,17 @@ public sealed partial class MiniPlayerWindow : Window
         {
             ViewModel.SeekPlaybackCommand.Execute(slider.Value);
         }
+        ViewModel.IsDragging = false;
+    }
+
+    private void MiniSeek_PointerCaptureLost(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        ViewModel.IsDragging = false;
+    }
+
+    private void MiniSeek_PointerCanceled(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        ViewModel.IsDragging = false;
     }
 
     private void Expand_Click(object sender, RoutedEventArgs e)

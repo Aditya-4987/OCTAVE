@@ -40,7 +40,7 @@
 
                         <!-- Square Artwork Image -->
                         <Border Grid.Row="0" Width="136" Height="136" Background="#222222" CornerRadius="4" Margin="0,0,0,12">
-                            <Image Source="{x:Bind ArtworkUrl, Converter={StaticResource ArtworkPathConverter}}" Stretch="UniformToFill" />
+                            <Image Source="{x:Bind ArtworkUrl, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Card}" Stretch="UniformToFill" />
                         </Border>
 
                         <!-- Title -->

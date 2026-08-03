@@ -24,6 +24,7 @@ public partial class SearchViewModel : ObservableObject
     public ObservableCollection<Track> Tracks { get; } = new();
     public ObservableCollection<Album> Albums { get; } = new();
     public ObservableCollection<Artist> Artists { get; } = new();
+    public ObservableCollection<Playlist> Playlists { get; } = new();
 
     private readonly EventHandler<PlaybackState> _playbackStateChangedHandler;
 
@@ -68,6 +69,7 @@ public partial class SearchViewModel : ObservableObject
                 Tracks.Clear();
                 Albums.Clear();
                 Artists.Clear();
+                Playlists.Clear();
             });
             return;
         }
@@ -92,6 +94,15 @@ public partial class SearchViewModel : ObservableObject
             foreach (var artist in results.Artists)
             {
                 Artists.Add(artist);
+            }
+
+            Playlists.Clear();
+            if (results.Playlists != null)
+            {
+                foreach (var playlist in results.Playlists)
+                {
+                    Playlists.Add(playlist);
+                }
             }
         });
     }

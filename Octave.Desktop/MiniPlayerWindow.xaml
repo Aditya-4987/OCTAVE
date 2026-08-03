@@ -73,7 +73,9 @@
             <Slider Grid.Column="1" x:Name="MiniSeek" Minimum="0"
                     Maximum="{x:Bind ViewModel.DurationSeconds, Mode=OneWay}"
                     Value="{x:Bind ViewModel.PositionSeconds, Mode=OneWay}"
-                    IsThumbToolTipEnabled="False" VerticalAlignment="Center" Margin="0,-8,0,-8" />
+                    IsThumbToolTipEnabled="False" VerticalAlignment="Center" Margin="0,-8,0,-8"
+                    PointerPressed="MiniSeek_PointerPressed" PointerReleased="MiniSeek_PointerReleased"
+                    PointerCaptureLost="MiniSeek_PointerCaptureLost" PointerCanceled="MiniSeek_PointerCanceled" />
             <TextBlock Grid.Column="2" Text="{x:Bind FormatSeconds(ViewModel.DurationSeconds), Mode=OneWay}" FontSize="11" Foreground="#888888" VerticalAlignment="Center" Width="36" TextAlignment="Left" />
         </Grid>
     </Grid>

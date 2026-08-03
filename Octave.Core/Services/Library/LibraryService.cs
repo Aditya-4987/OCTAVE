@@ -13,14 +13,16 @@ public class LibraryService : ILibraryService
 {
     private readonly SqliteDbContext _dbContext;
     private readonly ILibraryScanner _scanner;
+    private readonly ILibraryWatcherService? _watcherService;
 
     public event EventHandler? LibraryUpdated;
     public event EventHandler? FavoritesChanged;
 
-    public LibraryService(SqliteDbContext dbContext, ILibraryScanner scanner)
+    public LibraryService(SqliteDbContext dbContext, ILibraryScanner scanner, ILibraryWatcherService? watcherService = null)
     {
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
         _scanner = scanner ?? throw new ArgumentNullException(nameof(scanner));
+        _watcherService = watcherService;
 
         _scanner.LibraryChanged += (s, e) => LibraryUpdated?.Invoke(this, EventArgs.Empty);
     }
@@ -54,6 +56,7 @@ public class LibraryService : ILibraryService
         if (string.IsNullOrWhiteSpace(path)) return;
         await _dbContext.AddMonitoredFolderAsync(path);
         _scanner.AddMonitoredPath(path);
+        _watcherService?.AddMonitoredPath(path);
         await _scanner.ScanAsync(path, ct); // raises LibraryChanged -> LibraryUpdated
     }
 
@@ -62,6 +65,7 @@ public class LibraryService : ILibraryService
         if (string.IsNullOrWhiteSpace(path)) return;
         await _dbContext.RemoveMonitoredFolderAsync(path);
         _scanner.RemoveMonitoredPath(path);
+        _watcherService?.RemoveMonitoredPath(path);
         await _dbContext.DeleteTracksUnderPathAsync(path);
         LibraryUpdated?.Invoke(this, EventArgs.Empty);
     }
@@ -108,6 +112,12 @@ public class LibraryService : ILibraryService
 
     public Task<Track?> GetTrackByIdAsync(string trackId) =>
         _dbContext.GetTrackByIdAsync(trackId);
+
+    public async Task DeleteTrackAsync(string trackId)
+    {
+        await _dbContext.DeleteTrackAsync(trackId);
+        LibraryUpdated?.Invoke(this, EventArgs.Empty);
+    }
 
     public Task<SearchResults> SearchLibraryAsync(string query, int? limit = null) =>
         _dbContext.SearchLibraryAsync(query, limit);

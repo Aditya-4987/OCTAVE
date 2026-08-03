@@ -63,23 +63,7 @@ public partial class App : Application
 
                 // Harvester (Singleton is critical to share events broadcast instance)
                 services.AddSingleton<ILibraryScanner, LocalLibraryScanner>();
-
-                // Watcher Service (registers after scanner is available). Resolved
-                // lazily after the DB is initialized, so it can seed from the
-                // persisted MonitoredFolders (defaulting to MyMusic on first run).
-                services.AddSingleton<ILibraryWatcherService>(provider =>
-                {
-                    var scanner = provider.GetRequiredService<ILibraryScanner>();
-                    var db = provider.GetRequiredService<SqliteDbContext>();
-                    var folders = db.GetMonitoredFoldersAsync().GetAwaiter().GetResult();
-                    if (folders.Count == 0)
-                    {
-                        string myMusic = System.Environment.GetFolderPath(System.Environment.SpecialFolder.MyMusic);
-                        db.AddMonitoredFolderAsync(myMusic).GetAwaiter().GetResult();
-                        folders = new System.Collections.Generic.List<string> { myMusic };
-                    }
-                    return new LibraryWatcherService(scanner, folders);
-                });
+                services.AddSingleton<ILibraryWatcherService, LibraryWatcherService>();
 
                 // Facades
                 services.AddSingleton<ILibraryService, LibraryService>();
@@ -94,7 +78,6 @@ public partial class App : Application
                 services.AddTransient<LibraryViewModel>();
                 services.AddTransient<AlbumsViewModel>();
                 services.AddTransient<ArtistsViewModel>();
-                services.AddTransient<GenresViewModel>();
                 services.AddTransient<PlaylistsViewModel>();
                 services.AddTransient<PlaylistDetailViewModel>();
                 services.AddTransient<EntityDetailViewModel>();
@@ -154,9 +137,7 @@ public partial class App : Application
             await dbContext.InitializeAsync();
             System.Diagnostics.Debug.WriteLine("[Startup Diagnostics] Database Initialization: SUCCESS");
 
-            // Initialize Library Watcher Service strictly after database migration completes
-            var watcherService = Services.GetRequiredService<ILibraryWatcherService>();
-            System.Diagnostics.Debug.WriteLine("[Startup Diagnostics] Library Watcher Service: INITIALIZED");
+            _ = InitializeWatcherAsync();
         }
         catch (Exception ex)
         {
@@ -178,5 +159,30 @@ public partial class App : Application
         // resume work never delays the initial UI boot (Milestone 4 gate).
         var queueService = Services.GetRequiredService<IQueueService>();
         _ = queueService.RestoreAsync();
+    }
+
+    private static async Task InitializeWatcherAsync()
+    {
+        try
+        {
+            var db = Services.GetRequiredService<SqliteDbContext>();
+            var watcher = Services.GetRequiredService<ILibraryWatcherService>();
+            var folders = await db.GetMonitoredFoldersAsync();
+            if (folders.Count == 0)
+            {
+                string myMusic = System.Environment.GetFolderPath(System.Environment.SpecialFolder.MyMusic);
+                await db.AddMonitoredFolderAsync(myMusic);
+                folders = new System.Collections.Generic.List<string> { myMusic };
+            }
+            foreach (var folder in folders)
+            {
+                watcher.AddMonitoredPath(folder);
+            }
+            System.Diagnostics.Debug.WriteLine("[Startup Diagnostics] Library Watcher Service: INITIALIZED");
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Startup Diagnostics] Library Watcher Service initialization failed: {ex.Message}");
+        }
     }
 }

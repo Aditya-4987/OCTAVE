@@ -50,5 +50,7 @@ public interface ILibraryService
 
     Task<Track?> GetTrackByIdAsync(string trackId);
 
+    Task DeleteTrackAsync(string trackId);
+
     Task<SearchResults> SearchLibraryAsync(string query, int? limit = null);
 }

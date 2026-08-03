@@ -21,7 +21,7 @@ public class SqliteDbContext
         connection.Open();
         using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA foreign_keys = ON;";
+            command.CommandText = "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;";
             command.ExecuteNonQuery();
         }
         return connection;
@@ -851,7 +851,7 @@ public class SqliteDbContext
         using var conn = CreateConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
-            SELECT t.Id, t.Title, t.ArtistId, t.ArtistName, t.AlbumId, t.AlbumTitle, t.DurationSeconds, t.SourceUri, t.Provider, t.TrackNumber, t.Year, t.DateAdded, t.Genre
+            SELECT t.Id, t.Title, t.ArtistId, t.ArtistName, t.AlbumId, t.AlbumTitle, t.DurationSeconds, t.SourceUri, t.Provider, t.TrackNumber, t.Year, t.DateAdded, t.Genre, t.ReplayGain
             FROM PlaylistTracks pt
             JOIN Tracks t ON t.Id = pt.TrackId
             WHERE pt.PlaylistId = @id
@@ -864,7 +864,8 @@ public class SqliteDbContext
             tracks.Add(new Track(
                 reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
                 reader.GetString(4), reader.GetString(5), reader.GetDouble(6), reader.GetString(7),
-                reader.GetString(8), reader.GetInt32(9), reader.GetInt32(10), dateAdded, reader.GetString(12)));
+                reader.GetString(8), reader.GetInt32(9), reader.GetInt32(10), dateAdded,
+                reader.GetString(12), reader.GetDouble(13)));
         }
         return tracks;
     }
@@ -941,7 +942,7 @@ public class SqliteDbContext
         using var conn = CreateConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
-            SELECT Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded, Genre
+            SELECT Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded, Genre, ReplayGain
             FROM Tracks
             WHERE Genre = @genre COLLATE NOCASE
             ORDER BY ArtistName COLLATE NOCASE ASC, AlbumTitle COLLATE NOCASE ASC, TrackNumber ASC;";
@@ -955,7 +956,8 @@ public class SqliteDbContext
             tracks.Add(new Track(
                 reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
                 reader.GetString(4), reader.GetString(5), reader.GetDouble(6), reader.GetString(7),
-                reader.GetString(8), reader.GetInt32(9), reader.GetInt32(10), dateAdded, reader.GetString(12)));
+                reader.GetString(8), reader.GetInt32(9), reader.GetInt32(10), dateAdded,
+                reader.GetString(12), reader.GetDouble(13)));
         }
         return tracks;
     }
@@ -1031,38 +1033,82 @@ public class SqliteDbContext
         }
     }
 
+    public async Task DeleteTrackAsync(string trackId)
+    {
+        if (string.IsNullOrEmpty(trackId)) return;
+
+        using var conn = CreateConnection();
+        using var tx = (SqliteTransaction)await conn.BeginTransactionAsync();
+        try
+        {
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandText = "DELETE FROM Tracks WHERE Id = @id;";
+                cmd.Parameters.Add(new SqliteParameter("@id", trackId));
+                await cmd.ExecuteNonQueryAsync();
+
+                cmd.Parameters.Clear();
+                cmd.CommandText = "DELETE FROM PlaylistTracks WHERE TrackId = @id;";
+                cmd.Parameters.Add(new SqliteParameter("@id", trackId));
+                await cmd.ExecuteNonQueryAsync();
+
+                cmd.Parameters.Clear();
+                cmd.CommandText = "DELETE FROM Albums WHERE Id NOT IN (SELECT DISTINCT AlbumId FROM Tracks);";
+                await cmd.ExecuteNonQueryAsync();
+
+                cmd.CommandText = "DELETE FROM Artists WHERE Id NOT IN (SELECT DISTINCT ArtistId FROM Albums);";
+                await cmd.ExecuteNonQueryAsync();
+            }
+            await tx.CommitAsync();
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+    }
+
     public async Task<List<Track>> GetTracksByIdsAsync(IReadOnlyList<string> ids)
     {
         var result = new List<Track>();
         if (ids == null || ids.Count == 0) return result;
 
-        using var conn = CreateConnection();
-        using var cmd = conn.CreateCommand();
-
-        var paramNames = new List<string>(ids.Count);
-        for (int i = 0; i < ids.Count; i++)
-        {
-            string p = "@p" + i;
-            paramNames.Add(p);
-            cmd.Parameters.Add(new SqliteParameter(p, ids[i]));
-        }
-
-        cmd.CommandText =
-            "SELECT Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded " +
-            $"FROM Tracks WHERE Id IN ({string.Join(",", paramNames)});";
-
         var byId = new Dictionary<string, Track>(StringComparer.Ordinal);
-        using (var reader = await cmd.ExecuteReaderAsync())
+        const int BatchSize = 500;
+
+        using var conn = CreateConnection();
+
+        for (int offset = 0; offset < ids.Count; offset += BatchSize)
         {
-            while (await reader.ReadAsync())
+            int count = Math.Min(BatchSize, ids.Count - offset);
+            using var cmd = conn.CreateCommand();
+
+            var paramNames = new List<string>(count);
+            for (int i = 0; i < count; i++)
             {
-                var epochSeconds = reader.GetInt64(11);
-                var dateAdded = DateTimeOffset.FromUnixTimeSeconds(epochSeconds).UtcDateTime;
-                var track = new Track(
-                    reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
-                    reader.GetString(4), reader.GetString(5), reader.GetDouble(6), reader.GetString(7),
-                    reader.GetString(8), reader.GetInt32(9), reader.GetInt32(10), dateAdded);
-                byId[track.Id] = track;
+                string p = "@p" + i;
+                paramNames.Add(p);
+                cmd.Parameters.Add(new SqliteParameter(p, ids[offset + i]));
+            }
+
+            cmd.CommandText =
+                "SELECT Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded, Genre, ReplayGain " +
+                $"FROM Tracks WHERE Id IN ({string.Join(",", paramNames)});";
+
+            using (var reader = await cmd.ExecuteReaderAsync())
+            {
+                while (await reader.ReadAsync())
+                {
+                    var epochSeconds = reader.GetInt64(11);
+                    var dateAdded = DateTimeOffset.FromUnixTimeSeconds(epochSeconds).UtcDateTime;
+                    var track = new Track(
+                        reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
+                        reader.GetString(4), reader.GetString(5), reader.GetDouble(6), reader.GetString(7),
+                        reader.GetString(8), reader.GetInt32(9), reader.GetInt32(10), dateAdded,
+                        reader.GetString(12), reader.GetDouble(13));
+                    byId[track.Id] = track;
+                }
             }
         }
 
@@ -1204,7 +1250,7 @@ public class SqliteDbContext
         {
             using var cmd = conn.CreateCommand();
             string sql = @"
-                SELECT Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded 
+                SELECT Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded, Genre, ReplayGain 
                 FROM Tracks 
                 WHERE Title LIKE @q OR ArtistName LIKE @q OR AlbumTitle LIKE @q 
                 ORDER BY 
@@ -1240,10 +1286,13 @@ public class SqliteDbContext
                 var year = reader.GetInt32(10);
                 var epochSeconds = reader.GetInt64(11);
                 var dateAdded = DateTimeOffset.FromUnixTimeSeconds(epochSeconds).UtcDateTime;
+                var genre = reader.GetString(12);
+                var replayGain = reader.GetDouble(13);
 
                 tracks.Add(new Track(
                     id, title, artistId, artistName, albumIdVal, albumTitle,
-                    durationSeconds, sourceUri, provider, trackNumber, year, dateAdded
+                    durationSeconds, sourceUri, provider, trackNumber, year, dateAdded,
+                    genre, replayGain
                 ));
             }
         }
@@ -1324,6 +1373,47 @@ public class SqliteDbContext
             }
         }
 
-        return new SearchResults(tracks, albums, artists);
+        // Query 4: Playlists
+        var playlists = new List<Playlist>();
+        {
+            using var cmd = conn.CreateCommand();
+            string sql = @"
+                SELECT p.Id, p.Title, p.Description, p.CreatedAt, p.IsLocalOnly, COUNT(pt.TrackId) AS TrackCount
+                FROM Playlists p
+                LEFT JOIN PlaylistTracks pt ON p.Id = pt.PlaylistId
+                WHERE p.Title LIKE @q
+                GROUP BY p.Id
+                ORDER BY 
+                    CASE 
+                        WHEN p.Title = @exactQuery THEN 0 
+                        WHEN p.Title LIKE @prefixQuery THEN 1 
+                        ELSE 2 
+                    END, p.Title ASC";
+            if (limit.HasValue)
+            {
+                sql += " LIMIT @limit";
+                cmd.Parameters.Add(new SqliteParameter("@limit", limit.Value));
+            }
+            sql += ";";
+            cmd.CommandText = sql;
+            cmd.Parameters.Add(new SqliteParameter("@q", wildQuery));
+            cmd.Parameters.Add(new SqliteParameter("@prefixQuery", prefixQuery));
+            cmd.Parameters.Add(new SqliteParameter("@exactQuery", exactQuery));
+
+            using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var id = reader.GetString(0);
+                var title = reader.GetString(1);
+                var desc = reader.IsDBNull(2) ? null : reader.GetString(2);
+                var createdAt = DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(3)).UtcDateTime;
+                var isLocal = reader.GetInt32(4) != 0;
+                var trackCount = reader.GetInt32(5);
+
+                playlists.Add(new Playlist(id, title, desc, createdAt, isLocal, trackCount));
+            }
+        }
+
+        return new SearchResults(tracks, albums, artists, playlists);
     }
 }

@@ -16,6 +16,11 @@ public class LibraryWatcherService : ILibraryWatcherService, IDisposable
     private readonly ConcurrentDictionary<string, Timer> _debounceTimers = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, bool> _isDeletionFlags = new(StringComparer.OrdinalIgnoreCase);
 
+    public LibraryWatcherService(ILibraryScanner libraryScanner)
+        : this(libraryScanner, Array.Empty<string>())
+    {
+    }
+
     public LibraryWatcherService(ILibraryScanner libraryScanner, IEnumerable<string> monitoredPaths)
     {
         _libraryScanner = libraryScanner ?? throw new ArgumentNullException(nameof(libraryScanner));
@@ -23,17 +28,33 @@ public class LibraryWatcherService : ILibraryWatcherService, IDisposable
 
         foreach (var path in monitoredPaths)
         {
-            if (string.IsNullOrWhiteSpace(path)) continue;
+            AddMonitoredPath(path);
+        }
 
-            // Register path with scanner for reconciliation sweeps
-            _libraryScanner.AddMonitoredPath(path);
+        // Startup Recovery Pass: delayed reconciliation run (8 seconds)
+        Task.Run(async () =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(8));
+            Debug.WriteLine("[LibraryWatcher] Startup reconciliation trigger initiating...");
+            await _libraryScanner.RequestFullReconciliationAsync();
+        });
+    }
 
-            if (!Directory.Exists(path))
-            {
-                Debug.WriteLine($"[LibraryWatcher] Directory does not exist, skipping watcher: {path}");
-                continue;
-            }
+    public void AddMonitoredPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
 
+        // Register path with scanner for reconciliation sweeps
+        _libraryScanner.AddMonitoredPath(path);
+
+        if (!Directory.Exists(path))
+        {
+            Debug.WriteLine($"[LibraryWatcher] Directory does not exist, skipping watcher: {path}");
+            return;
+        }
+
+        lock (_watchers)
+        {
             Debug.WriteLine($"[LibraryWatcher] Starting watcher for directory: {path}");
 
             var watcher = new FileSystemWatcher(path)
@@ -50,14 +71,28 @@ public class LibraryWatcherService : ILibraryWatcherService, IDisposable
             watcher.EnableRaisingEvents = true;
             _watchers.Add(watcher);
         }
+    }
 
-        // Startup Recovery Pass: delayed reconciliation run (8 seconds)
-        Task.Run(async () =>
+    public void RemoveMonitoredPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+
+        _libraryScanner.RemoveMonitoredPath(path);
+
+        lock (_watchers)
         {
-            await Task.Delay(TimeSpan.FromSeconds(8));
-            Debug.WriteLine("[LibraryWatcher] Startup reconciliation trigger initiating...");
-            await _libraryScanner.RequestFullReconciliationAsync();
-        });
+            for (int i = _watchers.Count - 1; i >= 0; i--)
+            {
+                var w = _watchers[i];
+                if (string.Equals(w.Path, path, StringComparison.OrdinalIgnoreCase))
+                {
+                    Debug.WriteLine($"[LibraryWatcher] Stopping watcher for directory: {path}");
+                    w.EnableRaisingEvents = false;
+                    w.Dispose();
+                    _watchers.RemoveAt(i);
+                }
+            }
+        }
     }
 
     private void OnCreated(object sender, FileSystemEventArgs e)
@@ -170,7 +205,7 @@ public class LibraryWatcherService : ILibraryWatcherService, IDisposable
             // Lock verification
             try
             {
-                using var stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.None);
+                using var stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             }
             catch (IOException)
             {

@@ -8,6 +8,22 @@ namespace Octave_Desktop.Converters;
 
 public class ArtworkPathConverter : IValueConverter
 {
+    private const int MaxCacheSize = 200;
+    private static readonly object CacheLock = new();
+    private static readonly System.Collections.Generic.Dictionary<string, BitmapImage> Cache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly System.Collections.Generic.LinkedList<string> LruList = new();
+
+    private static readonly BitmapImage PlaceholderArtist = new(new Uri("ms-appx:///Assets/PlaceholderArtist.png"))
+    {
+        DecodePixelType = DecodePixelType.Logical,
+        DecodePixelWidth = 512
+    };
+    private static readonly BitmapImage PlaceholderAlbum = new(new Uri("ms-appx:///Assets/PlaceholderAlbum.png"))
+    {
+        DecodePixelType = DecodePixelType.Logical,
+        DecodePixelWidth = 512
+    };
+
     public object Convert(object value, Type targetType, object parameter, string language)
     {
         try
@@ -18,30 +34,96 @@ public class ArtworkPathConverter : IValueConverter
 
             if (string.IsNullOrWhiteSpace(artworkUrl))
             {
-                string fallback = isArtist ? "ms-appx:///Assets/PlaceholderArtist.png" : "ms-appx:///Assets/PlaceholderAlbum.png";
-                return new BitmapImage(new Uri(fallback));
+                return isArtist ? PlaceholderArtist : PlaceholderAlbum;
             }
 
+            string uriString;
             if (artworkUrl.StartsWith("ArtworkCache/", StringComparison.OrdinalIgnoreCase))
             {
                 string absolutePath = Path.Combine(Windows.Storage.ApplicationData.Current.LocalFolder.Path, artworkUrl.Replace('/', '\\'));
                 if (File.Exists(absolutePath))
                 {
-                    return new BitmapImage(new Uri(absolutePath));
+                    uriString = absolutePath;
+                }
+                else
+                {
+                    return isArtist ? PlaceholderArtist : PlaceholderAlbum;
                 }
             }
             else if (artworkUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase) || 
                      artworkUrl.StartsWith("ms-appx", StringComparison.OrdinalIgnoreCase))
             {
-                return new BitmapImage(new Uri(artworkUrl));
+                uriString = artworkUrl;
+            }
+            else
+            {
+                return isArtist ? PlaceholderArtist : PlaceholderAlbum;
             }
 
-            return new BitmapImage(new Uri("ms-appx:///Assets/PlaceholderAlbum.png"));
+            int targetDecodeWidth = 256;
+            if (parameter is string paramStr && !string.IsNullOrWhiteSpace(paramStr))
+            {
+                if (paramStr.Equals("Small", StringComparison.OrdinalIgnoreCase) || 
+                    paramStr.Equals("Thumb", StringComparison.OrdinalIgnoreCase) ||
+                    paramStr.Equals("56", StringComparison.OrdinalIgnoreCase) ||
+                    paramStr.Equals("40", StringComparison.OrdinalIgnoreCase))
+                {
+                    targetDecodeWidth = 128;
+                }
+                else if (paramStr.Equals("Artist", StringComparison.OrdinalIgnoreCase) ||
+                         paramStr.Equals("Card", StringComparison.OrdinalIgnoreCase) ||
+                         paramStr.Equals("Medium", StringComparison.OrdinalIgnoreCase) ||
+                         paramStr.Equals("160", StringComparison.OrdinalIgnoreCase))
+                {
+                    targetDecodeWidth = 256;
+                }
+                else if (paramStr.Equals("Large", StringComparison.OrdinalIgnoreCase) ||
+                         paramStr.Equals("NowPlaying", StringComparison.OrdinalIgnoreCase) ||
+                         paramStr.Equals("Background", StringComparison.OrdinalIgnoreCase) ||
+                         paramStr.Equals("500", StringComparison.OrdinalIgnoreCase))
+                {
+                    targetDecodeWidth = 640;
+                }
+                else if (int.TryParse(paramStr, out int customWidth) && customWidth > 0)
+                {
+                    targetDecodeWidth = customWidth;
+                }
+            }
+
+            string cacheKey = $"{uriString}_{targetDecodeWidth}";
+
+            lock (CacheLock)
+            {
+                if (Cache.TryGetValue(cacheKey, out var cachedImage))
+                {
+                    LruList.Remove(cacheKey);
+                    LruList.AddFirst(cacheKey);
+                    return cachedImage;
+                }
+
+                var newImage = new BitmapImage
+                {
+                    DecodePixelType = DecodePixelType.Logical,
+                    DecodePixelWidth = targetDecodeWidth,
+                    UriSource = new Uri(uriString)
+                };
+
+                if (Cache.Count >= MaxCacheSize && LruList.Last != null)
+                {
+                    string oldestKey = LruList.Last.Value;
+                    LruList.RemoveLast();
+                    Cache.Remove(oldestKey);
+                }
+
+                Cache[cacheKey] = newImage;
+                LruList.AddFirst(cacheKey);
+                return newImage;
+            }
         }
         catch (Exception ex)
         {
             Debug.WriteLine($"[ArtworkPathConverter] {ex}");
-            return new BitmapImage(new Uri("ms-appx:///Assets/PlaceholderAlbum.png"));
+            return (parameter as string ?? "").Equals("Artist", StringComparison.OrdinalIgnoreCase) ? PlaceholderArtist : PlaceholderAlbum;
         }
     }
 

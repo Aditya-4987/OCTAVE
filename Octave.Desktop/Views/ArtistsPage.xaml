@@ -39,7 +39,7 @@
 
                         <!-- Circular Artwork Placeholder -->
                         <Border Grid.Row="0" Width="120" Height="120" CornerRadius="60" HorizontalAlignment="Center" Background="#222222" Margin="0,0,0,12">
-                            <Image Source="{x:Bind ArtworkUrl, Mode=OneWay, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Artist}" Stretch="UniformToFill"/>
+                            <Image Source="{x:Bind ArtworkUrl, Mode=OneTime, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Artist}" Stretch="UniformToFill"/>
                         </Border>
 
                         <!-- Name -->

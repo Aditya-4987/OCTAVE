@@ -11,7 +11,6 @@ namespace Octave_Desktop.Views;
 public sealed partial class SettingsPage : Page
 {
     public ShellViewModel ViewModel { get; }
-    private bool _themeInitialized;
 
     public Visibility BoolToVisibility(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
 
@@ -24,34 +23,7 @@ public sealed partial class SettingsPage : Page
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
-
-        // Reflect the saved theme in the selector without triggering a re-apply.
-        _themeInitialized = false;
-        ThemeSelector.SelectedIndex = ThemeHelper.GetSavedTheme() switch
-        {
-            ElementTheme.Light => 1,
-            ElementTheme.Dark => 2,
-            _ => 0
-        };
-        _themeInitialized = true;
-
         await ViewModel.LoadFoldersAsync();
-    }
-
-    private void ThemeSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (!_themeInitialized) return;
-        if (ThemeSelector.SelectedItem is not ComboBoxItem item) return;
-
-        var theme = item.Tag?.ToString() switch
-        {
-            "Light" => ElementTheme.Light,
-            "Dark" => ElementTheme.Dark,
-            _ => ElementTheme.Default
-        };
-
-        ThemeHelper.SaveTheme(theme);
-        ThemeHelper.Apply(this.XamlRoot?.Content as FrameworkElement, theme);
     }
 
     private async void AddFolder_Click(object sender, RoutedEventArgs e)
@@ -107,6 +79,9 @@ public sealed partial class SettingsPage : Page
                     string destPath = System.IO.Path.Combine(destFolder.Path, fileName);
                     System.IO.File.Move(track.SourceUri, destPath);
 
+                    var libraryService = App.Services.GetRequiredService<Octave.Core.Services.Library.ILibraryService>();
+                    await libraryService.DeleteTrackAsync(track.Id);
+
                     // Re-run the duplicates scan to update the UI
                     if (ViewModel.FindDuplicatesCommand.CanExecute(null))
                     {
@@ -127,9 +102,9 @@ public sealed partial class SettingsPage : Page
         {
             var dialog = new ContentDialog
             {
-                Title = "Permanently Delete File?",
-                Content = $"Are you sure you want to permanently delete:\n{track.SourceUri}\nThis action cannot be undone.",
-                PrimaryButtonText = "Delete",
+                Title = "Move File to Recycle Bin?",
+                Content = $"Are you sure you want to move this file to the Recycle Bin?\n{track.SourceUri}",
+                PrimaryButtonText = "Move to Recycle Bin",
                 CloseButtonText = "Cancel",
                 DefaultButton = ContentDialogButton.Close,
                 XamlRoot = this.XamlRoot
@@ -142,8 +117,14 @@ public sealed partial class SettingsPage : Page
                 {
                     if (System.IO.File.Exists(track.SourceUri))
                     {
-                        System.IO.File.Delete(track.SourceUri);
+                        Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(
+                            track.SourceUri,
+                            Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                            Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
                     }
+
+                    var libraryService = App.Services.GetRequiredService<Octave.Core.Services.Library.ILibraryService>();
+                    await libraryService.DeleteTrackAsync(track.Id);
 
                     // Re-run the duplicates scan to update the UI
                     if (ViewModel.FindDuplicatesCommand.CanExecute(null))
