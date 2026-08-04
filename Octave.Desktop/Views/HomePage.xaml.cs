@@ -35,29 +35,59 @@ public sealed partial class HomePage : Page
     public Visibility AllEmptyVisibility(int a, int b, int c, int d) =>
         (a + b + c + d) == 0 ? Visibility.Visible : Visibility.Collapsed;
 
+    private void HeroPlay_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.RecentlyPlayed.Count > 0)
+        {
+            ViewModel.PlaySection(ViewModel.RecentlyPlayed, ViewModel.RecentlyPlayed[0]);
+        }
+        else if (ViewModel.LastAdded.Count > 0)
+        {
+            ViewModel.PlaySection(ViewModel.LastAdded, ViewModel.LastAdded[0]);
+        }
+    }
+
+    private void QuickPlay_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is TrackDisplayItem item) ViewModel.PlaySection(ViewModel.QuickPlayItems, item);
+    }
+
+    private void ScanFolder_Click(object sender, RoutedEventArgs e)
+    {
+        this.Frame?.Navigate(typeof(SettingsPage));
+    }
+
     private void Recently_ItemClick(object sender, ItemClickEventArgs e)
     {
-        if (e.ClickedItem is Track track) ViewModel.PlaySection(ViewModel.RecentlyPlayed, track);
+        if (e.ClickedItem is TrackDisplayItem item) ViewModel.PlaySection(ViewModel.RecentlyPlayed, item);
     }
 
     private void Most_ItemClick(object sender, ItemClickEventArgs e)
     {
-        if (e.ClickedItem is Track track) ViewModel.PlaySection(ViewModel.MostPlayed, track);
+        if (e.ClickedItem is TrackDisplayItem item) ViewModel.PlaySection(ViewModel.MostPlayed, item);
     }
 
     private void LastAdded_ItemClick(object sender, ItemClickEventArgs e)
     {
-        if (e.ClickedItem is Track track) ViewModel.PlaySection(ViewModel.LastAdded, track);
+        if (e.ClickedItem is TrackDisplayItem item) ViewModel.PlaySection(ViewModel.LastAdded, item);
     }
 
     private void Favorites_ItemClick(object sender, ItemClickEventArgs e)
     {
-        if (e.ClickedItem is Track track) ViewModel.PlaySection(ViewModel.Favorites, track);
+        if (e.ClickedItem is TrackDisplayItem item) ViewModel.PlaySection(ViewModel.Favorites, item);
     }
 
     private async void TrackCard_RightTapped(object sender, Microsoft.UI.Xaml.Input.RightTappedRoutedEventArgs e)
     {
-        if (sender is not FrameworkElement fe || fe.DataContext is not Track track) return;
+        if (sender is not FrameworkElement fe) return;
+        Track? track = fe.DataContext switch
+        {
+            TrackDisplayItem item => item.Track,
+            Track t => t,
+            _ => null
+        };
+
+        if (track == null) return;
 
         var libraryService = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<Octave.Core.Services.Library.ILibraryService>(App.Services);
         var playlistService = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<Octave.Core.Interfaces.IPlaylistService>(App.Services);

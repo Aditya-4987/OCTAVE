@@ -5,11 +5,35 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:models="using:Octave.Core.Models"
+    xmlns:vm="using:Octave_Desktop.ViewModels"
+    xmlns:converters="using:Octave_Desktop.Converters"
     mc:Ignorable="d"
     Background="Transparent">
 
     <Page.Resources>
-        <DataTemplate x:Key="TrackCardTemplate" x:DataType="models:Track">
+        <converters:ArtworkPathConverter x:Key="ArtworkPathConverter" />
+
+        <!-- Quick Play Tile Template -->
+        <DataTemplate x:Key="QuickPlayTileTemplate" x:DataType="vm:TrackDisplayItem">
+            <Grid Width="260" Height="64" Background="#1E1E1E" CornerRadius="6"
+                  PointerEntered="Card_PointerEntered" PointerExited="Card_PointerExited"
+                  RightTapped="TrackCard_RightTapped" Padding="0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="64" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Border Grid.Column="0" CornerRadius="6,0,0,6" Background="#2A2A2A">
+                    <Image Source="{x:Bind ArtworkUrl, Mode=OneTime, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Small}" Stretch="UniformToFill" />
+                </Border>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="12,0,12,0">
+                    <TextBlock Text="{x:Bind Title, Mode=OneTime}" FontWeight="Bold" FontSize="13" Foreground="White" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Text="{x:Bind ArtistName, Mode=OneTime}" FontSize="11" Foreground="#AAAAAA" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
+                </StackPanel>
+            </Grid>
+        </DataTemplate>
+
+        <!-- Standard Track Card Template -->
+        <DataTemplate x:Key="TrackCardTemplate" x:DataType="vm:TrackDisplayItem">
             <Grid Width="160" Height="220" RightTapped="TrackCard_RightTapped" 
                   PointerEntered="Card_PointerEntered" PointerExited="Card_PointerExited"
                   Style="{StaticResource StandardCardStyle}">
@@ -19,74 +43,124 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
                 <Grid Grid.Row="0" Width="136" Height="136" Margin="0,0,0,12">
-                    <!-- Fallback -->
-                    <Border CornerRadius="4" Background="{ThemeResource SystemControlHighlightAccentBrush}" Opacity="0.3">
-                        <FontIcon Glyph="&#xE8D6;" FontFamily="Segoe MDL2 Assets" FontSize="32" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" />
+                    <Border CornerRadius="6" Background="#222222">
+                        <Image Source="{x:Bind ArtworkUrl, Mode=OneTime, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Card}" Stretch="UniformToFill" />
                     </Border>
-                    <!-- Artwork (if available) -->
-                    <!-- We assume Track has an ArtworkUrl property, but if not we might need to bind to it or load it. For now, this is standard UI. -->
                 </Grid>
-                <TextBlock Grid.Row="1" Text="{x:Bind Title}" FontSize="14" FontWeight="Bold" Foreground="White" TextTrimming="CharacterEllipsis" />
-                <TextBlock Grid.Row="2" Text="{x:Bind ArtistName}" FontSize="12" Foreground="#AAAAAA" TextTrimming="CharacterEllipsis" Margin="0,4,0,0" />
+                <TextBlock Grid.Row="1" Text="{x:Bind Title, Mode=OneTime}" FontSize="14" FontWeight="Bold" Foreground="White" TextTrimming="CharacterEllipsis" />
+                <TextBlock Grid.Row="2" Text="{x:Bind ArtistName, Mode=OneTime}" FontSize="12" Foreground="#AAAAAA" TextTrimming="CharacterEllipsis" Margin="0,4,0,0" />
             </Grid>
         </DataTemplate>
     </Page.Resources>
 
-    <ScrollViewer>
-        <StackPanel Padding="32,48,32,32" Spacing="32">
-            <!-- Header Section -->
-            <StackPanel Spacing="8">
-                <TextBlock Text="Welcome back" FontSize="36" FontWeight="Bold" Foreground="White" />
-                <TextBlock Text="Jump back into your library." FontSize="16" Foreground="#AAAAAA" />
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Padding="32,32,32,48" Spacing="36">
+            
+            <!-- Greeting & Hero Spotlight Section -->
+            <StackPanel Spacing="16">
+                <TextBlock Text="{x:Bind ViewModel.Greeting, Mode=OneWay}" FontSize="36" FontWeight="Bold" Foreground="White" />
+                
+                <!-- Hero Spotlight Card (Visible when HeroTrack is present) -->
+                <Grid CornerRadius="12" Padding="24" Margin="0,8,0,0"
+                      Visibility="{x:Bind SectionVisibility(ViewModel.RecentlyPlayed.Count), Mode=OneWay}">
+                    <Grid.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop Color="#252535" Offset="0.0" />
+                            <GradientStop Color="#121218" Offset="1.0" />
+                        </LinearGradientBrush>
+                    </Grid.Background>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" Width="140" Height="140" CornerRadius="8" Background="#2A2A2A" Margin="0,0,24,0">
+                        <Image Source="{x:Bind ViewModel.HeroArtworkUrl, Mode=OneWay, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Card}" Stretch="UniformToFill" />
+                    </Border>
+
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="6">
+                        <TextBlock Text="SPOTLIGHT" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" CharacterSpacing="100" />
+                        <TextBlock Text="{x:Bind ViewModel.HeroTitle, Mode=OneWay}" FontSize="24" FontWeight="Bold" Foreground="White" TextTrimming="CharacterEllipsis" MaxWidth="500" HorizontalAlignment="Left" />
+                        <TextBlock Text="{x:Bind ViewModel.HeroArtistName, Mode=OneWay}" FontSize="14" Foreground="#AAAAAA" TextTrimming="CharacterEllipsis" Margin="0,0,0,12" />
+                        
+                        <Button Click="HeroPlay_Click" Style="{StaticResource PrimaryPlayButtonStyle}" HorizontalAlignment="Left">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="16" />
+                                <TextBlock Text="Play Now" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </Grid>
             </StackPanel>
 
-            <TextBlock Text="Nothing here yet. Play some music, add favorites, or scan a folder."
-                       Foreground="#888888"
-                       Visibility="{x:Bind AllEmptyVisibility(ViewModel.RecentlyPlayed.Count, ViewModel.MostPlayed.Count, ViewModel.LastAdded.Count, ViewModel.Favorites.Count), Mode=OneWay}" />
+            <!-- Quick Play Dashboard Grid -->
+            <StackPanel Spacing="16" Visibility="{x:Bind SectionVisibility(ViewModel.QuickPlayItems.Count), Mode=OneWay}">
+                <TextBlock Text="Quick Play" FontSize="20" FontWeight="Bold" Foreground="White" />
+                <GridView ItemsSource="{x:Bind ViewModel.QuickPlayItems, Mode=OneWay}"
+                          ItemTemplate="{StaticResource QuickPlayTileTemplate}"
+                          SelectionMode="None" IsItemClickEnabled="True" ItemClick="QuickPlay_ItemClick"
+                          ScrollViewer.VerticalScrollMode="Disabled" ScrollViewer.HorizontalScrollMode="Disabled"
+                          ItemContainerStyle="{StaticResource CleanGridViewItemStyle}" />
+            </StackPanel>
 
-            <!-- Recently Played -->
-            <StackPanel Spacing="12" Visibility="{x:Bind SectionVisibility(ViewModel.RecentlyPlayed.Count), Mode=OneWay}">
-                <TextBlock Text="Recently Played" FontSize="18" FontWeight="SemiBold" Foreground="White" />
+            <!-- Recently Played Section -->
+            <StackPanel Spacing="16" Visibility="{x:Bind SectionVisibility(ViewModel.RecentlyPlayed.Count), Mode=OneWay}">
+                <TextBlock Text="Recently Played" FontSize="20" FontWeight="Bold" Foreground="White" />
                 <GridView ItemsSource="{x:Bind ViewModel.RecentlyPlayed, Mode=OneWay}"
                           ItemTemplate="{StaticResource TrackCardTemplate}"
                           SelectionMode="None" IsItemClickEnabled="True" ItemClick="Recently_ItemClick"
                           ScrollViewer.VerticalScrollMode="Disabled" ScrollViewer.HorizontalScrollMode="Disabled"
-                          ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                           ItemContainerStyle="{StaticResource CleanGridViewItemStyle}" />
             </StackPanel>
 
-            <!-- Most Played -->
-            <StackPanel Spacing="12" Visibility="{x:Bind SectionVisibility(ViewModel.MostPlayed.Count), Mode=OneWay}">
-                <TextBlock Text="Most Played" FontSize="18" FontWeight="SemiBold" Foreground="White" />
+            <!-- Most Played Section -->
+            <StackPanel Spacing="16" Visibility="{x:Bind SectionVisibility(ViewModel.MostPlayed.Count), Mode=OneWay}">
+                <TextBlock Text="Most Played" FontSize="20" FontWeight="Bold" Foreground="White" />
                 <GridView ItemsSource="{x:Bind ViewModel.MostPlayed, Mode=OneWay}"
                           ItemTemplate="{StaticResource TrackCardTemplate}"
                           SelectionMode="None" IsItemClickEnabled="True" ItemClick="Most_ItemClick"
                           ScrollViewer.VerticalScrollMode="Disabled" ScrollViewer.HorizontalScrollMode="Disabled"
-                          ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                           ItemContainerStyle="{StaticResource CleanGridViewItemStyle}" />
             </StackPanel>
 
-            <!-- Last Added -->
-            <StackPanel Spacing="12" Visibility="{x:Bind SectionVisibility(ViewModel.LastAdded.Count), Mode=OneWay}">
-                <TextBlock Text="Last Added" FontSize="18" FontWeight="SemiBold" Foreground="White" />
+            <!-- Last Added Section -->
+            <StackPanel Spacing="16" Visibility="{x:Bind SectionVisibility(ViewModel.LastAdded.Count), Mode=OneWay}">
+                <TextBlock Text="Last Added" FontSize="20" FontWeight="Bold" Foreground="White" />
                 <GridView ItemsSource="{x:Bind ViewModel.LastAdded, Mode=OneWay}"
                           ItemTemplate="{StaticResource TrackCardTemplate}"
                           SelectionMode="None" IsItemClickEnabled="True" ItemClick="LastAdded_ItemClick"
                           ScrollViewer.VerticalScrollMode="Disabled" ScrollViewer.HorizontalScrollMode="Disabled"
-                          ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                           ItemContainerStyle="{StaticResource CleanGridViewItemStyle}" />
             </StackPanel>
 
-            <!-- Favorites -->
-            <StackPanel Spacing="12" Visibility="{x:Bind SectionVisibility(ViewModel.Favorites.Count), Mode=OneWay}">
-                <TextBlock Text="Favorites" FontSize="18" FontWeight="SemiBold" Foreground="White" />
+            <!-- Favorites Section -->
+            <StackPanel Spacing="16" Visibility="{x:Bind SectionVisibility(ViewModel.Favorites.Count), Mode=OneWay}">
+                <TextBlock Text="Favorites" FontSize="20" FontWeight="Bold" Foreground="White" />
                 <GridView ItemsSource="{x:Bind ViewModel.Favorites, Mode=OneWay}"
                           ItemTemplate="{StaticResource TrackCardTemplate}"
                           SelectionMode="None" IsItemClickEnabled="True" ItemClick="Favorites_ItemClick"
                           ScrollViewer.VerticalScrollMode="Disabled" ScrollViewer.HorizontalScrollMode="Disabled"
-                          ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                           ItemContainerStyle="{StaticResource CleanGridViewItemStyle}" />
             </StackPanel>
+
+            <!-- Empty State Container -->
+            <Grid Background="#1E1E24" CornerRadius="12" Padding="48" Margin="0,32,0,0" HorizontalAlignment="Center" MaxWidth="500"
+                  Visibility="{x:Bind AllEmptyVisibility(ViewModel.RecentlyPlayed.Count, ViewModel.MostPlayed.Count, ViewModel.LastAdded.Count, ViewModel.Favorites.Count), Mode=OneWay}">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16">
+                    <Border Width="64" Height="64" CornerRadius="32" Background="#2A2A36" HorizontalAlignment="Center">
+                        <FontIcon Glyph="&#xE8D6;" FontFamily="Segoe MDL2 Assets" FontSize="28" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" VerticalAlignment="Center" HorizontalAlignment="Center" />
+                    </Border>
+                    <TextBlock Text="Your Library is Empty" FontSize="22" FontWeight="Bold" Foreground="White" HorizontalAlignment="Center" />
+                    <TextBlock Text="Add your local music folder to build your library and start listening." Foreground="#888888" TextWrapping="Wrap" TextAlignment="Center" FontSize="14" />
+                    <Button Click="ScanFolder_Click" Style="{StaticResource PrimaryPlayButtonStyle}" HorizontalAlignment="Center" Margin="0,8,0,0">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE8B7;" FontFamily="Segoe MDL2 Assets" FontSize="16" />
+                            <TextBlock Text="Scan Music Folder" FontWeight="SemiBold" FontSize="14" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Grid>
+
         </StackPanel>
     </ScrollViewer>
 </Page>
