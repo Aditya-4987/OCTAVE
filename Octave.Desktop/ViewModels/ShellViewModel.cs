@@ -470,10 +470,7 @@ public partial class ShellViewModel : ObservableObject
                     var track = group.Tracks[i];
                     if (File.Exists(track.SourceUri))
                     {
-                        Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(
-                            track.SourceUri,
-                            Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
-                            Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+                        File.Delete(track.SourceUri);
                     }
                     await _libraryService.DeleteTrackAsync(track.Id);
                 }

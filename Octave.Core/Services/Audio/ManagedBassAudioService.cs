@@ -203,8 +203,12 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         }
         else
         {
-            // On stream load failure (corrupted file, unsupported format), auto-advance queue
-            TrackEnded?.Invoke(this, EventArgs.Empty);
+            // On stream load failure (corrupted file, unsupported format), auto-advance queue off-thread
+            var handler = TrackEnded;
+            if (handler != null)
+            {
+                ThreadPool.QueueUserWorkItem(_ => handler.Invoke(this, EventArgs.Empty));
+            }
         }
     }
 

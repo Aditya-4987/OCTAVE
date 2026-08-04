@@ -307,7 +307,7 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
                         using (var cmd = txConnection.CreateCommand())
                         {
                             cmd.Transaction = tx;
-                            cmd.CommandText = "SELECT DISTINCT ArtworkUrl FROM Albums WHERE ArtworkUrl IS NOT NULL;";
+                            cmd.CommandText = "SELECT DISTINCT ArtworkUrl FROM Albums WHERE ArtworkUrl IS NOT NULL UNION SELECT DISTINCT ArtworkUrl FROM Artists WHERE ArtworkUrl IS NOT NULL;";
                             using (var reader = await cmd.ExecuteReaderAsync(ct))
                             {
                                 while (await reader.ReadAsync(ct))

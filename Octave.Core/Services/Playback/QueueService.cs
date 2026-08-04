@@ -393,6 +393,22 @@ public class QueueService : IQueueService
                 _unshuffledQueue.Clear();
                 _unshuffledQueue.AddRange(_activeQueue);
             }
+            else
+            {
+                int oldUnshuffledIndex = _unshuffledQueue.FindIndex(i => ReferenceEquals(i, item));
+                if (oldUnshuffledIndex >= 0)
+                {
+                    _unshuffledQueue.RemoveAt(oldUnshuffledIndex);
+                    int targetUnshuffledIndex = _unshuffledQueue.Count;
+                    if (newIndex < _activeQueue.Count - 1)
+                    {
+                        var nextActiveItem = _activeQueue[newIndex + 1];
+                        int nextUnshuffledIndex = _unshuffledQueue.FindIndex(i => ReferenceEquals(i, nextActiveItem));
+                        if (nextUnshuffledIndex >= 0) targetUnshuffledIndex = nextUnshuffledIndex;
+                    }
+                    _unshuffledQueue.Insert(Math.Clamp(targetUnshuffledIndex, 0, _unshuffledQueue.Count), item);
+                }
+            }
 
             EmitPlaybackStateChanged();
         }
@@ -455,7 +471,7 @@ public class QueueService : IQueueService
 
                 if (currentItem != null)
                 {
-                    _currentIndex = _activeQueue.FindIndex(item => item.Id == currentItem.Id);
+                    _currentIndex = _activeQueue.FindIndex(item => ReferenceEquals(item, currentItem));
                 }
                 else
                 {

@@ -13,16 +13,6 @@ public class ArtworkPathConverter : IValueConverter
     private static readonly System.Collections.Generic.Dictionary<string, BitmapImage> Cache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly System.Collections.Generic.LinkedList<string> LruList = new();
 
-    private static readonly BitmapImage PlaceholderArtist = new(new Uri("ms-appx:///Assets/PlaceholderArtist.png"))
-    {
-        DecodePixelType = DecodePixelType.Logical,
-        DecodePixelWidth = 512
-    };
-    private static readonly BitmapImage PlaceholderAlbum = new(new Uri("ms-appx:///Assets/PlaceholderAlbum.png"))
-    {
-        DecodePixelType = DecodePixelType.Logical,
-        DecodePixelWidth = 512
-    };
 
     public object Convert(object value, Type targetType, object parameter, string language)
     {
