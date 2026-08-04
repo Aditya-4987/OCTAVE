@@ -5,7 +5,8 @@
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <RootNamespace>Octave_Desktop</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Platforms>x86;x64;ARM64</Platforms>
+    <Platform Condition=" '$(Platform)' == '' ">x64</Platform>
+    <Platforms>x64;x86;ARM64</Platforms>
     <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString().ToLowerInvariant())</RuntimeIdentifier>
     <PublishProfile Condition="Exists('Properties\PublishProfiles\win-$(Platform).pubxml')">win-$(Platform).pubxml</PublishProfile>
     <UseWinUI>true</UseWinUI>
@@ -31,6 +32,15 @@
   </ItemGroup>
   <ItemGroup>
       <Content Include="bass.dll">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </Content>
+      <!-- Optional BASS decoder add-ons (bassflac.dll, bassopus.dll, bass_aac.dll,
+           bassalac.dll, basswma.dll, bassdsd.dll, bass_ape.dll). Any DLL placed in
+           BassPlugins\ is copied flat next to bass.dll so the engine can load it.
+           The folder may be empty - the glob then matches nothing and the build
+           is unaffected. -->
+      <Content Include="BassPlugins\*.dll">
+        <Link>%(Filename)%(Extension)</Link>
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       </Content>
   </ItemGroup>

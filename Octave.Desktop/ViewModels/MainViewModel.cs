@@ -9,10 +9,10 @@ public partial class MainViewModel : ObservableObject
     private readonly IAudioPlayerService _audioPlayer;
 
     [ObservableProperty]
-    private string currentTrackTitle = "No Track Loaded";
+    public partial string CurrentTrackTitle { get; set; } = "No Track Loaded";
 
     [ObservableProperty]
-    private bool isPlaying;
+    public partial bool IsPlaying { get; set; }
 
     public MainViewModel(IAudioPlayerService audioPlayer)
     {
