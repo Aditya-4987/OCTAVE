@@ -219,7 +219,7 @@
                                 <FontIcon Glyph="&#xE8D6;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" />
                             </Border>
                             <Border CornerRadius="4">
-                                <Image Source="{Binding ViewModel.CurrentArtworkUrl, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Small}" Stretch="UniformToFill"/>
+                                <Image Source="{Binding ViewModel.CurrentArtworkUrl, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Small}" Stretch="UniformToFill" UseLayoutRounding="True"/>
                             </Border>
                         </Grid>
                         <StackPanel VerticalAlignment="Center">

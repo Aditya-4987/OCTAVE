@@ -23,7 +23,7 @@
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
                 <Border Grid.Column="0" CornerRadius="6,0,0,6" Background="#2A2A2A">
-                    <Image Source="{x:Bind ArtworkUrl, Mode=OneTime, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Small}" Stretch="UniformToFill" />
+                    <Image Source="{x:Bind ArtworkUrl, Mode=OneTime, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Small}" Stretch="UniformToFill" UseLayoutRounding="True" />
                 </Border>
                 <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="12,0,12,0">
                     <TextBlock Text="{x:Bind Title, Mode=OneTime}" FontWeight="Bold" FontSize="13" Foreground="White" TextTrimming="CharacterEllipsis" />
@@ -44,7 +44,7 @@
                 </Grid.RowDefinitions>
                 <Grid Grid.Row="0" Width="136" Height="136" Margin="0,0,0,12">
                     <Border CornerRadius="6" Background="#222222">
-                        <Image Source="{x:Bind ArtworkUrl, Mode=OneTime, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Card}" Stretch="UniformToFill" />
+                        <Image Source="{x:Bind ArtworkUrl, Mode=OneTime, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Card}" Stretch="UniformToFill" UseLayoutRounding="True" />
                     </Border>
                 </Grid>
                 <TextBlock Grid.Row="1" Text="{x:Bind Title, Mode=OneTime}" FontSize="14" FontWeight="Bold" Foreground="White" TextTrimming="CharacterEllipsis" />
@@ -86,7 +86,6 @@
                         <Button Click="HeroPlay_Click" Style="{StaticResource PrimaryPlayButtonStyle}" HorizontalAlignment="Left">
                             <StackPanel Orientation="Horizontal" Spacing="8">
                                 <FontIcon Glyph="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="16" />
-                                <TextBlock Text="Play Now" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
                             </StackPanel>
                         </Button>
                     </StackPanel>

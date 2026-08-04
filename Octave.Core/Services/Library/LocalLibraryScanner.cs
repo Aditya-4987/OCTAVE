@@ -164,17 +164,16 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
 
                     try
                     {
-                        string artistName = string.IsNullOrWhiteSpace(tagFile.Tag.FirstPerformer) ? "Unknown Artist" : tagFile.Tag.FirstPerformer;
+                        var (individualArtists, displayArtistName, primaryArtistName) = ParseArtistNames(tagFile);
                         string albumTitle = string.IsNullOrWhiteSpace(tagFile.Tag.Album) ? "Unknown Album" : tagFile.Tag.Album;
-                        string artistId = IdGenerator.FromArtist(artistName);
-                        string albumId = IdGenerator.FromAlbum(artistName, albumTitle);
+                        string primaryArtistId = IdGenerator.FromArtist(primaryArtistName);
+                        string albumId = IdGenerator.FromAlbum(primaryArtistName, albumTitle);
                         string trackId = IdGenerator.FromTrackUri(filePath);
                         DateTime dateAdded = IdGenerator.ResolveFileDateAdded(filePath);
 
                         string? artworkUrl = await ExtractHighestQualityArtworkAsync(tagFile, filePath);
 
-                        var artist = new Artist(artistId, artistName, null, null, true);
-                        var album = new Album(albumId, albumTitle, artistId, artistName, (int)tagFile.Tag.Year, artworkUrl, "Local");
+                        var album = new Album(albumId, albumTitle, primaryArtistId, primaryArtistName, (int)tagFile.Tag.Year, artworkUrl, "Local");
 
                         string trackTitle = string.IsNullOrWhiteSpace(tagFile.Tag.Title)
                             ? Path.GetFileNameWithoutExtension(filePath)
@@ -206,8 +205,8 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
                         var track = new Track(
                             trackId,
                             trackTitle,
-                            artistId,
-                            artistName,
+                            primaryArtistId,
+                            displayArtistName,
                             albumId,
                             albumTitle,
                             tagFile.Properties.Duration.TotalSeconds,
@@ -220,7 +219,13 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
                             replayGain
                         );
 
-                        await _dbContext.UpsertArtistAsync(artist, tx);
+                        foreach (var aName in individualArtists)
+                        {
+                            string aId = IdGenerator.FromArtist(aName);
+                            var aEntity = new Artist(aId, aName, null, null, true);
+                            await _dbContext.UpsertArtistAsync(aEntity, tx);
+                        }
+
                         await _dbContext.UpsertAlbumAsync(album, tx);
                         await _dbContext.UpsertTrackAsync(track, tx);
 
@@ -396,17 +401,16 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
 
             try
             {
-                string artistName = string.IsNullOrWhiteSpace(tagFile.Tag.FirstPerformer) ? "Unknown Artist" : tagFile.Tag.FirstPerformer;
+                var (individualArtists, displayArtistName, primaryArtistName) = ParseArtistNames(tagFile);
                 string albumTitle = string.IsNullOrWhiteSpace(tagFile.Tag.Album) ? "Unknown Album" : tagFile.Tag.Album;
-                string artistId = IdGenerator.FromArtist(artistName);
-                string albumId = IdGenerator.FromAlbum(artistName, albumTitle);
+                string primaryArtistId = IdGenerator.FromArtist(primaryArtistName);
+                string albumId = IdGenerator.FromAlbum(primaryArtistName, albumTitle);
                 string trackId = IdGenerator.FromTrackUri(path);
                 DateTime dateAdded = IdGenerator.ResolveFileDateAdded(path);
 
                 string? artworkUrl = await ExtractHighestQualityArtworkAsync(tagFile, path);
 
-                var artist = new Artist(artistId, artistName, null, null, true);
-                var album = new Album(albumId, albumTitle, artistId, artistName, (int)tagFile.Tag.Year, artworkUrl, "Local");
+                var album = new Album(albumId, albumTitle, primaryArtistId, primaryArtistName, (int)tagFile.Tag.Year, artworkUrl, "Local");
 
                 string trackTitle = string.IsNullOrWhiteSpace(tagFile.Tag.Title)
                     ? Path.GetFileNameWithoutExtension(path)
@@ -438,8 +442,8 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
                 var track = new Track(
                     trackId,
                     trackTitle,
-                    artistId,
-                    artistName,
+                    primaryArtistId,
+                    displayArtistName,
                     albumId,
                     albumTitle,
                     tagFile.Properties.Duration.TotalSeconds,
@@ -452,7 +456,13 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
                     replayGain
                 );
 
-                await _dbContext.UpsertArtistAsync(artist, tx);
+                foreach (var aName in individualArtists)
+                {
+                    string aId = IdGenerator.FromArtist(aName);
+                    var aEntity = new Artist(aId, aName, null, null, true);
+                    await _dbContext.UpsertArtistAsync(aEntity, tx);
+                }
+
                 await _dbContext.UpsertAlbumAsync(album, tx);
                 await _dbContext.UpsertTrackAsync(track, tx);
 
@@ -633,5 +643,60 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
         }
 
         return null;
+    }
+
+    public static (List<string> IndividualArtists, string DisplayArtistName, string PrimaryArtistName) ParseArtistNames(TagLib.File tagFile)
+    {
+        var rawArtists = new List<string>();
+
+        if (tagFile.Tag.Performers != null && tagFile.Tag.Performers.Length > 0)
+        {
+            rawArtists.AddRange(tagFile.Tag.Performers);
+        }
+        if (tagFile.Tag.AlbumArtists != null && tagFile.Tag.AlbumArtists.Length > 0)
+        {
+            rawArtists.AddRange(tagFile.Tag.AlbumArtists);
+        }
+
+        if (rawArtists.Count == 0 && !string.IsNullOrWhiteSpace(tagFile.Tag.FirstPerformer))
+        {
+            rawArtists.Add(tagFile.Tag.FirstPerformer);
+        }
+
+        var individualArtists = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        char[] delimiters = new char[] { ';', '/', '\\' };
+
+        foreach (var raw in rawArtists)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+
+            string[] parts = raw.Split(delimiters, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var part in parts)
+            {
+                string cleaned = part.Trim();
+                if (string.IsNullOrWhiteSpace(cleaned)) continue;
+
+                string[] featParts = System.Text.RegularExpressions.Regex.Split(cleaned, @"\s+(?:feat\.|ft\.|featuring)\s+", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                foreach (var fPart in featParts)
+                {
+                    string sub = fPart.Trim();
+                    if (!string.IsNullOrWhiteSpace(sub) && seen.Add(sub))
+                    {
+                        individualArtists.Add(sub);
+                    }
+                }
+            }
+        }
+
+        if (individualArtists.Count == 0)
+        {
+            individualArtists.Add("Unknown Artist");
+        }
+
+        string primaryArtist = individualArtists[0];
+        string displayArtist = string.Join("; ", individualArtists);
+
+        return (individualArtists, displayArtist, primaryArtist);
     }
 }

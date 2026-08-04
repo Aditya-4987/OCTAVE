@@ -435,14 +435,40 @@ public class SqliteDbContext
     {
         var tracks = new List<Track>();
         using var conn = CreateConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = @"
-            SELECT Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded, Genre, ReplayGain 
-            FROM Tracks 
-            WHERE ArtistId = @artistId 
-            ORDER BY Year DESC, AlbumTitle ASC, TrackNumber ASC;";
         
-        cmd.Parameters.Add(new SqliteParameter("@artistId", artistId));
+        string? artistName = null;
+        using (var nameCmd = conn.CreateCommand())
+        {
+            nameCmd.CommandText = "SELECT Name FROM Artists WHERE Id = @artistId LIMIT 1;";
+            nameCmd.Parameters.Add(new SqliteParameter("@artistId", artistId));
+            var nameResult = await nameCmd.ExecuteScalarAsync();
+            if (nameResult != null && nameResult != DBNull.Value)
+            {
+                artistName = nameResult.ToString();
+            }
+        }
+
+        using var cmd = conn.CreateCommand();
+        if (!string.IsNullOrWhiteSpace(artistName))
+        {
+            cmd.CommandText = @"
+                SELECT Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded, Genre, ReplayGain 
+                FROM Tracks 
+                WHERE ArtistId = @artistId 
+                   OR ArtistName LIKE '%' || @artistName || '%'
+                ORDER BY Year DESC, AlbumTitle ASC, TrackNumber ASC;";
+            cmd.Parameters.Add(new SqliteParameter("@artistId", artistId));
+            cmd.Parameters.Add(new SqliteParameter("@artistName", artistName));
+        }
+        else
+        {
+            cmd.CommandText = @"
+                SELECT Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded, Genre, ReplayGain 
+                FROM Tracks 
+                WHERE ArtistId = @artistId 
+                ORDER BY Year DESC, AlbumTitle ASC, TrackNumber ASC;";
+            cmd.Parameters.Add(new SqliteParameter("@artistId", artistId));
+        }
 
         using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
@@ -450,7 +476,7 @@ public class SqliteDbContext
             var id = reader.GetString(0);
             var title = reader.GetString(1);
             var artId = reader.GetString(2);
-            var artistName = reader.GetString(3);
+            var rowArtistName = reader.GetString(3);
             var albumIdVal = reader.GetString(4);
             var albumTitle = reader.GetString(5);
             var durationSeconds = reader.GetDouble(6);
@@ -465,7 +491,7 @@ public class SqliteDbContext
             var replayGain = reader.IsDBNull(13) ? 0.0 : reader.GetDouble(13);
 
             tracks.Add(new Track(
-                id, title, artId, artistName, albumIdVal, albumTitle, durationSeconds, sourceUri, provider, trackNumber, year, dateAdded, genre, replayGain
+                id, title, artId, rowArtistName, albumIdVal, albumTitle, durationSeconds, sourceUri, provider, trackNumber, year, dateAdded, genre, replayGain
             ));
         }
         return tracks;
@@ -1021,7 +1047,7 @@ public class SqliteDbContext
                 cmd.CommandText = "DELETE FROM Albums WHERE Id NOT IN (SELECT DISTINCT AlbumId FROM Tracks);";
                 await cmd.ExecuteNonQueryAsync();
 
-                cmd.CommandText = "DELETE FROM Artists WHERE Id NOT IN (SELECT DISTINCT ArtistId FROM Albums);";
+                cmd.CommandText = "DELETE FROM Artists WHERE Id NOT IN (SELECT DISTINCT ArtistId FROM Albums UNION SELECT DISTINCT ArtistId FROM Tracks);";
                 await cmd.ExecuteNonQueryAsync();
             }
             await tx.CommitAsync();
@@ -1057,7 +1083,7 @@ public class SqliteDbContext
                 cmd.CommandText = "DELETE FROM Albums WHERE Id NOT IN (SELECT DISTINCT AlbumId FROM Tracks);";
                 await cmd.ExecuteNonQueryAsync();
 
-                cmd.CommandText = "DELETE FROM Artists WHERE Id NOT IN (SELECT DISTINCT ArtistId FROM Albums);";
+                cmd.CommandText = "DELETE FROM Artists WHERE Id NOT IN (SELECT DISTINCT ArtistId FROM Albums UNION SELECT DISTINCT ArtistId FROM Tracks);";
                 await cmd.ExecuteNonQueryAsync();
             }
             await tx.CommitAsync();
@@ -1286,8 +1312,8 @@ public class SqliteDbContext
                 var year = reader.GetInt32(10);
                 var epochSeconds = reader.GetInt64(11);
                 var dateAdded = DateTimeOffset.FromUnixTimeSeconds(epochSeconds).UtcDateTime;
-                var genre = reader.GetString(12);
-                var replayGain = reader.GetDouble(13);
+                var genre = reader.IsDBNull(12) ? "" : reader.GetString(12);
+                var replayGain = reader.IsDBNull(13) ? 0.0 : reader.GetDouble(13);
 
                 tracks.Add(new Track(
                     id, title, artistId, artistName, albumIdVal, albumTitle,

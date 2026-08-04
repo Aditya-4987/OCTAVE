@@ -32,13 +32,12 @@ public class ArtworkPathConverter : IValueConverter
             string parameterString = parameter as string ?? string.Empty;
             bool isArtist = parameterString.Equals("Artist", StringComparison.OrdinalIgnoreCase);
 
+            string uriString;
             if (string.IsNullOrWhiteSpace(artworkUrl))
             {
-                return isArtist ? PlaceholderArtist : PlaceholderAlbum;
+                uriString = isArtist ? "ms-appx:///Assets/PlaceholderArtist.png" : "ms-appx:///Assets/PlaceholderAlbum.png";
             }
-
-            string uriString;
-            if (artworkUrl.StartsWith("ArtworkCache/", StringComparison.OrdinalIgnoreCase))
+            else if (artworkUrl.StartsWith("ArtworkCache/", StringComparison.OrdinalIgnoreCase))
             {
                 string absolutePath = Path.Combine(Windows.Storage.ApplicationData.Current.LocalFolder.Path, artworkUrl.Replace('/', '\\'));
                 if (File.Exists(absolutePath))
@@ -47,7 +46,7 @@ public class ArtworkPathConverter : IValueConverter
                 }
                 else
                 {
-                    return isArtist ? PlaceholderArtist : PlaceholderAlbum;
+                    uriString = isArtist ? "ms-appx:///Assets/PlaceholderArtist.png" : "ms-appx:///Assets/PlaceholderAlbum.png";
                 }
             }
             else if (artworkUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase) || 
@@ -57,34 +56,34 @@ public class ArtworkPathConverter : IValueConverter
             }
             else
             {
-                return isArtist ? PlaceholderArtist : PlaceholderAlbum;
+                uriString = isArtist ? "ms-appx:///Assets/PlaceholderArtist.png" : "ms-appx:///Assets/PlaceholderAlbum.png";
             }
 
-            int targetDecodeWidth = 256;
-            if (parameter is string paramStr && !string.IsNullOrWhiteSpace(paramStr))
+            int targetDecodeWidth = 320;
+            if (!string.IsNullOrWhiteSpace(parameterString))
             {
-                if (paramStr.Equals("Small", StringComparison.OrdinalIgnoreCase) || 
-                    paramStr.Equals("Thumb", StringComparison.OrdinalIgnoreCase) ||
-                    paramStr.Equals("56", StringComparison.OrdinalIgnoreCase) ||
-                    paramStr.Equals("40", StringComparison.OrdinalIgnoreCase))
+                if (parameterString.Equals("Small", StringComparison.OrdinalIgnoreCase) || 
+                    parameterString.Equals("Thumb", StringComparison.OrdinalIgnoreCase) ||
+                    parameterString.Equals("56", StringComparison.OrdinalIgnoreCase) ||
+                    parameterString.Equals("40", StringComparison.OrdinalIgnoreCase))
                 {
-                    targetDecodeWidth = 128;
+                    targetDecodeWidth = 112;
                 }
-                else if (paramStr.Equals("Artist", StringComparison.OrdinalIgnoreCase) ||
-                         paramStr.Equals("Card", StringComparison.OrdinalIgnoreCase) ||
-                         paramStr.Equals("Medium", StringComparison.OrdinalIgnoreCase) ||
-                         paramStr.Equals("160", StringComparison.OrdinalIgnoreCase))
+                else if (parameterString.Equals("Artist", StringComparison.OrdinalIgnoreCase) ||
+                         parameterString.Equals("Card", StringComparison.OrdinalIgnoreCase) ||
+                         parameterString.Equals("Medium", StringComparison.OrdinalIgnoreCase) ||
+                         parameterString.Equals("160", StringComparison.OrdinalIgnoreCase))
                 {
-                    targetDecodeWidth = 256;
+                    targetDecodeWidth = 320;
                 }
-                else if (paramStr.Equals("Large", StringComparison.OrdinalIgnoreCase) ||
-                         paramStr.Equals("NowPlaying", StringComparison.OrdinalIgnoreCase) ||
-                         paramStr.Equals("Background", StringComparison.OrdinalIgnoreCase) ||
-                         paramStr.Equals("500", StringComparison.OrdinalIgnoreCase))
+                else if (parameterString.Equals("Large", StringComparison.OrdinalIgnoreCase) ||
+                         parameterString.Equals("NowPlaying", StringComparison.OrdinalIgnoreCase) ||
+                         parameterString.Equals("Background", StringComparison.OrdinalIgnoreCase) ||
+                         parameterString.Equals("500", StringComparison.OrdinalIgnoreCase))
                 {
-                    targetDecodeWidth = 640;
+                    targetDecodeWidth = 600;
                 }
-                else if (int.TryParse(paramStr, out int customWidth) && customWidth > 0)
+                else if (int.TryParse(parameterString, out int customWidth) && customWidth > 0)
                 {
                     targetDecodeWidth = customWidth;
                 }
@@ -123,7 +122,10 @@ public class ArtworkPathConverter : IValueConverter
         catch (Exception ex)
         {
             Debug.WriteLine($"[ArtworkPathConverter] {ex}");
-            return (parameter as string ?? "").Equals("Artist", StringComparison.OrdinalIgnoreCase) ? PlaceholderArtist : PlaceholderAlbum;
+            string fallbackUri = (parameter as string ?? "").Equals("Artist", StringComparison.OrdinalIgnoreCase) 
+                ? "ms-appx:///Assets/PlaceholderArtist.png" 
+                : "ms-appx:///Assets/PlaceholderAlbum.png";
+            return new BitmapImage(new Uri(fallbackUri)) { DecodePixelType = DecodePixelType.Logical, DecodePixelWidth = 256 };
         }
     }
 
