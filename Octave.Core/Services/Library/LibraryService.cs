@@ -119,6 +119,12 @@ public class LibraryService : ILibraryService
         LibraryUpdated?.Invoke(this, EventArgs.Empty);
     }
 
+    public async Task RelocateTrackAsync(string oldTrackId, string newPath)
+    {
+        await _dbContext.RelocateTrackAsync(oldTrackId, newPath);
+        LibraryUpdated?.Invoke(this, EventArgs.Empty);
+    }
+
     public Task<SearchResults> SearchLibraryAsync(string query, int? limit = null) =>
         _dbContext.SearchLibraryAsync(query, limit);
 }

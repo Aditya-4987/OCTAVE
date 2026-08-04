@@ -460,7 +460,8 @@ public partial class ShellViewModel : ObservableObject
     [RelayCommand]
     private async Task DeleteAllDuplicates()
     {
-        foreach (var group in Duplicates)
+        var snapshot = System.Linq.Enumerable.ToList(Duplicates);
+        foreach (var group in snapshot)
         {
             // Delete all except the very first track in the duplicate group
             for (int i = 1; i < group.Tracks.Count; i++)
@@ -468,10 +469,7 @@ public partial class ShellViewModel : ObservableObject
                 try
                 {
                     var track = group.Tracks[i];
-                    if (File.Exists(track.SourceUri))
-                    {
-                        File.Delete(track.SourceUri);
-                    }
+                    Octave.Core.Helpers.ShellRecycleBin.SendToRecycleBin(track.SourceUri);
                     await _libraryService.DeleteTrackAsync(track.Id);
                 }
                 catch (Exception ex)

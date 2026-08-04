@@ -13,6 +13,7 @@ public interface IPlaylistService
     Task<List<Playlist>> GetPlaylistsAsync();
     Task<Playlist?> GetPlaylistByIdAsync(string id);
     Task<List<Track>> GetPlaylistTracksAsync(string id);
+    Task<List<PlaylistTrackEntry>> GetPlaylistTrackEntriesAsync(string id);
 
     Task<Playlist> CreatePlaylistAsync(string title, string? description = null);
     Task DeletePlaylistAsync(string id);
@@ -20,5 +21,6 @@ public interface IPlaylistService
 
     Task AddTrackAsync(string playlistId, string trackId);
     Task RemoveTrackAsync(string playlistId, string trackId);
-    Task SetOrderAsync(string playlistId, IReadOnlyList<string> orderedTrackIds);
+    Task RemoveTrackEntryAsync(string entryId);
+    Task SetOrderAsync(string playlistId, IReadOnlyList<string> orderedTrackOrEntryIds);
 }

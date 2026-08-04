@@ -3,14 +3,26 @@ using Octave.Core.Models;
 
 namespace Octave.Core.Services.Audio;
 
+public class TrackEndedEventArgs : EventArgs
+{
+    public long SessionId { get; }
+    public string SourceUri { get; }
+
+    public TrackEndedEventArgs(long sessionId, string sourceUri)
+    {
+        SessionId = sessionId;
+        SourceUri = sourceUri;
+    }
+}
+
 public interface IAudioPlayerService
 {
     event EventHandler<string>? TrackStarted;
-    event EventHandler? TrackEnded;
+    event EventHandler<TrackEndedEventArgs>? TrackEnded;
     event EventHandler<double>? PositionChanged;
 
     bool Init();
-    void Play(string urlOrPath, double replayGain = 0.0);
+    long Play(string urlOrPath, double replayGain = 0.0);
     void Pause();
     void Resume();
     void Stop();

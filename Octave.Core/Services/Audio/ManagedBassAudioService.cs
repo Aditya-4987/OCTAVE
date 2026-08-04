@@ -34,8 +34,12 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
     // can call into a freed handle.
     private readonly object _streamLock = new();
 
+    private long _sessionIdCounter = 0;
+    private long _currentSessionId = 0;
+    private string _currentSourceUri = string.Empty;
+
     public event EventHandler<string>? TrackStarted;
-    public event EventHandler? TrackEnded;
+    public event EventHandler<TrackEndedEventArgs>? TrackEnded;
     public event EventHandler<double>? PositionChanged;
 
     public ManagedBassAudioService()
@@ -127,14 +131,17 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         }
     }
 
-    public void Play(string urlOrPath, double replayGain = 0.0)
+    public long Play(string urlOrPath, double replayGain = 0.0)
     {
         if (!_isInitialized) Init();
 
+        long sessionId = Interlocked.Increment(ref _sessionIdCounter);
         bool started = false;
         lock (_streamLock)
         {
             FreeStreamInternal(); // Kill any currently playing track and remove FX handles
+            _currentSessionId = sessionId;
+            _currentSourceUri = urlOrPath;
 
             int stream;
             // Check if we were handed an HTTP web stream or a local hard drive path
@@ -185,7 +192,7 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
 
                 Bass.ChannelPlay(stream);
                 started = true;
-                Debug.WriteLine($"[OCTAVE ENGINE] Playing stream ID: {stream}");
+                Debug.WriteLine($"[OCTAVE ENGINE] Playing stream ID: {stream}, Session ID: {sessionId}");
             }
             else
             {
@@ -203,13 +210,17 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         }
         else
         {
-            // On stream load failure (corrupted file, unsupported format), auto-advance queue off-thread
+            // On stream load failure (corrupted file, unsupported format), auto-advance queue off-thread with SessionId
             var handler = TrackEnded;
             if (handler != null)
             {
-                ThreadPool.QueueUserWorkItem(_ => handler.Invoke(this, EventArgs.Empty));
+                long endedSession = sessionId;
+                string endedUri = urlOrPath;
+                ThreadPool.QueueUserWorkItem(_ => handler.Invoke(this, new TrackEndedEventArgs(endedSession, endedUri)));
             }
         }
+
+        return sessionId;
     }
 
     public void Pause()
@@ -454,7 +465,14 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         var handler = TrackEnded;
         if (handler != null)
         {
-            ThreadPool.QueueUserWorkItem(_ => handler.Invoke(this, EventArgs.Empty));
+            long endedSession;
+            string endedUri;
+            lock (_streamLock)
+            {
+                endedSession = _currentSessionId;
+                endedUri = _currentSourceUri;
+            }
+            ThreadPool.QueueUserWorkItem(_ => handler.Invoke(this, new TrackEndedEventArgs(endedSession, endedUri)));
         }
     }
 

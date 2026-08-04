@@ -76,13 +76,22 @@ public sealed partial class SettingsPage : Page
                 try
                 {
                     string fileName = System.IO.Path.GetFileName(track.SourceUri);
+                    string fileNameWithoutExt = System.IO.Path.GetFileNameWithoutExtension(fileName);
+                    string ext = System.IO.Path.GetExtension(fileName);
                     string destPath = System.IO.Path.Combine(destFolder.Path, fileName);
+
+                    int collisionCounter = 1;
+                    while (System.IO.File.Exists(destPath))
+                    {
+                        destPath = System.IO.Path.Combine(destFolder.Path, $"{fileNameWithoutExt} ({collisionCounter}){ext}");
+                        collisionCounter++;
+                    }
+
                     System.IO.File.Move(track.SourceUri, destPath);
 
                     var libraryService = App.Services.GetRequiredService<Octave.Core.Services.Library.ILibraryService>();
-                    await libraryService.DeleteTrackAsync(track.Id);
+                    await libraryService.RelocateTrackAsync(track.Id, destPath);
 
-                    // Re-run the duplicates scan to update the UI
                     if (ViewModel.FindDuplicatesCommand.CanExecute(null))
                     {
                         ViewModel.FindDuplicatesCommand.Execute(null);
@@ -115,18 +124,11 @@ public sealed partial class SettingsPage : Page
             {
                 try
                 {
-                    if (System.IO.File.Exists(track.SourceUri))
-                    {
-                        Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(
-                            track.SourceUri,
-                            Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
-                            Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
-                    }
+                    Octave.Core.Helpers.ShellRecycleBin.SendToRecycleBin(track.SourceUri);
 
                     var libraryService = App.Services.GetRequiredService<Octave.Core.Services.Library.ILibraryService>();
                     await libraryService.DeleteTrackAsync(track.Id);
 
-                    // Re-run the duplicates scan to update the UI
                     if (ViewModel.FindDuplicatesCommand.CanExecute(null))
                     {
                         ViewModel.FindDuplicatesCommand.Execute(null);
@@ -137,6 +139,71 @@ public sealed partial class SettingsPage : Page
                     System.Diagnostics.Debug.WriteLine($"Failed to delete file: {ex.Message}");
                 }
             }
+        }
+    }
+
+    private async void DeleteAllDuplicates_Click(object sender, RoutedEventArgs e)
+    {
+        var snapshot = System.Linq.Enumerable.ToList(ViewModel.Duplicates);
+        int totalFilesToDelete = 0;
+        foreach (var group in snapshot)
+        {
+            if (group.Tracks.Count > 1)
+            {
+                totalFilesToDelete += (group.Tracks.Count - 1);
+            }
+        }
+
+        if (totalFilesToDelete == 0) return;
+
+        var dialog = new ContentDialog
+        {
+            Title = "Delete All Duplicate Files?",
+            Content = $"Are you sure you want to move {totalFilesToDelete} duplicate file(s) across {snapshot.Count} group(s) to the Recycle Bin?\nThe primary highest-quality copy in each group will be retained.",
+            PrimaryButtonText = "Move All to Recycle Bin",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = this.XamlRoot
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary) return;
+
+        int successCount = 0;
+        int failedCount = 0;
+        var libraryService = App.Services.GetRequiredService<Octave.Core.Services.Library.ILibraryService>();
+
+        foreach (var group in snapshot)
+        {
+            for (int i = 1; i < group.Tracks.Count; i++)
+            {
+                var track = group.Tracks[i];
+                try
+                {
+                    bool moved = Octave.Core.Helpers.ShellRecycleBin.SendToRecycleBin(track.SourceUri);
+                    await libraryService.DeleteTrackAsync(track.Id);
+                    if (moved) successCount++; else failedCount++;
+                }
+                catch (System.Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Bulk delete failed for {track.SourceUri}: {ex.Message}");
+                    failedCount++;
+                }
+            }
+        }
+
+        var summaryDialog = new ContentDialog
+        {
+            Title = "Bulk Deletion Complete",
+            Content = $"Successfully moved {successCount} duplicate file(s) to the Recycle Bin." + (failedCount > 0 ? $"\n{failedCount} file(s) could not be removed." : ""),
+            CloseButtonText = "OK",
+            XamlRoot = this.XamlRoot
+        };
+        await summaryDialog.ShowAsync();
+
+        if (ViewModel.FindDuplicatesCommand.CanExecute(null))
+        {
+            ViewModel.FindDuplicatesCommand.Execute(null);
         }
     }
 }

@@ -55,11 +55,18 @@ public class LibraryWatcherService : ILibraryWatcherService, IDisposable
 
         lock (_watchers)
         {
+            if (_watchers.Exists(w => string.Equals(w.Path, path, StringComparison.OrdinalIgnoreCase)))
+            {
+                Debug.WriteLine($"[LibraryWatcher] Watcher already active for path: {path}");
+                return;
+            }
+
             Debug.WriteLine($"[LibraryWatcher] Starting watcher for directory: {path}");
 
             var watcher = new FileSystemWatcher(path)
             {
                 IncludeSubdirectories = true,
+                InternalBufferSize = 65536,
                 NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.CreationTime
             };
 
@@ -67,6 +74,11 @@ public class LibraryWatcherService : ILibraryWatcherService, IDisposable
             watcher.Changed += OnChanged;
             watcher.Deleted += OnDeleted;
             watcher.Renamed += OnRenamed;
+            watcher.Error += (s, e) =>
+            {
+                Debug.WriteLine($"[LibraryWatcher] FileSystemWatcher buffer overflow/error for path {path}: {e.GetException()?.Message}");
+                _ = _libraryScanner.RequestFullReconciliationAsync();
+            };
 
             watcher.EnableRaisingEvents = true;
             _watchers.Add(watcher);

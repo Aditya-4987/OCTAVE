@@ -115,7 +115,7 @@
                            FontSize="12" Foreground="#888888" />
                 <StackPanel Orientation="Horizontal" Spacing="12">
                     <Button Content="Scan for Duplicates" Command="{x:Bind ViewModel.FindDuplicatesCommand}" />
-                    <Button Content="Delete All Duplicates" Command="{x:Bind ViewModel.DeleteAllDuplicatesCommand}" Foreground="#EF5350" />
+                    <Button Content="Delete All Duplicates" Click="DeleteAllDuplicates_Click" Foreground="#EF5350" />
                     <TextBlock Text="{x:Bind ViewModel.DuplicatesSummary, Mode=OneWay}" Foreground="#888888" VerticalAlignment="Center" />
                 </StackPanel>
                 <ItemsControl ItemsSource="{x:Bind ViewModel.Duplicates, Mode=OneWay}">

@@ -24,6 +24,8 @@ public class PlaylistService : IPlaylistService
 
     public Task<List<Track>> GetPlaylistTracksAsync(string id) => _dbContext.GetPlaylistTracksAsync(id);
 
+    public Task<List<PlaylistTrackEntry>> GetPlaylistTrackEntriesAsync(string id) => _dbContext.GetPlaylistTrackEntriesAsync(id);
+
     public async Task<Playlist> CreatePlaylistAsync(string title, string? description = null)
     {
         var playlist = await _dbContext.CreatePlaylistAsync(title, description);
@@ -55,9 +57,15 @@ public class PlaylistService : IPlaylistService
         PlaylistsChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    public async Task SetOrderAsync(string playlistId, IReadOnlyList<string> orderedTrackIds)
+    public async Task RemoveTrackEntryAsync(string entryId)
     {
-        await _dbContext.SetPlaylistOrderAsync(playlistId, orderedTrackIds);
+        await _dbContext.RemoveTrackEntryFromPlaylistAsync(entryId);
+        PlaylistsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public async Task SetOrderAsync(string playlistId, IReadOnlyList<string> orderedTrackOrEntryIds)
+    {
+        await _dbContext.SetPlaylistOrderAsync(playlistId, orderedTrackOrEntryIds);
         PlaylistsChanged?.Invoke(this, EventArgs.Empty);
     }
 }

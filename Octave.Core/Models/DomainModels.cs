@@ -50,6 +50,13 @@ public record Playlist(
     int TrackCount = 0      // Hydrated dynamically by SQL COUNT()
 );
 
+public record PlaylistTrackEntry(
+    string EntryId,
+    string PlaylistId,
+    Track Track,
+    int SortOrder
+);
+
 // =================================================================
 // 2. RUNTIME / STATE MODELS (Never saved to SQL directly)
 // =================================================================
@@ -87,7 +94,8 @@ public record PersistedPlayerState(
     double PositionSeconds,
     float Volume,
     bool IsShuffle,
-    RepeatMode RepeatMode
+    RepeatMode RepeatMode,
+    System.Collections.Generic.List<string>? UnshuffledTrackIds = null
 );
 
 public record SearchResults(
