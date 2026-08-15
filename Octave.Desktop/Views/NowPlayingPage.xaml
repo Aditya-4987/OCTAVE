@@ -1,0 +1,92 @@
+<Page
+    x:Class="Octave_Desktop.Views.NowPlayingPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:np="using:Octave_Desktop.Controls.NowPlaying"
+    mc:Ignorable="d"
+    Background="Transparent">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled">
+        <Grid Padding="24,16,24,32" RowSpacing="28">
+            <Grid.RowDefinitions>
+                <!-- Top Main Stage -->
+                <RowDefinition Height="Auto" MinHeight="360"/>
+                <!-- Bottom Details -->
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- TOP MAIN STAGE (Row 0) -->
+            <Grid Grid.Row="0" x:Name="TopStageGrid" ColumnSpacing="24" SizeChanged="TopStageGrid_SizeChanged">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition x:Name="AlbumColumn" Width="*"/>
+                    <ColumnDefinition x:Name="LyricsColumn" Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Album Art Panel -->
+                <np:AlbumArtPanel Grid.Column="0"
+                                 x:Name="AlbumPanelControl"
+                                 HorizontalAlignment="Center"
+                                 VerticalAlignment="Center"
+                                 TrackTitle="{x:Bind ViewModel.TrackTitle, Mode=OneWay}"
+                                 ArtistName="{x:Bind ViewModel.ArtistName, Mode=OneWay}"
+                                 AlbumTitle="{x:Bind ViewModel.AlbumTitle, Mode=OneWay}"
+                                 ArtworkUrl="{x:Bind ViewModel.CurrentArtworkUrl, Mode=OneWay}"
+                                 IsPlaying="{x:Bind ViewModel.IsPlaying, Mode=OneWay}"
+                                 PlayPauseRequested="AlbumPanelControl_PlayPauseRequested">
+                    <np:AlbumArtPanel.RenderTransform>
+                        <TranslateTransform x:Name="AlbumPanelTransform" />
+                    </np:AlbumArtPanel.RenderTransform>
+                </np:AlbumArtPanel>
+
+                <!-- Lyrics Panel -->
+                <np:LyricsPanel Grid.Column="1"
+                                x:Name="LyricsPanelControl"
+                                State="{x:Bind ViewModel.LyricsState, Mode=OneWay}"
+                                SyncedLines="{x:Bind ViewModel.SyncedLines, Mode=OneWay}"
+                                UnsyncedText="{x:Bind ViewModel.UnsyncedText, Mode=OneWay}"
+                                CurrentLyricIndex="{x:Bind ViewModel.CurrentLyricIndex, Mode=OneWay}">
+                    <np:LyricsPanel.RenderTransform>
+                        <TranslateTransform x:Name="LyricsPanelTransform" />
+                    </np:LyricsPanel.RenderTransform>
+                </np:LyricsPanel>
+            </Grid>
+
+            <!-- BOTTOM DETAILS (Row 1) -->
+            <Grid Grid.Row="1" x:Name="BottomDetailsGrid" ColumnSpacing="24">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition x:Name="CreditsColumn" Width="*"/>
+                    <ColumnDefinition x:Name="QueueColumn" Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Credits Panel -->
+                <np:CreditsPanel Grid.Column="0"
+                                 x:Name="CreditsPanelControl"
+                                 VerticalAlignment="Top"
+                                 SizeChanged="CreditsPanelControl_SizeChanged"
+                                 ArtistClicked="CreditsPanelControl_ArtistClicked"
+                                 AlbumClicked="CreditsPanelControl_AlbumClicked"
+                                 ArtistsList="{x:Bind ViewModel.ArtistsList, Mode=OneWay}"
+                                 ArtistName="{x:Bind ViewModel.ArtistName, Mode=OneWay}"
+                                 ArtistArtworkUrl="{x:Bind ViewModel.ArtistArtworkUrl, Mode=OneWay}"
+                                 AlbumTitle="{x:Bind ViewModel.AlbumTitle, Mode=OneWay}"
+                                 AlbumArtworkUrl="{x:Bind ViewModel.AlbumArtworkUrl, Mode=OneWay}"
+                                 AlbumYear="{x:Bind ViewModel.AlbumYear, Mode=OneWay}"
+                                 QualityDetails="{x:Bind ViewModel.QualityDetails, Mode=OneWay}"/>
+
+                <!-- Up Next Queue Panel -->
+                <np:QueuePanel Grid.Column="1"
+                               x:Name="QueuePanelControl"
+                               VerticalAlignment="Stretch"
+                               ItemsSource="{x:Bind ViewModel.UpNextQueue, Mode=OneWay}"
+                               PlayItemRequested="QueuePanelControl_PlayItemRequested"
+                               ClearQueueRequested="QueuePanelControl_ClearQueueRequested">
+                    <np:QueuePanel.RenderTransform>
+                        <TranslateTransform x:Name="QueuePanelTransform" />
+                    </np:QueuePanel.RenderTransform>
+                </np:QueuePanel>
+            </Grid>
+        </Grid>
+    </ScrollViewer>
+</Page>

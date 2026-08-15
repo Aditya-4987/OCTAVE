@@ -7,6 +7,7 @@
     xmlns:local="using:Octave_Desktop"
     xmlns:converters="using:Octave_Desktop.Converters"
     xmlns:models="using:Octave.Core.Models"
+    xmlns:controls="using:Octave.Desktop.Controls"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     Title="Octave.Desktop"
     mc:Ignorable="d">
@@ -82,10 +83,32 @@
                     </NavigationView.Header>
                     <NavigationView.MenuItems>
                         <NavigationViewItem Content="Home" Icon="Home" Tag="Home" x:Name="HomeItem" />
-                        <NavigationViewItem Content="Library" Icon="Audio" Tag="Library" x:Name="LibraryItem" />
-                        <NavigationViewItem Content="Albums" Icon="AllApps" Tag="Albums" />
+                        <NavigationViewItem Content="Library" Tag="Library" x:Name="LibraryItem">
+                            <NavigationViewItem.Icon>
+                                <FontIcon Glyph="&#xE8F1;" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                        <NavigationViewItem Content="Albums" Tag="Albums">
+                            <NavigationViewItem.Icon>
+                                <FontIcon Glyph="&#xE93C;" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
                         <NavigationViewItem Content="Artists" Icon="Contact" Tag="Artists" />
-                        <NavigationViewItem Content="Playlists" Icon="List" Tag="Playlists" />
+                        <NavigationViewItem Content="Playlists" Tag="Playlists">
+                            <NavigationViewItem.Icon>
+                                <FontIcon Glyph="&#xE90B;" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                        <NavigationViewItem Content="Now Playing" Tag="NowPlaying" x:Name="NowPlayingItem">
+                            <NavigationViewItem.Icon>
+                                <FontIcon Glyph="{x:Bind GetNowPlayingGlyph(ViewModel.IsPlaying), Mode=OneWay}" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                        <NavigationViewItem Content="Audio FX" Tag="AudioFX" x:Name="AudioFxItem">
+                            <NavigationViewItem.Icon>
+                                <FontIcon Glyph="&#xE9D9;" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
                     </NavigationView.MenuItems>
                     
                     <Frame x:Name="ContentFrame" />
@@ -225,7 +248,78 @@
                         <StackPanel VerticalAlignment="Center">
                             <TextBlock Text="{x:Bind ViewModel.TrackTitle, Mode=OneWay}" FontWeight="SemiBold" FontSize="14" Foreground="White" TextTrimming="CharacterEllipsis" MaxWidth="220" />
                             <TextBlock Text="{x:Bind ViewModel.ArtistName, Mode=OneWay}" FontSize="12" Foreground="#AAAAAA" TextTrimming="CharacterEllipsis" MaxWidth="220" />
-                            <TextBlock Text="{x:Bind ViewModel.StreamingQuality, Mode=OneWay}" FontSize="10" Foreground="#666666" Margin="0,2,0,0" />
+                            <Border Margin="0,4,0,0" HorizontalAlignment="Left" CornerRadius="4" Padding="6,2" Background="#1FFFFFFF" ToolTipService.Placement="Top">
+                                <ToolTipService.ToolTip>
+                                    <ToolTip Background="#18181A" BorderBrush="#333338" BorderThickness="1" CornerRadius="10" Padding="14" MaxWidth="450">
+                                        <StackPanel Spacing="8">
+                                            <!-- Header -->
+                                            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                                <FontIcon Glyph="&#xE93E;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#00E676" />
+                                                <TextBlock Text="AUDIO PIPELINE &amp; STREAM QUALITY" FontSize="10" FontWeight="Bold" Foreground="#888888" CharacterSpacing="50" />
+                                            </StackPanel>
+
+                                            <MenuFlyoutSeparator Margin="0,0,0,2" Background="#333338" />
+
+                                            <Grid ColumnSpacing="12" RowSpacing="5">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                </Grid.RowDefinitions>
+
+                                                <!-- Stream Format -->
+                                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Stream (Source):" FontSize="11" Foreground="#888888" VerticalAlignment="Center" />
+                                                <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                                    <TextBlock Text="{x:Bind ViewModel.AudioQualityInfo.StreamQuality, Mode=OneWay}" FontSize="11" FontWeight="SemiBold" Foreground="#00E676" />
+                                                    <TextBlock Text="{x:Bind ViewModel.AudioQualityInfo.ChannelsText, Mode=OneWay}" FontSize="10" Foreground="#888888" VerticalAlignment="Center" />
+                                                </StackPanel>
+
+                                                <!-- Codec / Container -->
+                                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Codec / Format:" FontSize="11" Foreground="#888888" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{x:Bind ViewModel.AudioQualityInfo.CodecFormat, Mode=OneWay}" FontSize="11" Foreground="#CCCCCC" VerticalAlignment="Center" />
+
+                                                <!-- Decoder Engine -->
+                                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Decoder Engine:" FontSize="11" Foreground="#888888" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Row="2" Grid.Column="1" Text="{x:Bind ViewModel.AudioQualityInfo.DecoderEngine, Mode=OneWay}" FontSize="11" Foreground="#AAAAAA" VerticalAlignment="Center" />
+
+                                                <MenuFlyoutSeparator Grid.Row="3" Grid.ColumnSpan="2" Margin="0,2" Background="#26262B" />
+
+                                                <!-- Output Device Format -->
+                                                <TextBlock Grid.Row="4" Grid.Column="0" Text="Hardware Output:" FontSize="11" Foreground="#888888" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Row="4" Grid.Column="1" Text="{x:Bind ViewModel.AudioQualityInfo.OutputDeviceQuality, Mode=OneWay}" FontSize="11" FontWeight="SemiBold" Foreground="#FFFFFF" VerticalAlignment="Center" />
+
+                                                <!-- Resampling State -->
+                                                <TextBlock Grid.Row="5" Grid.Column="0" Text="Resampling State:" FontSize="11" Foreground="#888888" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Row="5" Grid.Column="1" Text="{x:Bind ViewModel.AudioQualityInfo.ResamplingStatus, Mode=OneWay}" FontSize="11" Foreground="#FFD54F" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+
+                                                <!-- Output Device Name -->
+                                                <TextBlock Grid.Row="6" Grid.Column="0" Text="Active Output:" FontSize="11" Foreground="#888888" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Row="6" Grid.Column="1" Text="{x:Bind ViewModel.AudioQualityInfo.OutputDeviceName, Mode=OneWay}" FontSize="11" Foreground="#AAAAAA" TextTrimming="CharacterEllipsis" MaxWidth="170" VerticalAlignment="Center" />
+                                            </Grid>
+
+                                            <MenuFlyoutSeparator Margin="0,2,0,0" Background="#26262B" />
+                                            
+                                            <!-- DSP / EQ Processing -->
+                                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                                <FontIcon Glyph="&#xE9D9;" FontFamily="Segoe MDL2 Assets" FontSize="10" Foreground="#888888" VerticalAlignment="Center" />
+                                                <TextBlock Text="{x:Bind ViewModel.AudioQualityInfo.DspStatus, Mode=OneWay}" FontSize="10" Foreground="#888888" VerticalAlignment="Center" />
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </ToolTip>
+                                </ToolTipService.ToolTip>
+                                <StackPanel Orientation="Horizontal" Spacing="5">
+                                    <FontIcon Glyph="&#xE93E;" FontFamily="Segoe MDL2 Assets" FontSize="10" Foreground="#00E676" VerticalAlignment="Center" />
+                                    <TextBlock Text="{x:Bind ViewModel.StreamingQuality, Mode=OneWay}" FontSize="10" FontWeight="Medium" Foreground="#E0E0E0" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Border>
                         </StackPanel>
                     </StackPanel>
                 </Button>
@@ -284,7 +378,10 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="{x:Bind FormatSeconds(ViewModel.PositionSeconds), Mode=OneWay}" FontSize="11" Foreground="#AAAAAA" VerticalAlignment="Center" Width="40" TextAlignment="Right" Margin="0,0,8,0"/>
-                    <Slider Grid.Column="1" x:Name="PlaybackSlider" Minimum="0" Maximum="{x:Bind ViewModel.DurationSeconds, Mode=OneWay}" Value="{x:Bind ViewModel.PositionSeconds, Mode=OneWay}" IsThumbToolTipEnabled="False" VerticalAlignment="Center" Margin="0,-8,0,-8" ValueChanged="PlaybackSlider_ValueChanged" PointerPressed="PlaybackSlider_PointerPressed" PointerReleased="PlaybackSlider_PointerReleased" PointerCaptureLost="PlaybackSlider_PointerCaptureLost" PointerCanceled="PlaybackSlider_PointerCanceled" ManipulationStarted="PlaybackSlider_ManipulationStarted" ManipulationCompleted="PlaybackSlider_ManipulationCompleted"/>
+                    <Grid Grid.Column="1" VerticalAlignment="Center">
+                        <controls:SpectrumVisualizerControl x:Name="ProgressBarVisualizer" Visibility="{x:Bind BoolToVisibility(ViewModel.IsVisualizerEnabled), Mode=OneWay}" Margin="8,0,8,8" VerticalAlignment="Center" Height="25" />
+                        <Slider x:Name="PlaybackSlider" Minimum="0" Maximum="{x:Bind ViewModel.DurationSeconds, Mode=OneWay}" Value="{x:Bind ViewModel.PositionSeconds, Mode=OneWay}" IsThumbToolTipEnabled="False" VerticalAlignment="Center" Margin="0,-8,0,-8" ValueChanged="PlaybackSlider_ValueChanged" PointerPressed="PlaybackSlider_PointerPressed" PointerReleased="PlaybackSlider_PointerReleased" PointerCaptureLost="PlaybackSlider_PointerCaptureLost" PointerCanceled="PlaybackSlider_PointerCanceled" ManipulationStarted="PlaybackSlider_ManipulationStarted" ManipulationCompleted="PlaybackSlider_ManipulationCompleted"/>
+                    </Grid>
                     <TextBlock Grid.Column="2" Text="{x:Bind FormatSeconds(ViewModel.DurationSeconds), Mode=OneWay}" FontSize="11" Foreground="#AAAAAA" VerticalAlignment="Center" Width="40" TextAlignment="Left" Margin="8,0,0,0"/>
                 </Grid>
             </Grid>

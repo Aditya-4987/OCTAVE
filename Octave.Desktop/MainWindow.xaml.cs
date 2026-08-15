@@ -11,6 +11,7 @@ namespace Octave_Desktop;
 public sealed partial class MainWindow : Window
 {
     public ShellViewModel ViewModel { get; }
+    private readonly Octave.Core.Services.Audio.IAudioPlayerService _audioPlayer = App.Services.GetRequiredService<Octave.Core.Services.Audio.IAudioPlayerService>();
 
     public MainWindow()
     {
@@ -38,6 +39,17 @@ public sealed partial class MainWindow : Window
 
         // Global Spacebar Play/Pause handler before UI controls consume Space for selection
         RootGrid.PreviewKeyDown += RootGrid_PreviewKeyDown;
+
+        // Real-time audio spectrum rendering tick
+        CompositionTarget.Rendering += CompositionTarget_Rendering;
+    }
+
+    private void CompositionTarget_Rendering(object? sender, object e)
+    {
+        if (ProgressBarVisualizer == null || !ViewModel.IsVisualizerEnabled) return;
+        var fft = _audioPlayer.GetFftData(36);
+        double ratio = (ViewModel.DurationSeconds > 0) ? (ViewModel.PositionSeconds / ViewModel.DurationSeconds) : 0.0;
+        ProgressBarVisualizer.UpdateSpectrum(fft, ratio);
     }
 
     private void RootGrid_SizeChanged(object sender, Microsoft.UI.Xaml.SizeChangedEventArgs e)
@@ -55,6 +67,8 @@ public sealed partial class MainWindow : Window
             TrackDetailsColumn.MaxWidth = 350;
         }
     }
+
+    public string GetNowPlayingGlyph(bool isPlaying) => isPlaying ? "\uE769" : "\uE768";
 
     private void NavigationView_ItemInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
     {
@@ -74,6 +88,8 @@ public sealed partial class MainWindow : Window
                 "Albums" => typeof(Views.AlbumsPage),
                 "Artists" => typeof(Views.ArtistsPage),
                 "Playlists" => typeof(Views.PlaylistsPage),
+                "NowPlaying" => typeof(Views.NowPlayingPage),
+                "AudioFX" => typeof(Views.AudioFxPage),
                 _ => null
             };
 
@@ -135,6 +151,8 @@ public sealed partial class MainWindow : Window
         else if (ContentFrame.SourcePageType == typeof(Views.ArtistsPage)) tag = "Artists";
         else if (ContentFrame.SourcePageType == typeof(Views.PlaylistsPage)) tag = "Playlists";
         else if (ContentFrame.SourcePageType == typeof(Views.PlaylistDetailPage)) tag = "Playlists";
+        else if (ContentFrame.SourcePageType == typeof(Views.NowPlayingPage)) tag = "NowPlaying";
+        else if (ContentFrame.SourcePageType == typeof(Views.AudioFxPage)) tag = "AudioFX";
 
         if (tag != null)
         {
@@ -394,7 +412,7 @@ public sealed partial class MainWindow : Window
         {
             EntityType.Track => "\uE189",
             EntityType.Artist => "\uE77B",
-            EntityType.Playlist => "\uE8FD",
+            EntityType.Playlist => "\uE90B",
             _ => "\uE93C"
         };
     }

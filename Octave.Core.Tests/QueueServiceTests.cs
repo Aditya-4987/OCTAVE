@@ -105,4 +105,39 @@ public class QueueServiceTests : IDisposable
             Assert.Equal($"id{i}", restoredQueue[i].Track.Id);
         }
     }
+
+    [Fact]
+    public void ManagedBassAudioService_CrossfadeDurationMs_ClampsNegativeValues()
+    {
+        using var audioService = new ManagedBassAudioService();
+        Assert.Equal(1000, audioService.CrossfadeDurationMs);
+
+        audioService.CrossfadeDurationMs = 2500;
+        Assert.Equal(2500, audioService.CrossfadeDurationMs);
+
+        audioService.CrossfadeDurationMs = -500;
+        Assert.Equal(0, audioService.CrossfadeDurationMs);
+    }
+
+    [Fact]
+    public async Task RestorePositionOnStartup_DefaultsToFalse_AndResetsPositionToZero()
+    {
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+        Assert.False(queueService.RestorePositionOnStartup);
+
+        var track1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
+        await _dbContext.UpsertTrackAsync(track1);
+
+        // Save state with position = 90.0s
+        await _dbContext.SavePlayerStateAsync(new[] { "t1" }, new[] { "t1" }, 0, 90.0, 0.8f, false, RepeatMode.None);
+
+        // RestoreAsync with RestorePositionOnStartup = false (default)
+        await queueService.RestoreAsync();
+
+        // Play restored track
+        queueService.PlayIndex(0);
+
+        // Verify Seek was NOT called on audio player (position reset to 0:00)
+        _audioPlayerMock.Verify(a => a.Seek(It.IsAny<double>()), Times.Never);
+    }
 }

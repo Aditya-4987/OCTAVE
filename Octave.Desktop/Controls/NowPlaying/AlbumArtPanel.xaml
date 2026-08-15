@@ -1,0 +1,68 @@
+<UserControl
+    x:Class="Octave_Desktop.Controls.NowPlaying.AlbumArtPanel"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:converters="using:Octave_Desktop.Converters"
+    mc:Ignorable="d">
+
+    <UserControl.Resources>
+        <converters:ArtworkPathConverter x:Key="ArtworkPathConverter" />
+    </UserControl.Resources>
+
+    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="20" MaxWidth="440">
+        <!-- Interactive Album Art Container -->
+        <Button x:Name="ArtButton"
+                Click="ArtButton_Click"
+                HorizontalAlignment="Center"
+                Background="Transparent"
+                BorderBrush="Transparent"
+                Padding="0"
+                CornerRadius="16"
+                UseSystemFocusVisuals="True"
+                ToolTipService.ToolTip="Click to Play/Pause">
+            <Grid Width="340" Height="340">
+                <Border CornerRadius="16" Background="#1E1E1E">
+                    <Image Source="{x:Bind ArtworkUrl, Mode=OneWay, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=NowPlaying}"
+                           Stretch="UniformToFill" />
+                </Border>
+
+                <!-- Hover Play/Pause Overlay Icon -->
+                <Border CornerRadius="16" Background="#40000000" x:Name="HoverOverlay" Opacity="0">
+                    <FontIcon Glyph="{x:Bind IsPlayingGlyph(IsPlaying), Mode=OneWay}"
+                              FontFamily="Segoe MDL2 Assets"
+                              FontSize="48"
+                              Foreground="White"
+                              HorizontalAlignment="Center"
+                              VerticalAlignment="Center"/>
+                </Border>
+            </Grid>
+        </Button>
+
+        <!-- Track Metadata -->
+        <StackPanel Spacing="6" HorizontalAlignment="Center">
+            <TextBlock Text="{x:Bind TrackTitle, Mode=OneWay}"
+                       FontSize="24"
+                       FontWeight="Bold"
+                       Foreground="White"
+                       TextAlignment="Center"
+                       TextWrapping="Wrap"
+                       MaxLines="2"
+                       TextTrimming="CharacterEllipsis"/>
+
+            <TextBlock Text="{x:Bind ArtistName, Mode=OneWay}"
+                       FontSize="16"
+                       Foreground="#B3B3B3"
+                       TextAlignment="Center"
+                       TextTrimming="CharacterEllipsis"/>
+
+            <TextBlock Text="{x:Bind AlbumTitle, Mode=OneWay}"
+                       FontSize="13"
+                       Foreground="#777777"
+                       TextAlignment="Center"
+                       TextTrimming="CharacterEllipsis"
+                       Visibility="{x:Bind HasTextVisibility(AlbumTitle), Mode=OneWay}"/>
+        </StackPanel>
+    </StackPanel>
+</UserControl>

@@ -34,7 +34,7 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
         {
             lock (_monitoredPaths)
             {
-                return _monitoredPaths.AsReadOnly();
+                return _monitoredPaths.ToArray();
             }
         }
     }

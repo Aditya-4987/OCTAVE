@@ -1,0 +1,21 @@
+<Page
+    x:Class="Octave_Desktop.Views.AudioFxPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Background="Transparent">
+
+    <Grid Padding="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="Audio FX &amp; Diagnostics" FontSize="28" FontWeight="Bold" Margin="0,0,0,24" Foreground="White" />
+        
+        <!-- Empty Page Container -->
+        <Grid Grid.Row="1" />
+    </Grid>
+</Page>

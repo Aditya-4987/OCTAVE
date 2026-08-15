@@ -1,10 +1,4 @@
 C:\Users\ADITYA\Documents\GitHub\OCTAVE\Octave.Core.Tests\bin\Debug\net10.0\.msCoverageSourceRootsMapping_Octave.Core.Tests
-C:\Users\ADITYA\Documents\GitHub\OCTAVE\Octave.Core.Tests\obj\Debug\net10.0\Octave.Core.Tests.csproj.AssemblyReference.cache
-C:\Users\ADITYA\Documents\GitHub\OCTAVE\Octave.Core.Tests\obj\Debug\net10.0\Octave.Core.Tests.GeneratedMSBuildEditorConfig.editorconfig
-C:\Users\ADITYA\Documents\GitHub\OCTAVE\Octave.Core.Tests\obj\Debug\net10.0\Octave.Core.Tests.AssemblyInfoInputs.cache
-C:\Users\ADITYA\Documents\GitHub\OCTAVE\Octave.Core.Tests\obj\Debug\net10.0\Octave.Core.Tests.AssemblyInfo.cs
-C:\Users\ADITYA\Documents\GitHub\OCTAVE\Octave.Core.Tests\obj\Debug\net10.0\Octave.Core.Tests.csproj.CoreCompileInputs.cache
-C:\Users\ADITYA\Documents\GitHub\OCTAVE\Octave.Core.Tests\obj\Debug\net10.0\Octave.Core.Tests.sourcelink.json
 C:\Users\ADITYA\Documents\GitHub\OCTAVE\Octave.Core.Tests\bin\Debug\net10.0\testhost.dll
 C:\Users\ADITYA\Documents\GitHub\OCTAVE\Octave.Core.Tests\bin\Debug\net10.0\testhost.exe
 C:\Users\ADITYA\Documents\GitHub\OCTAVE\Octave.Core.Tests\bin\Debug\net10.0\xunit.runner.visualstudio.testadapter.dll
@@ -137,6 +131,12 @@ C:\Users\ADITYA\Documents\GitHub\OCTAVE\Octave.Core.Tests\bin\Debug\net10.0\runt
 C:\Users\ADITYA\Documents\GitHub\OCTAVE\Octave.Core.Tests\bin\Debug\net10.0\runtimes\win\lib\net6.0\System.Diagnostics.EventLog.dll
 C:\Users\ADITYA\Documents\GitHub\OCTAVE\Octave.Core.Tests\bin\Debug\net10.0\Octave.Core.dll
 C:\Users\ADITYA\Documents\GitHub\OCTAVE\Octave.Core.Tests\bin\Debug\net10.0\Octave.Core.pdb
+C:\Users\ADITYA\Documents\GitHub\OCTAVE\Octave.Core.Tests\obj\Debug\net10.0\Octave.Core.Tests.csproj.AssemblyReference.cache
+C:\Users\ADITYA\Documents\GitHub\OCTAVE\Octave.Core.Tests\obj\Debug\net10.0\Octave.Core.Tests.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\ADITYA\Documents\GitHub\OCTAVE\Octave.Core.Tests\obj\Debug\net10.0\Octave.Core.Tests.AssemblyInfoInputs.cache
+C:\Users\ADITYA\Documents\GitHub\OCTAVE\Octave.Core.Tests\obj\Debug\net10.0\Octave.Core.Tests.AssemblyInfo.cs
+C:\Users\ADITYA\Documents\GitHub\OCTAVE\Octave.Core.Tests\obj\Debug\net10.0\Octave.Core.Tests.csproj.CoreCompileInputs.cache
+C:\Users\ADITYA\Documents\GitHub\OCTAVE\Octave.Core.Tests\obj\Debug\net10.0\Octave.Core.Tests.sourcelink.json
 C:\Users\ADITYA\Documents\GitHub\OCTAVE\Octave.Core.Tests\obj\Debug\net10.0\Octave.C.3CA471EF.Up2Date
 C:\Users\ADITYA\Documents\GitHub\OCTAVE\Octave.Core.Tests\obj\Debug\net10.0\Octave.Core.Tests.dll
 C:\Users\ADITYA\Documents\GitHub\OCTAVE\Octave.Core.Tests\obj\Debug\net10.0\refint\Octave.Core.Tests.dll

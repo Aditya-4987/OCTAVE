@@ -14,6 +14,8 @@ public record Artist(
     bool IsLocal
 );
 
+public record ArtistDisplayItem(string? Id, string Name, string? ArtworkUrl);
+
 public record Album(
     string Id,
     string Title,
@@ -108,3 +110,17 @@ public record SearchSuggestion(string Title, EntityType Type, string Id);
 
 // A cluster of tracks that appear to be the same composition across formats.
 public record DuplicateGroup(string Title, string ArtistName, System.Collections.Generic.List<Track> Tracks);
+
+public record AudioQualityDetails(
+    string StreamQuality,
+    string CodecFormat,
+    int BitDepth,
+    double SampleRateKhz,
+    string ChannelsText,
+    string DecoderEngine,
+    string ResamplingStatus,
+    string QualityBadgeType,
+    string OutputDeviceName,
+    string OutputDeviceQuality,
+    string DspStatus
+);

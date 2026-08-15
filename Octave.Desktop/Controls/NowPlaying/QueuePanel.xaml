@@ -1,0 +1,104 @@
+<UserControl
+    x:Class="Octave_Desktop.Controls.NowPlaying.QueuePanel"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:models="using:Octave.Core.Models"
+    xmlns:converters="using:Octave_Desktop.Converters"
+    mc:Ignorable="d"
+    VerticalAlignment="Stretch"
+    VerticalContentAlignment="Stretch">
+
+    <UserControl.Resources>
+        <converters:ArtworkPathConverter x:Key="ArtworkPathConverter" />
+        <converters:DurationFormatConverter x:Key="DurationFormatConverter" />
+    </UserControl.Resources>
+
+    <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
+            BorderBrush="#25FFFFFF"
+            BorderThickness="1"
+            CornerRadius="16"
+            Padding="20"
+            VerticalAlignment="Stretch">
+        <Grid RowDefinitions="Auto,*">
+            <!-- Header Row -->
+            <Grid Grid.Row="0" Margin="0,0,0,16">
+                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <FontIcon Glyph="&#xE90B;" FontFamily="Segoe MDL2 Assets" FontSize="18" Foreground="{ThemeResource SystemControlHighlightAccentBrush}"/>
+                    <TextBlock Text="Up Next Queue" FontSize="18" FontWeight="SemiBold" Foreground="White" VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <Button x:Name="ClearQueueButton"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Center"
+                        Click="ClearQueueButton_Click"
+                        Background="Transparent"
+                        BorderBrush="Transparent"
+                        Padding="8,4,8,4"
+                        CornerRadius="6"
+                        ToolTipService.ToolTip="Clear Queue (keeps current track)">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon Glyph="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#888888"/>
+                        <TextBlock Text="Clear All" FontSize="12" Foreground="#CCCCCC" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+            </Grid>
+
+            <!-- Scrollable Queue List inside Tile -->
+            <ListView x:Name="QueueListView"
+                      Grid.Row="1"
+                      VerticalAlignment="Stretch"
+                      ScrollViewer.VerticalScrollBarVisibility="Auto"
+                      ScrollViewer.VerticalScrollMode="Enabled"
+                      SelectionMode="None"
+                      IsItemClickEnabled="True"
+                      ItemClick="QueueListView_ItemClick">
+                <ListView.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <ItemsStackPanel />
+                    </ItemsPanelTemplate>
+                </ListView.ItemsPanel>
+
+                <ListView.ItemTemplate>
+                    <DataTemplate x:DataType="models:QueueItem">
+                        <Grid Padding="8,8,8,8" ColumnDefinitions="Auto,Auto,*,Auto" CornerRadius="10">
+                            <!-- Play Button -->
+                            <Button Grid.Column="0"
+                                    Click="ItemPlayButton_Click"
+                                    Background="Transparent"
+                                    BorderBrush="Transparent"
+                                    Padding="4"
+                                    Margin="0,0,12,0"
+                                    VerticalAlignment="Center">
+                                <FontIcon Glyph="&#xE768;"
+                                          FontFamily="Segoe MDL2 Assets"
+                                          FontSize="14"
+                                          Foreground="White"/>
+                            </Button>
+
+                            <!-- Artwork -->
+                            <Border Grid.Column="1" CornerRadius="6" Width="40" Height="40" Margin="0,0,12,0" Background="#1E1E1E">
+                                <Image Source="{x:Bind Track.SourceUri, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=40}" Stretch="UniformToFill"/>
+                            </Border>
+
+                            <!-- Track Info -->
+                            <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock Text="{x:Bind Track.Title}" FontSize="14" FontWeight="Medium" Foreground="White" TextTrimming="CharacterEllipsis"/>
+                                <TextBlock Text="{x:Bind Track.ArtistName}" FontSize="12" Foreground="#888888" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+
+                            <!-- Duration -->
+                            <TextBlock Grid.Column="3"
+                                       Text="{x:Bind Track.DurationSeconds, Converter={StaticResource DurationFormatConverter}}"
+                                       FontSize="12"
+                                       Foreground="#888888"
+                                       VerticalAlignment="Center"
+                                       Margin="12,0,4,0"/>
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+        </Grid>
+    </Border>
+</UserControl>
