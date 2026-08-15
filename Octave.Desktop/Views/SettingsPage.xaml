@@ -38,6 +38,43 @@
                 </StackPanel>
             </StackPanel>
 
+            <!-- Playback & Session Resume -->
+            <StackPanel Spacing="12">
+                <TextBlock Text="Playback &amp; Session Resume" FontSize="18" FontWeight="SemiBold" Foreground="White" />
+                <TextBlock Text="Choose whether OCTAVE remembers the exact timestamp where a track was paused on startup."
+                           FontSize="12" Foreground="#888888" />
+                <ToggleSwitch Header="Remember playback position on startup"
+                              IsOn="{x:Bind ViewModel.RestorePositionOnStartup, Mode=TwoWay}"
+                              OffContent="Disabled (Songs start from 0:00)"
+                              OnContent="Enabled (Resumes exact saved timestamp)" />
+            </StackPanel>
+
+            <!-- Audio Visualizer -->
+            <StackPanel Spacing="12">
+                <TextBlock Text="Audio Visualizer" FontSize="18" FontWeight="SemiBold" Foreground="White" />
+                <TextBlock Text="Show real-time dynamic sound waveform visualizer above the progress bar during playback."
+                           FontSize="12" Foreground="#888888" />
+                <ToggleSwitch Header="Enable progress bar audio visualizer"
+                              IsOn="{x:Bind ViewModel.IsVisualizerEnabled, Mode=TwoWay}"
+                              OffContent="Disabled (Hidden)"
+                              OnContent="Enabled (Real-time dynamic waveform)" />
+            </StackPanel>
+
+            <!-- Audio Transition (Crossfade) -->
+            <StackPanel Spacing="12">
+                <TextBlock Text="Audio Transition (Crossfade)" FontSize="18" FontWeight="SemiBold" Foreground="White" />
+                <TextBlock Text="Smoothly fade track volume when skipping or switching songs."
+                           FontSize="12" Foreground="#888888" />
+                <ToggleSwitch Header="Enable Crossfade" IsOn="{x:Bind ViewModel.IsCrossfadeEnabled, Mode=TwoWay}" />
+                <StackPanel Orientation="Horizontal" Spacing="12" Visibility="{x:Bind BoolToVisibility(ViewModel.IsCrossfadeEnabled), Mode=OneWay}">
+                    <TextBlock Text="Crossfade Duration:" VerticalAlignment="Center" Foreground="White" FontSize="14" />
+                    <Slider Width="200" Minimum="1" Maximum="10" StepFrequency="1"
+                            Value="{x:Bind ViewModel.CrossfadeSeconds, Mode=TwoWay}" VerticalAlignment="Center" />
+                    <TextBlock Text="{x:Bind ViewModel.CrossfadeSeconds, Mode=OneWay}" VerticalAlignment="Center" Foreground="#888888" FontSize="14" />
+                    <TextBlock Text="sec" VerticalAlignment="Center" Foreground="#888888" FontSize="14" Margin="-8,0,0,0" />
+                </StackPanel>
+            </StackPanel>
+
             <!-- Equalizer -->
             <StackPanel Spacing="12">
                 <TextBlock Text="Equalizer" FontSize="18" FontWeight="SemiBold" Foreground="White" />

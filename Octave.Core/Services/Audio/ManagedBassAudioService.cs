@@ -131,6 +131,13 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         }
     }
 
+    private int _crossfadeDurationMs = 1000; // Default 1000ms (1 second) smooth crossfade
+    public int CrossfadeDurationMs
+    {
+        get => _crossfadeDurationMs;
+        set => _crossfadeDurationMs = Math.Max(0, value);
+    }
+
     public long Play(string urlOrPath, double replayGain = 0.0)
     {
         if (!_isInitialized) Init();
@@ -139,7 +146,37 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         bool started = false;
         lock (_streamLock)
         {
-            FreeStreamInternal(); // Kill any currently playing track and remove FX handles
+            int oldStream = _currentStream;
+            int fadeMs = _crossfadeDurationMs;
+            bool isOldPlaying = oldStream != 0 && Bass.ChannelIsActive(oldStream) == ManagedBass.PlaybackState.Playing;
+
+            if (oldStream != 0)
+            {
+                RemoveEqUnlocked(); // Detach EQ handles from old stream so new stream can claim FX
+
+                if (fadeMs > 0 && isOldPlaying)
+                {
+                    // Smoothly fade out old stream over fadeMs milliseconds
+                    Bass.ChannelSlideAttribute(oldStream, ChannelAttribute.Volume, 0f, fadeMs);
+                    int streamToFree = oldStream;
+                    Task.Run(async () =>
+                    {
+                        await Task.Delay(fadeMs + 50);
+                        lock (_streamLock)
+                        {
+                            Bass.ChannelStop(streamToFree);
+                            Bass.StreamFree(streamToFree);
+                        }
+                    });
+                }
+                else
+                {
+                    Bass.ChannelStop(oldStream);
+                    Bass.StreamFree(oldStream);
+                }
+                _currentStream = 0;
+            }
+
             _currentSessionId = sessionId;
             _currentSourceUri = urlOrPath;
 
@@ -163,15 +200,23 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
                 Bass.ChannelSetSync(stream, SyncFlags.End | SyncFlags.Mixtime, 0, _endSyncCallback, IntPtr.Zero);
 
                 // Convert ReplayGain (dB) to a linear scalar (10^(dB/20)).
-                // If ReplayGain is 0.0, this naturally results in 1.0f.
                 float targetGain = (float)Math.Pow(10, replayGain / 20.0);
-                
-                // Cap the ReplayGain amplifier to prevent clipping. 
-                // A maximum multiplier of 2.0 corresponds to roughly +6dB.
                 _currentReplayGainScale = Math.Clamp(targetGain, 0.1f, 2.0f);
 
-                // Channel volume is set directly on the stream using process volume and ReplayGain scalar.
-                UpdateStreamVolumeUnlocked();
+                float finalTargetVolume = (_isMuted ? 0f : _volume) * _currentReplayGainScale;
+
+                if (fadeMs > 0 && isOldPlaying)
+                {
+                    // Start new stream at 0 volume and slide up smoothly to finalTargetVolume
+                    Bass.ChannelSetAttribute(stream, ChannelAttribute.Volume, 0f);
+                    Bass.ChannelPlay(stream);
+                    Bass.ChannelSlideAttribute(stream, ChannelAttribute.Volume, finalTargetVolume, fadeMs);
+                }
+                else
+                {
+                    UpdateStreamVolumeUnlocked();
+                    Bass.ChannelPlay(stream);
+                }
 
                 // Re-attach the EQ to the new stream if it's enabled.
                 _eqFxHandle = 0;
@@ -190,9 +235,8 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
                     StreamingQuality = "Unknown";
                 }
 
-                Bass.ChannelPlay(stream);
                 started = true;
-                Debug.WriteLine($"[OCTAVE ENGINE] Playing stream ID: {stream}, Session ID: {sessionId}");
+                Debug.WriteLine($"[OCTAVE ENGINE] Playing stream ID: {stream}, Session ID: {sessionId} (Crossfade: {fadeMs}ms)");
             }
             else
             {
@@ -203,8 +247,7 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
 
         if (started)
         {
-            // Start periodic position reporting and notify listeners outside the
-            // lock so handlers can never reenter the engine while it is held.
+            // Start periodic position reporting and notify listeners outside the lock
             StartPositionTimer();
             TrackStarted?.Invoke(this, urlOrPath);
         }
@@ -254,7 +297,27 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         StopPositionTimer();
         lock (_streamLock)
         {
-            FreeStreamInternal();
+            if (_currentStream != 0 && _crossfadeDurationMs > 0 && Bass.ChannelIsActive(_currentStream) == ManagedBass.PlaybackState.Playing)
+            {
+                int streamToStop = _currentStream;
+                int fadeMs = Math.Min(_crossfadeDurationMs, 500); // 500ms quick fade out on explicit stop
+                _currentStream = 0;
+                RemoveEqUnlocked();
+                Bass.ChannelSlideAttribute(streamToStop, ChannelAttribute.Volume, 0f, fadeMs);
+                Task.Run(async () =>
+                {
+                    await Task.Delay(fadeMs + 50);
+                    lock (_streamLock)
+                    {
+                        Bass.ChannelStop(streamToStop);
+                        Bass.StreamFree(streamToStop);
+                    }
+                });
+            }
+            else
+            {
+                FreeStreamInternal();
+            }
         }
     }
 
@@ -441,6 +504,225 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
     }
 
     public string StreamingQuality { get; private set; } = "Unknown";
+
+    public string OutputDeviceName
+    {
+        get
+        {
+            var (name, _, _, _) = Octave.Core.Helpers.WindowsAudioDeviceHelper.GetDefaultOutputDeviceDetails();
+            if (!string.IsNullOrWhiteSpace(name) && name != "Default Audio Device") return name;
+
+            if (_isInitialized)
+            {
+                int currentDev = Bass.CurrentDevice;
+                if (currentDev >= 0 && Bass.GetDeviceInfo(currentDev, out var info))
+                {
+                    return string.IsNullOrWhiteSpace(info.Name) ? "Default Audio Device" : info.Name;
+                }
+            }
+            return "Default Audio Device";
+        }
+    }
+
+    public string OutputDeviceQuality
+    {
+        get
+        {
+            var (_, format, _, _) = Octave.Core.Helpers.WindowsAudioDeviceHelper.GetDefaultOutputDeviceDetails();
+            if (format != "Unknown") return format;
+
+            if (_isInitialized && Bass.GetInfo(out var info))
+            {
+                double khz = info.SampleRate / 1000.0;
+                return $"{khz:0.0}kHz (Shared Mode)";
+            }
+            return "Unknown";
+        }
+    }
+
+    public AudioQualityDetails QualityDetails
+    {
+        get
+        {
+            var (devName, devFormat, devKhz, devBits) = Octave.Core.Helpers.WindowsAudioDeviceHelper.GetDefaultOutputDeviceDetails();
+            if (string.IsNullOrWhiteSpace(devName)) devName = "Default Audio Device";
+            if (string.IsNullOrWhiteSpace(devFormat) || devFormat == "Unknown")
+            {
+                if (_isInitialized && Bass.GetInfo(out var bInfo))
+                {
+                    devKhz = bInfo.SampleRate / 1000.0;
+                    devFormat = $"{devKhz:0.0}kHz (Shared Mode)";
+                }
+                else
+                {
+                    devFormat = "Unknown Output Format";
+                }
+            }
+
+            int bits = 16;
+            double sourceKhz = 44.1;
+            int channels = 2;
+            string codecFormat = "Audio Stream";
+            string decoderEngine = "BASS Core Audio Engine";
+
+            lock (_streamLock)
+            {
+                if (_currentStream != 0 && Bass.ChannelGetInfo(_currentStream, out var info))
+                {
+                    bits = (info.OriginalResolution > 0) ? info.OriginalResolution : 16;
+                    sourceKhz = info.Frequency / 1000.0;
+                    channels = info.Channels;
+
+                    decoderEngine = info.ChannelType switch
+                    {
+                        ChannelType.FLAC => "BASS_FLAC Native Decoder",
+                        ChannelType.AAC => "BASS_AAC Native Decoder",
+                        ChannelType.MP4 => "BASS_AAC MP4 Decoder",
+                        ChannelType.OGG => "BASS Ogg Vorbis Decoder",
+                        ChannelType.MP3 => "BASS MP3 MPEG Decoder",
+                        ChannelType.WMA => "BASS_WMA Media Decoder",
+                        ChannelType.DSD => "BASS_DSD DSD Decoder",
+                        ChannelType.APE => "BASS_APE Monkey's Audio Decoder",
+                        ChannelType.Wave or ChannelType.WavePCM => "BASS PCM Wave Decoder",
+                        _ => "BASS Core Audio Engine"
+                    };
+
+                    codecFormat = info.ChannelType switch
+                    {
+                        ChannelType.FLAC => "FLAC Lossless Audio",
+                        ChannelType.AAC => "AAC Lossy Compressed",
+                        ChannelType.MP4 => "M4A AAC Audio",
+                        ChannelType.OGG => "Ogg Vorbis Audio",
+                        ChannelType.MP3 => "MP3 MPEG Audio",
+                        ChannelType.WMA => "WMA Windows Media",
+                        ChannelType.DSD => "DSD Direct Stream Digital",
+                        ChannelType.APE => "APE Lossless Audio",
+                        ChannelType.Wave or ChannelType.WavePCM => "WAV Uncompressed PCM",
+                        _ => "Audio Stream"
+                    };
+                }
+            }
+
+            string channelsText = channels switch
+            {
+                1 => "1 Ch (Mono)",
+                2 => "2 Ch (Stereo)",
+                6 => "6 Ch (5.1 Surround)",
+                8 => "8 Ch (7.1 Surround)",
+                _ => $"{channels} Channels"
+            };
+
+            string resamplingStatus;
+            if (Math.Abs(sourceKhz - devKhz) < 0.1)
+            {
+                resamplingStatus = $"Bit-Matched Target ({sourceKhz:0.0}kHz)";
+            }
+            else if (sourceKhz > devKhz)
+            {
+                resamplingStatus = $"OS Downsampled ({sourceKhz:0.0}kHz → {devKhz:0.0}kHz)";
+            }
+            else
+            {
+                resamplingStatus = $"OS Upsampled ({sourceKhz:0.0}kHz → {devKhz:0.0}kHz)";
+            }
+
+            string qualityBadgeType = "Standard";
+            if (bits >= 24 || sourceKhz >= 88.2)
+            {
+                qualityBadgeType = "HiRes";
+            }
+            else if (bits == 16 && sourceKhz >= 44.1 && (codecFormat.Contains("Lossless") || codecFormat.Contains("PCM") || codecFormat.Contains("FLAC") || codecFormat.Contains("DSD")))
+            {
+                qualityBadgeType = "CDQuality";
+            }
+
+            string gainText = _currentReplayGainScale != 1.0f 
+                ? $"ReplayGain ({(20.0 * Math.Log10(_currentReplayGainScale)):+0.0;-0.0;0.0}dB)"
+                : "Standard Level";
+            string dspStatus = _eqEnabled ? $"10-Band EQ Active ({gainText})" : $"Direct Passthrough ({gainText})";
+
+            string streamQualityStr = $"{bits}-bit {sourceKhz:0.0}kHz";
+
+            return new AudioQualityDetails(
+                StreamQuality: streamQualityStr,
+                CodecFormat: codecFormat,
+                BitDepth: bits,
+                SampleRateKhz: sourceKhz,
+                ChannelsText: channelsText,
+                DecoderEngine: decoderEngine,
+                ResamplingStatus: resamplingStatus,
+                QualityBadgeType: qualityBadgeType,
+                OutputDeviceName: devName,
+                OutputDeviceQuality: devFormat,
+                DspStatus: dspStatus
+            );
+        }
+    }
+
+    private readonly float[] _rawFftBuffer = new float[256];
+    private float[]? _lastFftPeaks;
+
+    public float[] GetFftData(int binCount = 36)
+    {
+        if (binCount <= 0) binCount = 36;
+        var result = new float[binCount];
+        if (_lastFftPeaks == null || _lastFftPeaks.Length != binCount)
+        {
+            _lastFftPeaks = new float[binCount];
+        }
+
+        lock (_streamLock)
+        {
+            if (_currentStream == 0 || Bass.ChannelIsActive(_currentStream) != ManagedBass.PlaybackState.Playing)
+            {
+                for (int i = 0; i < binCount; i++)
+                {
+                    _lastFftPeaks[i] = Math.Max(0f, _lastFftPeaks[i] * 0.85f);
+                    result[i] = _lastFftPeaks[i];
+                }
+                return result;
+            }
+
+            int read = Bass.ChannelGetData(_currentStream, _rawFftBuffer, (int)DataFlags.FFT512);
+            if (read <= 0)
+            {
+                for (int i = 0; i < binCount; i++)
+                {
+                    _lastFftPeaks[i] = Math.Max(0f, _lastFftPeaks[i] * 0.85f);
+                    result[i] = _lastFftPeaks[i];
+                }
+                return result;
+            }
+
+            for (int i = 0; i < binCount; i++)
+            {
+                int startBin = (int)Math.Pow(256.0, (double)i / binCount);
+                int endBin = (int)Math.Pow(256.0, (double)(i + 1) / binCount);
+                if (endBin <= startBin) endBin = startBin + 1;
+                if (endBin > 256) endBin = 256;
+
+                float maxVal = 0f;
+                for (int b = startBin; b < endBin; b++)
+                {
+                    if (_rawFftBuffer[b] > maxVal) maxVal = _rawFftBuffer[b];
+                }
+
+                float target = Math.Clamp((float)(Math.Sqrt(maxVal) * 1.8), 0.02f, 1.0f);
+                if (target > _lastFftPeaks[i])
+                {
+                    _lastFftPeaks[i] = _lastFftPeaks[i] * 0.3f + target * 0.7f;
+                }
+                else
+                {
+                    _lastFftPeaks[i] = _lastFftPeaks[i] * 0.82f + target * 0.18f;
+                }
+
+                result[i] = _lastFftPeaks[i];
+            }
+        }
+
+        return result;
+    }
 
     public void Seek(double positionSeconds)
     {

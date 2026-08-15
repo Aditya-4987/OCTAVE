@@ -70,6 +70,7 @@ public partial class App : Application
                 services.AddSingleton<IQueueService, QueueService>();
                 services.AddSingleton<IPlaylistService, PlaylistService>();
                 services.AddSingleton<ISmtcService, WindowsSmtcService>();
+                services.AddSingleton<ILyricsService, Octave.Core.Services.Metadata.LyricsService>();
 
                 // ViewModels
                 services.AddSingleton<MainViewModel>();
@@ -82,6 +83,7 @@ public partial class App : Application
                 services.AddTransient<PlaylistDetailViewModel>();
                 services.AddTransient<EntityDetailViewModel>();
                 services.AddTransient<SearchViewModel>();
+                services.AddTransient<NowPlayingViewModel>();
             })
             .Build();
 

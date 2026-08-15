@@ -50,6 +50,15 @@ public partial class ShellViewModel : ObservableObject
 
     [ObservableProperty]
     public partial string StreamingQuality { get; set; } = "";
+
+    [ObservableProperty]
+    public partial string OutputDeviceQuality { get; set; } = "";
+
+    [ObservableProperty]
+    public partial string OutputDeviceName { get; set; } = "";
+
+    [ObservableProperty]
+    public partial Octave.Core.Models.AudioQualityDetails? AudioQualityInfo { get; set; }
     
     [ObservableProperty]
     public partial string InfoBitrate { get; set; } = "";
@@ -123,6 +132,15 @@ public partial class ShellViewModel : ObservableObject
         _playlistService = playlistService ?? throw new ArgumentNullException(nameof(playlistService));
 
         _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+
+        try
+        {
+            if (Windows.Storage.ApplicationData.Current.LocalSettings.Values.TryGetValue("IsVisualizerEnabled", out var val) && val is bool b)
+            {
+                _isVisualizerEnabled = b;
+            }
+        }
+        catch { }
 
         _queueService.PlaybackStateChanged += (s, state) =>
         {
@@ -396,6 +414,65 @@ public partial class ShellViewModel : ObservableObject
         }, null, TimeSpan.FromMinutes(minutes), Timeout.InfiniteTimeSpan);
     }
 
+    // ---- Playback Resume Settings ------------------------------------------
+
+    public bool RestorePositionOnStartup
+    {
+        get => _queueService.RestorePositionOnStartup;
+        set
+        {
+            _queueService.RestorePositionOnStartup = value;
+            OnPropertyChanged();
+        }
+    }
+
+    private bool _isVisualizerEnabled = true;
+    public bool IsVisualizerEnabled
+    {
+        get => _isVisualizerEnabled;
+        set
+        {
+            if (_isVisualizerEnabled != value)
+            {
+                _isVisualizerEnabled = value;
+                try
+                {
+                    Windows.Storage.ApplicationData.Current.LocalSettings.Values["IsVisualizerEnabled"] = value;
+                }
+                catch { }
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    // ---- Crossfade Settings ------------------------------------------------
+
+    public bool IsCrossfadeEnabled
+    {
+        get => _audioPlayer.CrossfadeDurationMs > 0;
+        set
+        {
+            _audioPlayer.CrossfadeDurationMs = value ? (CrossfadeSeconds * 1000) : 0;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CrossfadeSeconds));
+        }
+    }
+
+    private int _crossfadeSeconds = 1; // Default 1 second
+    public int CrossfadeSeconds
+    {
+        get => _audioPlayer.CrossfadeDurationMs > 0 ? (_audioPlayer.CrossfadeDurationMs / 1000) : _crossfadeSeconds;
+        set
+        {
+            _crossfadeSeconds = Math.Clamp(value, 1, 10);
+            if (IsCrossfadeEnabled)
+            {
+                _audioPlayer.CrossfadeDurationMs = _crossfadeSeconds * 1000;
+            }
+            OnPropertyChanged();
+        }
+    }
+
     // ---- Equalizer --------------------------------------------------------
 
     public ObservableCollection<EqBandViewModel> EqBands { get; } = new();
@@ -528,6 +605,9 @@ public partial class ShellViewModel : ObservableObject
             ArtistName = state.CurrentTrack.ArtistName;
             AlbumName = state.CurrentTrack.AlbumTitle;
             StreamingQuality = _audioPlayer.StreamingQuality;
+            OutputDeviceQuality = _audioPlayer.OutputDeviceQuality;
+            OutputDeviceName = _audioPlayer.OutputDeviceName;
+            AudioQualityInfo = _audioPlayer.QualityDetails;
             
             try
             {
@@ -561,6 +641,9 @@ public partial class ShellViewModel : ObservableObject
             ArtistName = "Unknown Artist";
             AlbumName = "";
             StreamingQuality = "";
+            OutputDeviceQuality = "";
+            OutputDeviceName = "";
+            AudioQualityInfo = null;
             InfoLocation = "";
             InfoFormat = "";
             InfoFileSize = "";

@@ -37,7 +37,7 @@
                             <RowDefinition Height="*" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-                        <FontIcon Grid.Row="0" Glyph="&#xE142;" FontFamily="Segoe MDL2 Assets" FontSize="22"
+                        <FontIcon Grid.Row="0" Glyph="&#xE90B;" FontFamily="Segoe MDL2 Assets" FontSize="22"
                                   Foreground="#888888" HorizontalAlignment="Left" />
                         <TextBlock Grid.Row="1" Text="{x:Bind Title}" FontWeight="SemiBold" FontSize="15" Foreground="White"
                                    TextTrimming="CharacterEllipsis" VerticalAlignment="Bottom" />

@@ -184,7 +184,7 @@
 
                                     <!-- Playlist Icon Container -->
                                     <Border Grid.Row="0" Width="120" Height="120" CornerRadius="8" HorizontalAlignment="Center" Background="#222222" Margin="0,0,0,12">
-                                        <FontIcon Glyph="&#xE8FD;" FontFamily="Segoe MDL2 Assets" FontSize="40" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        <FontIcon Glyph="&#xE90B;" FontFamily="Segoe MDL2 Assets" FontSize="40" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                     </Border>
 
                                     <!-- Title & Track Count -->

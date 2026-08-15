@@ -29,6 +29,7 @@ public interface IAudioPlayerService
     double GetPositionSeconds();
     double GetDurationSeconds();
     float Volume { get; set; } // Accepts 0.0f to 1.0f scale
+    int CrossfadeDurationMs { get; set; }
     bool IsMuted { get; }
     void SetMuted(bool isMuted);
     void ToggleMute();
@@ -37,7 +38,11 @@ public interface IAudioPlayerService
     double DurationSeconds { get; }
     PlaybackStatus Status { get; }
     string StreamingQuality { get; }
+    string OutputDeviceQuality { get; }
+    string OutputDeviceName { get; }
+    Octave.Core.Models.AudioQualityDetails QualityDetails { get; }
     void Seek(double positionSeconds);
+    float[] GetFftData(int binCount = 36);
 
     // 10-band graphic equalizer (requires bass_fx.dll at runtime).
     System.Collections.Generic.IReadOnlyList<int> EqFrequencies { get; }

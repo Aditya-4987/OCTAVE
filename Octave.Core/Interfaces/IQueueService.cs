@@ -8,6 +8,7 @@ namespace Octave.Core.Interfaces;
 public interface IQueueService
 {
     event EventHandler<PlaybackState>? PlaybackStateChanged;
+    event EventHandler? QueueChanged;
 
     // Lightweight, high-frequency position updates (seconds). Kept separate from
     // PlaybackStateChanged so the 4x/sec playback ticks don't rebroadcast the
@@ -22,7 +23,7 @@ public interface IQueueService
     void EnqueueNext(Track track);
     void PlayIndex(int index);
     void RemoveAt(int index);
-    void Clear();
+    void Clear(bool keepCurrentTrack = false);
     void Reorder(int oldIndex, int newIndex);
     void SetShuffle(bool enable);
     void SetRepeatMode(RepeatMode mode);
@@ -34,6 +35,8 @@ public interface IQueueService
     void Resume();
     void SetVolume(float volume);
     PlaybackState Seek(double positionSeconds);
+
+    bool RestorePositionOnStartup { get; set; }
 
     // Rebuild the queue from the last persisted snapshot (paused, ready to resume).
     Task RestoreAsync();

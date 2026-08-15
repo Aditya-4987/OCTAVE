@@ -1,0 +1,16 @@
+<UserControl
+    x:Class="Octave.Desktop.Controls.SpectrumVisualizerControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    HorizontalAlignment="Stretch"
+    VerticalAlignment="Bottom"
+    Height="18"
+    IsHitTestVisible="False">
+
+    <Grid x:Name="RootGrid" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+        <Canvas x:Name="WaveformCanvas" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" SizeChanged="WaveformCanvas_SizeChanged" />
+    </Grid>
+</UserControl>

@@ -11,6 +11,7 @@ namespace Octave.Core.Services.Playback;
 public class QueueService : IQueueService
 {
     public event EventHandler<PlaybackState>? PlaybackStateChanged;
+    public event EventHandler? QueueChanged;
     public event EventHandler<double>? PositionChanged;
 
     public PlaybackState CurrentState { get; private set; }
@@ -32,6 +33,7 @@ public class QueueService : IQueueService
     // remember where to seek so the first Play resumes at the saved position.
     private int _resumeIndex = -1;
     private double _resumePositionSeconds = 0;
+    public bool RestorePositionOnStartup { get; set; } = false; // Default false (starts songs from beginning)
     private long _lastProgressSaveTicks = 0;
     private readonly System.Threading.SemaphoreSlim _persistenceSemaphore = new(1, 1);
 
@@ -231,7 +233,7 @@ public class QueueService : IQueueService
             }
             _currentIndex = idx;
             _resumeIndex = idx;
-            _resumePositionSeconds = saved.PositionSeconds;
+            _resumePositionSeconds = RestorePositionOnStartup ? saved.PositionSeconds : 0;
         }
 
         _audioPlayer.Volume = saved.Volume;
@@ -368,19 +370,31 @@ public class QueueService : IQueueService
         }
     }
 
-    public void Clear()
+    public void Clear(bool keepCurrentTrack = false)
     {
         lock (_queueLock)
         {
-            _audioPlayer.Stop();
-            foreach (var item in _activeQueue)
+            if (keepCurrentTrack && _currentIndex >= 0 && _currentIndex < _activeQueue.Count)
             {
-                item.IsPlaying = false;
+                var currentItem = _activeQueue[_currentIndex];
+                _activeQueue.Clear();
+                _unshuffledQueue.Clear();
+                _activeQueue.Add(currentItem);
+                _unshuffledQueue.Add(currentItem);
+                _currentIndex = 0;
             }
+            else
+            {
+                _audioPlayer.Stop();
+                foreach (var item in _activeQueue)
+                {
+                    item.IsPlaying = false;
+                }
 
-            _activeQueue.Clear();
-            _unshuffledQueue.Clear();
-            _currentIndex = -1;
+                _activeQueue.Clear();
+                _unshuffledQueue.Clear();
+                _currentIndex = -1;
+            }
 
             EmitPlaybackStateChanged();
         }
@@ -666,8 +680,8 @@ public class QueueService : IQueueService
         _activePlaybackSessionId = _audioPlayer.Play(track.SourceUri, track.ReplayGain);
 
         // One-time startup resume: seek to the saved position on the first play
-        // of the restored track, then clear the marker.
-        if (index == _resumeIndex && _resumePositionSeconds > 0.5)
+        // of the restored track if RestorePositionOnStartup is enabled.
+        if (RestorePositionOnStartup && index == _resumeIndex && _resumePositionSeconds > 0.5)
         {
             _audioPlayer.Seek(_resumePositionSeconds);
         }
@@ -769,6 +783,7 @@ public class QueueService : IQueueService
             PersistStateUnlocked();
         }
         PlaybackStateChanged?.Invoke(this, state);
+        QueueChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public PlaybackState Seek(double positionSeconds)
