@@ -286,21 +286,40 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
 
         ArtistsList.Clear();
         string rawArtistNames = !string.IsNullOrWhiteSpace(track.ArtistName) ? track.ArtistName : (artist?.Name ?? "Unknown Artist");
-        string[] nameParts = rawArtistNames.Split(new[] { ",", "&", ";", "/", " feat. ", " ft. " }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        if (nameParts.Length > 0)
+        // If the primary artist matches the raw string exactly (e.g. "AC/DC", "Simon & Garfunkel"), preserve as single artist
+        bool isFullMatch = artist != null && artist.Name.Equals(rawArtistNames.Trim(), StringComparison.OrdinalIgnoreCase);
+
+        if (!isFullMatch)
         {
-            foreach (string name in nameParts)
+            // Split only on comma, semicolon, or spaced feature/collaboration tokens
+            string[] nameParts = System.Text.RegularExpressions.Regex.Split(
+                rawArtistNames,
+                @"\s*[,;]\s*|\s+(?:feat\.?|ft\.?)\s+|\s+&\s+|\s+/\s+",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+            var validParts = System.Linq.Enumerable.ToArray(
+                System.Linq.Enumerable.Select(
+                    System.Linq.Enumerable.Where(nameParts, n => !string.IsNullOrWhiteSpace(n)),
+                    n => n.Trim()));
+
+            if (validParts.Length > 1)
             {
-                if (string.IsNullOrWhiteSpace(name)) continue;
-                string? artUrl = (artist != null && name.Equals(artist.Name, StringComparison.OrdinalIgnoreCase)) ? artist.ArtworkUrl : null;
-                string? artistId = (artist != null && name.Equals(artist.Name, StringComparison.OrdinalIgnoreCase)) ? artist.Id : track.ArtistId;
-                ArtistsList.Add(new ArtistDisplayItem(artistId, name, artUrl));
+                foreach (string name in validParts)
+                {
+                    string? artUrl = (artist != null && name.Equals(artist.Name, StringComparison.OrdinalIgnoreCase)) ? artist.ArtworkUrl : null;
+                    string? artistId = (artist != null && name.Equals(artist.Name, StringComparison.OrdinalIgnoreCase)) ? artist.Id : null;
+                    ArtistsList.Add(new ArtistDisplayItem(artistId, name, artUrl));
+                }
+            }
+            else
+            {
+                ArtistsList.Add(new ArtistDisplayItem(artist?.Id ?? track.ArtistId, rawArtistNames, artist?.ArtworkUrl));
             }
         }
         else
         {
-            ArtistsList.Add(new ArtistDisplayItem(track.ArtistId, rawArtistNames, artist?.ArtworkUrl));
+            ArtistsList.Add(new ArtistDisplayItem(artist?.Id ?? track.ArtistId, artist?.Name ?? rawArtistNames, artist?.ArtworkUrl));
         }
     }
 
@@ -315,9 +334,8 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
 
         try
         {
-            var artists = await _libraryService.GetAllArtistsAsync();
-            var match = artists.Find(a => a.Name.Equals(artistItem.Name, StringComparison.OrdinalIgnoreCase));
-            return match?.Id;
+            var artist = await _libraryService.GetArtistByNameAsync(artistItem.Name);
+            return artist?.Id;
         }
         catch { return null; }
     }
@@ -331,9 +349,8 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
         {
             try
             {
-                var albums = await _libraryService.GetAllAlbumsAsync();
-                var match = albums.Find(a => a.Title.Equals(CurrentTrack.AlbumTitle, StringComparison.OrdinalIgnoreCase));
-                return match?.Id;
+                var album = await _libraryService.GetAlbumByTitleAsync(CurrentTrack.AlbumTitle, CurrentTrack.ArtistId);
+                return album?.Id;
             }
             catch { return null; }
         }

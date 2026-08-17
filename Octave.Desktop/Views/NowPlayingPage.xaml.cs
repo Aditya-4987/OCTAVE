@@ -56,33 +56,29 @@ public sealed partial class NowPlayingPage : Page
 
     private void TopStageGrid_SizeChanged(object sender, SizeChangedEventArgs e)
     {
-        if (!ViewModel.IsLyricsPanelVisible)
-        {
-            double centerOffset = (TopStageGrid.ActualWidth + TopStageGrid.ColumnSpacing) / 4.0;
-            AlbumPanelTransform.X = Math.Max(0, centerOffset);
-        }
+        // Handled dynamically via Grid column widths
     }
 
     private void AnimateLyricsTransition(bool showLyrics, bool immediate = false)
     {
         _currentLyricsAnimation?.Stop();
 
-        double centerOffset = (TopStageGrid.ActualWidth + TopStageGrid.ColumnSpacing) / 4.0;
-        double targetAlbumX = showLyrics ? 0 : Math.Max(0, centerOffset);
         double targetLyricsX = showLyrics ? 0 : 350;
         double targetLyricsOpacity = showLyrics ? 1.0 : 0.0;
 
         if (immediate)
         {
-            AlbumPanelTransform.X = targetAlbumX;
+            AlbumPanelTransform.X = 0;
             LyricsPanelTransform.X = targetLyricsX;
             LyricsPanelControl.Opacity = targetLyricsOpacity;
             LyricsPanelControl.Visibility = showLyrics ? Visibility.Visible : Visibility.Collapsed;
+            UpdateLyricsColumnWidth(showLyrics);
             return;
         }
 
         if (showLyrics)
         {
+            UpdateLyricsColumnWidth(true);
             LyricsPanelControl.Visibility = Visibility.Visible;
         }
 
@@ -90,18 +86,7 @@ public sealed partial class NowPlayingPage : Page
         TimeSpan duration = TimeSpan.FromMilliseconds(400);
         var ease = new CubicEase { EasingMode = EasingMode.EaseInOut };
 
-        // 1. Album Panel Center <-> Left translation
-        var albumAnim = new DoubleAnimation
-        {
-            To = targetAlbumX,
-            Duration = duration,
-            EasingFunction = ease
-        };
-        Storyboard.SetTarget(albumAnim, AlbumPanelTransform);
-        Storyboard.SetTargetProperty(albumAnim, "X");
-        sb.Children.Add(albumAnim);
-
-        // 2. Lyrics Panel Right <-> In translation
+        // 1. Lyrics Panel Right <-> In translation
         var lyricsXAnim = new DoubleAnimation
         {
             To = targetLyricsX,
@@ -112,7 +97,7 @@ public sealed partial class NowPlayingPage : Page
         Storyboard.SetTargetProperty(lyricsXAnim, "X");
         sb.Children.Add(lyricsXAnim);
 
-        // 3. Lyrics Panel Opacity fade
+        // 2. Lyrics Panel Opacity fade
         var lyricsOpacityAnim = new DoubleAnimation
         {
             To = targetLyricsOpacity,
@@ -128,11 +113,27 @@ public sealed partial class NowPlayingPage : Page
             if (!showLyrics)
             {
                 LyricsPanelControl.Visibility = Visibility.Collapsed;
+                UpdateLyricsColumnWidth(false);
             }
+            AlbumPanelTransform.X = 0;
         };
 
         _currentLyricsAnimation = sb;
         sb.Begin();
+    }
+
+    private void UpdateLyricsColumnWidth(bool showLyrics)
+    {
+        if (showLyrics)
+        {
+            AlbumColumn.Width = new GridLength(1, GridUnitType.Star);
+            LyricsColumn.Width = new GridLength(1, GridUnitType.Star);
+        }
+        else
+        {
+            AlbumColumn.Width = new GridLength(1, GridUnitType.Star);
+            LyricsColumn.Width = new GridLength(0, GridUnitType.Pixel);
+        }
     }
 
     private void AnimateQueueTransition(bool showQueue, bool immediate = false)
@@ -214,7 +215,8 @@ public sealed partial class NowPlayingPage : Page
     {
         if (e.NewSize.Height > 0)
         {
-            QueuePanelControl.MaxHeight = e.NewSize.Height;
+            // Give QueuePanel a generous minimum height of 400px to prevent cramped views with short credits
+            QueuePanelControl.MaxHeight = Math.Max(400, e.NewSize.Height);
         }
     }
 
@@ -250,6 +252,4 @@ public sealed partial class NowPlayingPage : Page
     {
         ViewModel.ClearQueueCommand.Execute(null);
     }
-
-    public Visibility BoolToVisibility(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
 }

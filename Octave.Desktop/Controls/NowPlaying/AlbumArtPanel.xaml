@@ -22,7 +22,7 @@
                 CornerRadius="16"
                 UseSystemFocusVisuals="True"
                 ToolTipService.ToolTip="Click to Play/Pause">
-            <Grid Width="340" Height="340">
+            <Grid Width="380" Height="380" MaxWidth="440" MaxHeight="440" MinWidth="260" MinHeight="260">
                 <Border CornerRadius="16" Background="#1E1E1E">
                     <Image Source="{x:Bind ArtworkUrl, Mode=OneWay, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=NowPlaying}"
                            Stretch="UniformToFill" />
@@ -45,7 +45,7 @@
             <TextBlock Text="{x:Bind TrackTitle, Mode=OneWay}"
                        FontSize="24"
                        FontWeight="Bold"
-                       Foreground="White"
+                       Foreground="{ThemeResource TextFillColorPrimaryBrush}"
                        TextAlignment="Center"
                        TextWrapping="Wrap"
                        MaxLines="2"
@@ -53,13 +53,13 @@
 
             <TextBlock Text="{x:Bind ArtistName, Mode=OneWay}"
                        FontSize="16"
-                       Foreground="#B3B3B3"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                        TextAlignment="Center"
                        TextTrimming="CharacterEllipsis"/>
 
             <TextBlock Text="{x:Bind AlbumTitle, Mode=OneWay}"
                        FontSize="13"
-                       Foreground="#777777"
+                       Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                        TextAlignment="Center"
                        TextTrimming="CharacterEllipsis"
                        Visibility="{x:Bind HasTextVisibility(AlbumTitle), Mode=OneWay}"/>

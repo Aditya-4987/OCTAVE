@@ -16,13 +16,13 @@
             <!-- Loading State -->
             <StackPanel x:Name="LoadingContainer" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="12" Visibility="Collapsed">
                 <ProgressRing IsActive="True" Width="36" Height="36" />
-                <TextBlock Text="Searching lyrics..." Foreground="#888888" FontSize="14" HorizontalAlignment="Center"/>
+                <TextBlock Text="Searching lyrics..." Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="14" HorizontalAlignment="Center"/>
             </StackPanel>
 
             <!-- Unavailable State -->
             <StackPanel x:Name="UnavailableContainer" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8" Visibility="Collapsed">
-                <FontIcon Glyph="&#xE8D6;" FontFamily="Segoe MDL2 Assets" FontSize="32" Foreground="#666666" HorizontalAlignment="Center"/>
-                <TextBlock Text="Lyrics unavailable" Foreground="#BBBBBB" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                <FontIcon Glyph="&#xE8D6;" FontFamily="Segoe MDL2 Assets" FontSize="32" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Center"/>
+                <TextBlock Text="Lyrics unavailable" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center"/>
             </StackPanel>
 
             <!-- Unsynced Lyrics View -->
@@ -30,25 +30,28 @@
                 <TextBlock x:Name="UnsyncedTextBlock"
                            FontSize="18"
                            LineHeight="30"
-                           Foreground="#DDDDDD"
+                           Foreground="{ThemeResource TextFillColorPrimaryBrush}"
                            TextWrapping="Wrap"/>
             </ScrollViewer>
 
-            <!-- Synced Lyrics View -->
-            <ScrollViewer x:Name="SyncedScrollViewer" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
-                <ItemsControl x:Name="SyncedItemsControl">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate x:DataType="models:LyricLine">
-                            <TextBlock Text="{x:Bind Text}"
-                                       FontSize="20"
-                                       FontWeight="Medium"
-                                       Margin="0,8,0,8"
-                                       TextWrapping="Wrap"
-                                       Loaded="LyricLineTextBlock_Loaded"/>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </ScrollViewer>
+            <!-- Synced Lyrics View (Virtualized via ListView) -->
+            <ListView x:Name="SyncedListView"
+                      SelectionMode="None"
+                      IsItemClickEnabled="False"
+                      Padding="0,20,0,20"
+                      ShowsScrollingPlaceholders="False"
+                      Visibility="Collapsed">
+                <ListView.ItemTemplate>
+                    <DataTemplate x:DataType="models:LyricLine">
+                        <TextBlock Text="{x:Bind Text}"
+                                   FontSize="20"
+                                   FontWeight="Medium"
+                                   Margin="0,8,0,8"
+                                   TextWrapping="Wrap"
+                                   Loaded="LyricLineTextBlock_Loaded"/>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
         </Grid>
     </Border>
 </UserControl>

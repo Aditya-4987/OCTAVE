@@ -44,18 +44,12 @@ public class ArtworkPathConverter : IValueConverter
             }
             else if (artworkUrl.StartsWith("ArtworkCache/", StringComparison.OrdinalIgnoreCase))
             {
-                string absolutePath = Path.Combine(Windows.Storage.ApplicationData.Current.LocalFolder.Path, artworkUrl.Replace('/', '\\'));
-                if (File.Exists(absolutePath))
-                {
-                    uriString = absolutePath;
-                }
-                else
-                {
-                    uriString = isArtist ? "ms-appx:///Assets/PlaceholderArtist.png" : "ms-appx:///Assets/PlaceholderAlbum.png";
-                }
+                // WinUI's BitmapImage decodes ms-appdata:///local/ asynchronously on a background worker thread
+                uriString = Path.Combine(Windows.Storage.ApplicationData.Current.LocalFolder.Path, artworkUrl.Replace('/', '\\'));
             }
             else if (artworkUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase) || 
-                     artworkUrl.StartsWith("ms-appx", StringComparison.OrdinalIgnoreCase))
+                     artworkUrl.StartsWith("ms-appx", StringComparison.OrdinalIgnoreCase) ||
+                     artworkUrl.StartsWith("ms-appdata", StringComparison.OrdinalIgnoreCase))
             {
                 uriString = artworkUrl;
             }

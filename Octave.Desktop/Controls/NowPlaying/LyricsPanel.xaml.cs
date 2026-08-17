@@ -69,7 +69,7 @@ public sealed partial class LyricsPanel : UserControl
         {
             panel._lineElements.Clear();
             panel._lastHighlightedIndex = -2;
-            panel.SyncedItemsControl.ItemsSource = panel.SyncedLines;
+            panel.SyncedListView.ItemsSource = panel.SyncedLines;
             panel.UpdateStateViews();
         }
     }
@@ -96,7 +96,7 @@ public sealed partial class LyricsPanel : UserControl
         LoadingContainer.Visibility = State == LyricsState.Loading ? Visibility.Visible : Visibility.Collapsed;
         UnavailableContainer.Visibility = State == LyricsState.Unavailable ? Visibility.Visible : Visibility.Collapsed;
         UnsyncedScrollViewer.Visibility = State == LyricsState.Unsynced ? Visibility.Visible : Visibility.Collapsed;
-        SyncedScrollViewer.Visibility = State == LyricsState.Synced ? Visibility.Visible : Visibility.Collapsed;
+        SyncedListView.Visibility = State == LyricsState.Synced ? Visibility.Visible : Visibility.Collapsed;
 
         if (State == LyricsState.Synced)
         {
@@ -122,6 +122,16 @@ public sealed partial class LyricsPanel : UserControl
         _accentBrush ??= (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"];
         Brush activeBrush = _accentBrush;
 
+        // Scroll virtualized list view smoothly to active line
+        if (targetIdx >= 0 && SyncedLines != null && targetIdx < SyncedLines.Count)
+        {
+            try
+            {
+                SyncedListView.ScrollIntoView(SyncedLines[targetIdx], ScrollIntoViewAlignment.Leading);
+            }
+            catch { }
+        }
+
         for (int i = 0; i < _lineElements.Count; i++)
         {
             var tb = _lineElements[i];
@@ -131,7 +141,7 @@ public sealed partial class LyricsPanel : UserControl
                 tb.Foreground = activeBrush;
                 tb.FontSize = 22;
 
-                // Scroll active line into view smoothly
+                // Bring active line into view smoothly
                 try
                 {
                     tb.StartBringIntoView(new BringIntoViewOptions

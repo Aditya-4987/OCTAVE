@@ -5,24 +5,39 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:np="using:Octave_Desktop.Controls.NowPlaying"
-    mc:Ignorable="d"
     Background="Transparent">
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled">
-        <Grid Padding="24,16,24,32" RowSpacing="28">
-            <Grid.RowDefinitions>
-                <!-- Top Main Stage -->
-                <RowDefinition Height="Auto" MinHeight="360"/>
-                <!-- Bottom Details -->
-                <RowDefinition Height="Auto"/>
-            </Grid.RowDefinitions>
+    <Grid>
+        <VisualStateManager.VisualStateGroups>
+            <VisualStateGroup x:Name="AdaptiveLayoutGroup">
+                <VisualState x:Name="WideLayout">
+                    <VisualState.StateTriggers>
+                        <AdaptiveTrigger MinWindowWidth="800" />
+                    </VisualState.StateTriggers>
+                </VisualState>
+                <VisualState x:Name="NarrowLayout">
+                    <VisualState.StateTriggers>
+                        <AdaptiveTrigger MinWindowWidth="0" />
+                    </VisualState.StateTriggers>
+                </VisualState>
+            </VisualStateGroup>
+        </VisualStateManager.VisualStateGroups>
 
-            <!-- TOP MAIN STAGE (Row 0) -->
-            <Grid Grid.Row="0" x:Name="TopStageGrid" ColumnSpacing="24" SizeChanged="TopStageGrid_SizeChanged">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition x:Name="AlbumColumn" Width="*"/>
-                    <ColumnDefinition x:Name="LyricsColumn" Width="*"/>
-                </Grid.ColumnDefinitions>
+        <ScrollViewer x:Name="PageScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled" IsVerticalScrollChainingEnabled="True">
+            <Grid Padding="24,16,24,32" RowSpacing="28">
+                <Grid.RowDefinitions>
+                    <!-- Top Main Stage -->
+                    <RowDefinition Height="Auto" MinHeight="360"/>
+                    <!-- Bottom Details -->
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- TOP MAIN STAGE (Row 0) -->
+                <Grid Grid.Row="0" x:Name="TopStageGrid" ColumnSpacing="24" SizeChanged="TopStageGrid_SizeChanged">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition x:Name="AlbumColumn" Width="*"/>
+                        <ColumnDefinition x:Name="LyricsColumn" Width="*"/>
+                    </Grid.ColumnDefinitions>
 
                 <!-- Album Art Panel -->
                 <np:AlbumArtPanel Grid.Column="0"
@@ -88,5 +103,6 @@
                 </np:QueuePanel>
             </Grid>
         </Grid>
-    </ScrollViewer>
+        </ScrollViewer>
+    </Grid>
 </Page>

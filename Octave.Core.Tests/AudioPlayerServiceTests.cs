@@ -71,4 +71,20 @@ public class AudioPlayerServiceTests
         player.CrossfadeDurationMs = 2000;
         Assert.Equal(2000, player.CrossfadeDurationMs);
     }
+
+    [Fact]
+    public void PreampGain_ClampsAndApplies_Correctly()
+    {
+        var player = new ManagedBassAudioService();
+        Assert.Equal(0.0f, player.PreampGainDb);
+
+        player.SetPreampGain(5.5f);
+        Assert.Equal(5.5f, player.PreampGainDb);
+
+        player.SetPreampGain(25.0f);
+        Assert.Equal(15.0f, player.PreampGainDb);
+
+        player.SetPreampGain(-30.0f);
+        Assert.Equal(-15.0f, player.PreampGainDb);
+    }
 }

@@ -55,8 +55,23 @@ public sealed partial class AlbumArtPanel : UserControl
     public AlbumArtPanel()
     {
         InitializeComponent();
-        ArtButton.PointerEntered += (s, e) => HoverOverlay.Opacity = 1.0;
-        ArtButton.PointerExited += (s, e) => HoverOverlay.Opacity = 0.0;
+        ArtButton.PointerEntered += (s, e) => AnimateHoverOverlay(1.0);
+        ArtButton.PointerExited += (s, e) => AnimateHoverOverlay(0.0);
+    }
+
+    private void AnimateHoverOverlay(double targetOpacity)
+    {
+        var anim = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
+        {
+            To = targetOpacity,
+            Duration = TimeSpan.FromMilliseconds(200),
+            EasingFunction = new Microsoft.UI.Xaml.Media.Animation.CubicEase { EasingMode = Microsoft.UI.Xaml.Media.Animation.EasingMode.EaseInOut }
+        };
+        var sb = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
+        Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(anim, HoverOverlay);
+        Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(anim, "Opacity");
+        sb.Children.Add(anim);
+        sb.Begin();
     }
 
     private void ArtButton_Click(object sender, RoutedEventArgs e)

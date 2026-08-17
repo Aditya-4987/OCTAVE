@@ -50,4 +50,8 @@ public interface IAudioPlayerService
     void SetEqEnabled(bool enabled);
     void SetEqBand(int index, float gainDb);
     float[] GetEqGains();
+
+    // Digital preamp gain control (-15 dB to +15 dB)
+    float PreampGainDb { get; }
+    void SetPreampGain(float gainDb);
 }

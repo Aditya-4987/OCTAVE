@@ -34,46 +34,59 @@ public sealed partial class SpectrumVisualizerControl : UserControl
             _accentBrush = (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"];
         }
 
-        RecreateBars();
+        EnsureBarsCreated();
+        UpdateBarLayout();
     }
 
     private void WaveformCanvas_SizeChanged(object sender, SizeChangedEventArgs e)
     {
-        RecreateBars();
+        UpdateBarLayout();
     }
 
-    private void RecreateBars()
+    private void EnsureBarsCreated()
     {
+        if (_bars.Count == BarCount) return;
+
         WaveformCanvas.Children.Clear();
         _bars.Clear();
-
-        double canvasWidth = WaveformCanvas.ActualWidth;
-        double canvasHeight = WaveformCanvas.ActualHeight;
-
-        if (canvasWidth <= 0 || canvasHeight <= 0) return;
-
-        double spacing = 2.0;
-        double totalSpacing = spacing * (BarCount - 1);
-        double barWidth = Math.Max(1.0, (canvasWidth - totalSpacing) / BarCount);
-        double baseline = canvasHeight - BaselineOffset;
 
         for (int i = 0; i < BarCount; i++)
         {
             var bar = new Rectangle
             {
-                Width = barWidth,
+                Width = 2.0,
                 Height = 2.0,
                 RadiusX = 1.0,
                 RadiusY = 1.0,
                 Fill = _unplayedBrush
             };
 
-            double left = i * (barWidth + spacing);
-            Canvas.SetLeft(bar, left);
-            Canvas.SetTop(bar, baseline - 2.0); // Aligned precisely on baseline
-
             _bars.Add(bar);
             WaveformCanvas.Children.Add(bar);
+        }
+    }
+
+    private void UpdateBarLayout()
+    {
+        EnsureBarsCreated();
+
+        double canvasWidth = WaveformCanvas.ActualWidth;
+        double canvasHeight = WaveformCanvas.ActualHeight;
+
+        if (canvasWidth <= 0 || canvasHeight <= 0 || _bars.Count == 0) return;
+
+        double spacing = 2.0;
+        double totalSpacing = spacing * (BarCount - 1);
+        double barWidth = Math.Max(1.0, (canvasWidth - totalSpacing) / BarCount);
+        double baseline = canvasHeight - BaselineOffset;
+
+        for (int i = 0; i < _bars.Count; i++)
+        {
+            var bar = _bars[i];
+            bar.Width = barWidth;
+            double left = i * (barWidth + spacing);
+            Canvas.SetLeft(bar, left);
+            Canvas.SetTop(bar, baseline - bar.Height);
         }
     }
 

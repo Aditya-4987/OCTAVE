@@ -64,6 +64,7 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
     };
 
     private float _currentReplayGainScale = 1.0f;
+    private float _preampGainDb = 0.0f;
 
     public bool Init()
     {
@@ -193,7 +194,8 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
                 float targetGain = (float)Math.Pow(10, replayGain / 20.0);
                 _currentReplayGainScale = Math.Clamp(targetGain, 0.1f, 2.0f);
 
-                float finalTargetVolume = (_isMuted ? 0f : _volume) * _currentReplayGainScale;
+                float preampScale = (float)Math.Pow(10, _preampGainDb / 20.0);
+                float finalTargetVolume = Math.Clamp((_isMuted ? 0f : _volume) * _currentReplayGainScale * preampScale, 0f, 2.0f);
 
                 if (fadeMs > 0 && isOldPlaying)
                 {
@@ -374,6 +376,17 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         }
     }
 
+    public float PreampGainDb => _preampGainDb;
+
+    public void SetPreampGain(float gainDb)
+    {
+        _preampGainDb = Math.Clamp(gainDb, -15f, 15f);
+        lock (_streamLock)
+        {
+            UpdateStreamVolumeUnlocked();
+        }
+    }
+
     private int _limiterFxHandle = 0;
 
     // Caller MUST hold _streamLock and have a live _currentStream.
@@ -450,7 +463,8 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
     {
         if (_currentStream != 0)
         {
-            float effectiveVolume = _isMuted ? 0f : Math.Clamp(_volume * _currentReplayGainScale, 0f, 2f);
+            float preampScale = (float)Math.Pow(10, _preampGainDb / 20.0);
+            float effectiveVolume = _isMuted ? 0f : Math.Clamp(_volume * _currentReplayGainScale * preampScale, 0f, 2f);
             Bass.ChannelSetAttribute(_currentStream, ChannelAttribute.Volume, effectiveVolume);
         }
     }
@@ -646,10 +660,11 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
                 qualityBadgeType = "CDQuality";
             }
 
-            string gainText = _currentReplayGainScale != 1.0f 
+            string gainText = Math.Abs(_currentReplayGainScale - 1.0f) > 0.01f
                 ? $"ReplayGain ({(20.0 * Math.Log10(_currentReplayGainScale)):+0.0;-0.0;0.0}dB)"
                 : "Standard Level";
-            string dspStatus = _eqEnabled ? $"10-Band EQ Active ({gainText})" : $"Direct Passthrough ({gainText})";
+            string preampText = Math.Abs(_preampGainDb) > 0.01f ? $" | Preamp: {_preampGainDb:+0.0;-0.0;0.0}dB" : "";
+            string dspStatus = _eqEnabled ? $"10-Band EQ Active ({gainText}{preampText})" : $"Direct Passthrough ({gainText}{preampText})";
 
             string streamQualityStr = $"{bits}-bit {sourceKhz:0.0}kHz";
 

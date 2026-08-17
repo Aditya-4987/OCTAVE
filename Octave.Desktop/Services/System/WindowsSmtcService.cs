@@ -15,6 +15,7 @@ public class WindowsSmtcService : ISmtcService
     private readonly ILibraryService _libraryService;
     private readonly IArtworkCacheManager _artworkCache;
     private SystemMediaTransportControls? _systemControls;
+    private Microsoft.UI.Dispatching.DispatcherQueue? _dispatcherQueue;
     private string? _lastTrackId;
     private bool _hasPushedDisplay;
 
@@ -28,6 +29,8 @@ public class WindowsSmtcService : ISmtcService
     public void Initialize(IntPtr windowHandle)
     {
         if (_systemControls != null) return;
+
+        _dispatcherQueue = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
 
         // Retrieve the SMTC instance bound to the window handle
         _systemControls = SystemMediaTransportControlsInterop.GetForWindow(windowHandle);
@@ -51,7 +54,8 @@ public class WindowsSmtcService : ISmtcService
     private void SystemControls_ButtonPressed(SystemMediaTransportControls sender, SystemMediaTransportControlsButtonPressedEventArgs args)
     {
         var button = args.Button;
-        global::System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+
+        void ProcessButton()
         {
             try
             {
@@ -75,7 +79,16 @@ public class WindowsSmtcService : ISmtcService
             {
                 global::System.Diagnostics.Debug.WriteLine($"[SMTC] Button processing failed ({button}): {ex.Message}");
             }
-        });
+        }
+
+        if (_dispatcherQueue != null && !_dispatcherQueue.HasThreadAccess)
+        {
+            _dispatcherQueue.TryEnqueue(ProcessButton);
+        }
+        else
+        {
+            global::System.Threading.ThreadPool.QueueUserWorkItem(_ => ProcessButton());
+        }
     }
 
     private void QueueService_PlaybackStateChanged(object? sender, PlaybackState state)

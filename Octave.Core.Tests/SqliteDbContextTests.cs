@@ -234,4 +234,49 @@ public class SqliteDbContextTests : IDisposable
             }
         }
     }
+
+    [Fact]
+    public async Task SearchLibraryAsync_Fts5Matching_FindsTracksAccurately()
+    {
+        var artist = new Artist("ar_fts", "Pink Floyd", null, null, true);
+        var album = new Album("al_fts", "The Dark Side of the Moon", "ar_fts", "Pink Floyd", 1973, null, "Local");
+        var track1 = new Track("tr_fts1", "Time", "ar_fts", "Pink Floyd", "al_fts", "The Dark Side of the Moon", 413, "C:/music/time.flac", "Local", 4, 1973, DateTime.UtcNow);
+        var track2 = new Track("tr_fts2", "Money", "ar_fts", "Pink Floyd", "al_fts", "The Dark Side of the Moon", 382, "C:/music/money.flac", "Local", 6, 1973, DateTime.UtcNow);
+
+        await _dbContext.UpsertArtistAsync(artist);
+        await _dbContext.UpsertAlbumAsync(album);
+        await _dbContext.UpsertTrackAsync(track1);
+        await _dbContext.UpsertTrackAsync(track2);
+
+        var results = await _dbContext.SearchLibraryAsync("Money");
+        Assert.Single(results.Tracks);
+        Assert.Equal("Money", results.Tracks[0].Title);
+
+        var albumResults = await _dbContext.SearchLibraryAsync("Dark Side");
+        Assert.NotEmpty(albumResults.Albums);
+        Assert.Equal("The Dark Side of the Moon", albumResults.Albums[0].Title);
+    }
+
+    [Fact]
+    public async Task GetArtistByNameAsync_And_GetAlbumByTitleAsync_ReturnAccurateRecords()
+    {
+        var artist = new Artist("ar_queen", "Queen", "Legendary Rock Band", null, true);
+        var album = new Album("al_night_opera", "A Night at the Opera", "ar_queen", "Queen", 1975, null, "Local");
+
+        await _dbContext.UpsertArtistAsync(artist);
+        await _dbContext.UpsertAlbumAsync(album);
+
+        var resolvedArtist = await _dbContext.GetArtistByNameAsync("queen");
+        Assert.NotNull(resolvedArtist);
+        Assert.Equal("ar_queen", resolvedArtist.Id);
+        Assert.Equal("Queen", resolvedArtist.Name);
+
+        var resolvedAlbum = await _dbContext.GetAlbumByTitleAsync("a night at the opera", "ar_queen");
+        Assert.NotNull(resolvedAlbum);
+        Assert.Equal("al_night_opera", resolvedAlbum.Id);
+        Assert.Equal("A Night at the Opera", resolvedAlbum.Title);
+
+        Assert.Null(await _dbContext.GetArtistByNameAsync("Nonexistent Artist"));
+        Assert.Null(await _dbContext.GetAlbumByTitleAsync("Nonexistent Album"));
+    }
 }

@@ -1,37 +1,12 @@
 {
   "Version": 1,
   "WorkspaceRootPath": "C:\\Users\\ADITYA\\Documents\\GitHub\\OCTAVE\\",
-  "Documents": [
-    {
-      "AbsoluteMoniker": "D:0:0:{40363CDF-A0D7-7729-5AFF-9DA41D5CA673}|Octave.Desktop\\Octave.Desktop.csproj|c:\\users\\aditya\\documents\\github\\octave\\octave.desktop\\views\\homepage.xaml||{F11ACC28-31D1-4C80-A34B-F4E09D3D753C}",
-      "RelativeMoniker": "D:0:0:{40363CDF-A0D7-7729-5AFF-9DA41D5CA673}|Octave.Desktop\\Octave.Desktop.csproj|solutionrelative:octave.desktop\\views\\homepage.xaml||{F11ACC28-31D1-4C80-A34B-F4E09D3D753C}"
-    }
-  ],
+  "Documents": [],
   "DocumentGroupContainers": [
     {
       "Orientation": 0,
       "VerticalTabListWidth": 256,
-      "DocumentGroups": [
-        {
-          "DockedWidth": 200,
-          "SelectedChildIndex": 0,
-          "Children": [
-            {
-              "$type": "Document",
-              "DocumentIndex": 0,
-              "Title": "HomePage.xaml",
-              "DocumentMoniker": "C:\\Users\\ADITYA\\Documents\\GitHub\\OCTAVE\\Octave.Desktop\\Views\\HomePage.xaml",
-              "RelativeDocumentMoniker": "Octave.Desktop\\Views\\HomePage.xaml",
-              "ToolTip": "C:\\Users\\ADITYA\\Documents\\GitHub\\OCTAVE\\Octave.Desktop\\Views\\HomePage.xaml",
-              "RelativeToolTip": "Octave.Desktop\\Views\\HomePage.xaml",
-              "ViewState": "AgIAAIgAAAAAAAAAAAAEwJsAAAAxAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003549|",
-              "WhenOpened": "2026-08-16T20:48:01.742Z",
-              "EditorCaption": ""
-            }
-          ]
-        }
-      ]
+      "DocumentGroups": []
     }
   ]
 }

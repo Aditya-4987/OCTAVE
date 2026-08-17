@@ -147,7 +147,30 @@ public class SqliteDbContext
             CREATE INDEX IF NOT EXISTS idx_albums_title ON Albums(Title COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS idx_artists_name ON Artists(Name COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS idx_playlisttracks_playlist ON PlaylistTracks(PlaylistId, SortOrder);
-            CREATE INDEX IF NOT EXISTS idx_history_time ON PlaybackHistory(PlayedAt DESC);";
+            CREATE INDEX IF NOT EXISTS idx_history_time ON PlaybackHistory(PlayedAt DESC);
+
+            CREATE VIRTUAL TABLE IF NOT EXISTS TracksFts USING fts5(
+                TrackId UNINDEXED,
+                Title,
+                ArtistName,
+                AlbumTitle,
+                tokenize = 'unicode61 remove_diacritics 2'
+            );
+
+            CREATE TRIGGER IF NOT EXISTS trg_tracks_fts_insert AFTER INSERT ON Tracks BEGIN
+                INSERT INTO TracksFts(TrackId, Title, ArtistName, AlbumTitle)
+                VALUES (new.Id, new.Title, new.ArtistName, new.AlbumTitle);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS trg_tracks_fts_delete AFTER DELETE ON Tracks BEGIN
+                DELETE FROM TracksFts WHERE TrackId = old.Id;
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS trg_tracks_fts_update AFTER UPDATE ON Tracks BEGIN
+                DELETE FROM TracksFts WHERE TrackId = old.Id;
+                INSERT INTO TracksFts(TrackId, Title, ArtistName, AlbumTitle)
+                VALUES (new.Id, new.Title, new.ArtistName, new.AlbumTitle);
+            END;";
 
         await cmd.ExecuteNonQueryAsync();
 
@@ -156,6 +179,21 @@ public class SqliteDbContext
             vCmd.CommandText = "INSERT OR IGNORE INTO SchemaVersion (Version, AppliedAt) VALUES (1, @now);";
             vCmd.Parameters.Add(new SqliteParameter("@now", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
             await vCmd.ExecuteNonQueryAsync();
+        }
+
+        // Backfill TracksFts if unpopulated
+        try
+        {
+            using var ftsCmd = conn.CreateCommand();
+            ftsCmd.CommandText = @"
+                INSERT INTO TracksFts (TrackId, Title, ArtistName, AlbumTitle)
+                SELECT Id, Title, ArtistName, AlbumTitle FROM Tracks
+                WHERE Id NOT IN (SELECT TrackId FROM TracksFts);";
+            await ftsCmd.ExecuteNonQueryAsync();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[SqliteDbContext] TracksFts backfill: {ex.Message}");
         }
 
         // Lightweight migrations for databases created before a column existed.
@@ -592,6 +630,39 @@ public class SqliteDbContext
         return null;
     }
 
+    public async Task<Album?> GetAlbumByTitleAsync(string title, string? artistId = null)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return null;
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        if (!string.IsNullOrWhiteSpace(artistId))
+        {
+            cmd.CommandText = "SELECT Id, Title, ArtistId, ArtistName, Year, ArtworkUrl, Provider FROM Albums WHERE Title = @title COLLATE NOCASE AND ArtistId = @artistId LIMIT 1;";
+            cmd.Parameters.Add(new SqliteParameter("@title", title.Trim()));
+            cmd.Parameters.Add(new SqliteParameter("@artistId", artistId));
+        }
+        else
+        {
+            cmd.CommandText = "SELECT Id, Title, ArtistId, ArtistName, Year, ArtworkUrl, Provider FROM Albums WHERE Title = @title COLLATE NOCASE LIMIT 1;";
+            cmd.Parameters.Add(new SqliteParameter("@title", title.Trim()));
+        }
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        if (await reader.ReadAsync())
+        {
+            var id = reader.GetString(0);
+            var albumTitle = reader.GetString(1);
+            var artId = reader.GetString(2);
+            var artistName = reader.GetString(3);
+            var year = reader.GetInt32(4);
+            var artworkUrl = reader.IsDBNull(5) ? null : reader.GetString(5);
+            var provider = reader.GetString(6);
+
+            return new Album(id, albumTitle, artId, artistName, year, artworkUrl, provider);
+        }
+        return null;
+    }
+
     public async Task<List<Album>> GetAlbumsByIdsAsync(IEnumerable<string> albumIds)
     {
         if (albumIds == null) return new List<Album>();
@@ -655,6 +726,28 @@ public class SqliteDbContext
             var isLocal = reader.GetInt32(4) != 0;
 
             return new Artist(id, name, bio, artworkUrl, isLocal);
+        }
+        return null;
+    }
+
+    public async Task<Artist?> GetArtistByNameAsync(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return null;
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT Id, Name, Bio, ArtworkUrl, IsLocal FROM Artists WHERE Name = @name COLLATE NOCASE LIMIT 1;";
+        cmd.Parameters.Add(new SqliteParameter("@name", name.Trim()));
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        if (await reader.ReadAsync())
+        {
+            var id = reader.GetString(0);
+            var artistName = reader.GetString(1);
+            var bio = reader.IsDBNull(2) ? null : reader.GetString(2);
+            var artworkUrl = reader.IsDBNull(3) ? null : reader.GetString(3);
+            var isLocal = reader.GetInt32(4) != 0;
+
+            return new Artist(id, artistName, bio, artworkUrl, isLocal);
         }
         return null;
     }
@@ -1593,7 +1686,64 @@ public class SqliteDbContext
         string prefixQuery = $"{query}%";
         string exactQuery = query;
 
-        // Query 1: Tracks
+        // Query 1: Tracks (Optimized with FTS5 when available, falling back to prefix/LIKE)
+        string ftsQuery = BuildFtsQuery(query);
+        bool usedFts = false;
+        if (!string.IsNullOrWhiteSpace(ftsQuery))
+        {
+            try
+            {
+                using var ftsCmd = conn.CreateCommand();
+                string ftsSql = @"
+                    SELECT t.Id, t.Title, t.ArtistId, t.ArtistName, t.AlbumId, t.AlbumTitle, t.DurationSeconds, t.SourceUri, t.Provider, t.TrackNumber, t.Year, t.DateAdded, t.Genre, t.ReplayGain
+                    FROM TracksFts f
+                    JOIN Tracks t ON t.Id = f.TrackId
+                    WHERE TracksFts MATCH @fts
+                    ORDER BY bm25(TracksFts), t.Title ASC";
+                if (limit.HasValue)
+                {
+                    ftsSql += " LIMIT @limit";
+                    ftsCmd.Parameters.Add(new SqliteParameter("@limit", limit.Value));
+                }
+                ftsSql += ";";
+                ftsCmd.CommandText = ftsSql;
+                ftsCmd.Parameters.Add(new SqliteParameter("@fts", ftsQuery));
+
+                using var ftsReader = await ftsCmd.ExecuteReaderAsync();
+                while (await ftsReader.ReadAsync())
+                {
+                    var id = ftsReader.GetString(0);
+                    var title = ftsReader.GetString(1);
+                    var artistId = ftsReader.GetString(2);
+                    var artistName = ftsReader.GetString(3);
+                    var albumIdVal = ftsReader.GetString(4);
+                    var albumTitle = ftsReader.GetString(5);
+                    var durationSeconds = ftsReader.GetDouble(6);
+                    var sourceUri = ftsReader.GetString(7);
+                    var provider = ftsReader.GetString(8);
+                    var trackNumber = ftsReader.GetInt32(9);
+                    var year = ftsReader.GetInt32(10);
+                    var epochSeconds = ftsReader.GetInt64(11);
+                    var dateAdded = DateTimeOffset.FromUnixTimeSeconds(epochSeconds).UtcDateTime;
+                    var genre = ftsReader.IsDBNull(12) ? "" : ftsReader.GetString(12);
+                    var replayGain = ftsReader.IsDBNull(13) ? 0.0f : (float)ftsReader.GetDouble(13);
+
+                    tracks.Add(new Track(
+                        id, title, artistId, artistName, albumIdVal, albumTitle,
+                        durationSeconds, sourceUri, provider, trackNumber, year, dateAdded,
+                        genre, replayGain
+                    ));
+                }
+                usedFts = tracks.Count > 0;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[SqliteDbContext] FTS5 search exception: {ex.Message}");
+                usedFts = false;
+            }
+        }
+
+        if (!usedFts && tracks.Count == 0)
         {
             using var cmd = conn.CreateCommand();
             string sql = @"
@@ -1762,5 +1912,22 @@ public class SqliteDbContext
         }
 
         return new SearchResults(tracks, albums, artists, playlists);
+    }
+
+    private static string BuildFtsQuery(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return string.Empty;
+        var words = input.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (words.Length == 0) return string.Empty;
+        var terms = new List<string>(words.Length);
+        foreach (var w in words)
+        {
+            string clean = w.Replace("\"", "").Trim();
+            if (!string.IsNullOrEmpty(clean))
+            {
+                terms.Add($"\"{clean}\"*");
+            }
+        }
+        return string.Join(" AND ", terms);
     }
 }
