@@ -546,8 +546,15 @@ public partial class ShellViewModel : ObservableObject
                 try
                 {
                     var track = group.Tracks[i];
-                    Octave.Core.Helpers.ShellRecycleBin.SendToRecycleBin(track.SourceUri);
-                    await _libraryService.DeleteTrackAsync(track.Id);
+                    bool recycled = Octave.Core.Helpers.ShellRecycleBin.SendToRecycleBin(track.SourceUri);
+                    if (recycled)
+                    {
+                        await _libraryService.DeleteTrackAsync(track.Id);
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[ShellViewModel] Skipped deleting track {track.Id}; file could not be recycled: {track.SourceUri}");
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -609,30 +616,16 @@ public partial class ShellViewModel : ObservableObject
             OutputDeviceName = _audioPlayer.OutputDeviceName;
             AudioQualityInfo = _audioPlayer.QualityDetails;
             
-            try
-            {
-                var uri = state.CurrentTrack.SourceUri;
-                InfoLocation = uri;
-                InfoFormat = Path.GetExtension(uri).TrimStart('.').ToUpperInvariant();
-                
-                if (File.Exists(uri))
-                {
-                    var fileInfo = new FileInfo(uri);
-                    InfoFileSize = $"{(fileInfo.Length / (1024.0 * 1024.0)):0.00} MB";
+            var uri = state.CurrentTrack.SourceUri;
+            InfoLocation = uri;
+            InfoFormat = Path.GetExtension(uri).TrimStart('.').ToUpperInvariant();
 
-                    using var tfile = TagLib.File.Create(uri);
-                    if (tfile.Properties != null)
-                    {
-                        InfoBitrate = $"{tfile.Properties.AudioBitrate} kbps";
-                        InfoSampleRate = $"{tfile.Properties.AudioSampleRate} Hz";
-                    }
-                }
-            }
-            catch
+            if (state.CurrentTrack.Id != _lastTrackId)
             {
-                InfoFileSize = "Unknown";
-                InfoBitrate = "Unknown";
-                InfoSampleRate = "Unknown";
+                InfoFileSize = "Loading...";
+                InfoBitrate = "Loading...";
+                InfoSampleRate = "Loading...";
+                _ = LoadTrackFileMetadataAsync(uri, state.CurrentTrack.Id);
             }
         }
         else
@@ -677,6 +670,69 @@ public partial class ShellViewModel : ObservableObject
         OnPropertyChanged(nameof(IsMuted));
 
         RefreshQueue();
+    }
+
+    private async Task LoadTrackFileMetadataAsync(string uri, string trackId)
+    {
+        if (string.IsNullOrWhiteSpace(uri) || !File.Exists(uri))
+        {
+            _dispatcher.TryEnqueue(() =>
+            {
+                if (_lastTrackId == trackId)
+                {
+                    InfoFileSize = "Unknown";
+                    InfoBitrate = "Unknown";
+                    InfoSampleRate = "Unknown";
+                }
+            });
+            return;
+        }
+
+        try
+        {
+            var (fileSize, bitrate, sampleRate) = await Task.Run(() =>
+            {
+                var fileInfo = new FileInfo(uri);
+                string size = $"{(fileInfo.Length / (1024.0 * 1024.0)):0.00} MB";
+                string br = "Unknown";
+                string sr = "Unknown";
+
+                try
+                {
+                    using var tfile = TagLib.File.Create(uri);
+                    if (tfile.Properties != null)
+                    {
+                        br = $"{tfile.Properties.AudioBitrate} kbps";
+                        sr = $"{tfile.Properties.AudioSampleRate} Hz";
+                    }
+                }
+                catch { }
+
+                return (size, br, sr);
+            });
+
+            _dispatcher.TryEnqueue(() =>
+            {
+                if (_lastTrackId == trackId)
+                {
+                    InfoFileSize = fileSize;
+                    InfoBitrate = bitrate;
+                    InfoSampleRate = sampleRate;
+                }
+            });
+        }
+        catch
+        {
+            _dispatcher.TryEnqueue(() =>
+            {
+                if (_lastTrackId == trackId)
+                {
+                    InfoFileSize = "Unknown";
+                    InfoBitrate = "Unknown";
+                    InfoSampleRate = "Unknown";
+                }
+            });
+        }
     }
 
     private async Task LoadArtworkAsync(string albumId)

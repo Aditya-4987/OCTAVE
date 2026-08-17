@@ -37,6 +37,19 @@ public sealed partial class SettingsPage : Page
         var folder = await picker.PickSingleFolderAsync();
         if (folder != null)
         {
+            if (ViewModel.MonitoredFolders.Contains(folder.Path))
+            {
+                var dialog = new ContentDialog
+                {
+                    Title = "Folder Already Added",
+                    Content = $"The selected folder is already being monitored in your library:\n{folder.Path}",
+                    CloseButtonText = "OK",
+                    XamlRoot = this.XamlRoot
+                };
+                await dialog.ShowAsync();
+                return;
+            }
+
             await ViewModel.AddFolderAsync(folder.Path);
         }
     }
@@ -124,14 +137,20 @@ public sealed partial class SettingsPage : Page
             {
                 try
                 {
-                    Octave.Core.Helpers.ShellRecycleBin.SendToRecycleBin(track.SourceUri);
-
-                    var libraryService = App.Services.GetRequiredService<Octave.Core.Services.Library.ILibraryService>();
-                    await libraryService.DeleteTrackAsync(track.Id);
-
-                    if (ViewModel.FindDuplicatesCommand.CanExecute(null))
+                    bool moved = Octave.Core.Helpers.ShellRecycleBin.SendToRecycleBin(track.SourceUri);
+                    if (moved)
                     {
-                        ViewModel.FindDuplicatesCommand.Execute(null);
+                        var libraryService = App.Services.GetRequiredService<Octave.Core.Services.Library.ILibraryService>();
+                        await libraryService.DeleteTrackAsync(track.Id);
+
+                        if (ViewModel.FindDuplicatesCommand.CanExecute(null))
+                        {
+                            ViewModel.FindDuplicatesCommand.Execute(null);
+                        }
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[SettingsPage] Could not recycle track file: {track.SourceUri}");
                     }
                 }
                 catch (System.Exception ex)
@@ -181,8 +200,15 @@ public sealed partial class SettingsPage : Page
                 try
                 {
                     bool moved = Octave.Core.Helpers.ShellRecycleBin.SendToRecycleBin(track.SourceUri);
-                    await libraryService.DeleteTrackAsync(track.Id);
-                    if (moved) successCount++; else failedCount++;
+                    if (moved)
+                    {
+                        await libraryService.DeleteTrackAsync(track.Id);
+                        successCount++;
+                    }
+                    else
+                    {
+                        failedCount++;
+                    }
                 }
                 catch (System.Exception ex)
                 {

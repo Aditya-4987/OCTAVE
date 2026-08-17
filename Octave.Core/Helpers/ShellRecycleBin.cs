@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Runtime.InteropServices;
 
 namespace Octave.Core.Helpers;
@@ -15,11 +16,14 @@ public static class ShellRecycleBin
     {
         public IntPtr hwnd;
         public uint wFunc;
+        [MarshalAs(UnmanagedType.LPWStr)]
         public string pFrom;
+        [MarshalAs(UnmanagedType.LPWStr)]
         public string? pTo;
         public ushort fFlags;
         public bool fAnyOperationsAborted;
         public IntPtr hNameMappings;
+        [MarshalAs(UnmanagedType.LPWStr)]
         public string? lpszProgressTitle;
     }
 
@@ -28,16 +32,21 @@ public static class ShellRecycleBin
 
     public static bool SendToRecycleBin(string filePath)
     {
-        if (string.IsNullOrWhiteSpace(filePath) || !System.IO.File.Exists(filePath))
+        if (!OperatingSystem.IsWindows())
+            return false;
+
+        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
             return false;
 
         try
         {
+            string fullPath = Path.GetFullPath(filePath);
+
             var shf = new SHFILEOPSTRUCT
             {
                 hwnd = IntPtr.Zero,
                 wFunc = FO_DELETE,
-                pFrom = filePath + '\0' + '\0', // Double null-terminated string required by SHFileOperation
+                pFrom = fullPath + '\0' + '\0', // Double null-terminated string required by SHFileOperation
                 pTo = null,
                 fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT,
                 fAnyOperationsAborted = false,
@@ -46,19 +55,18 @@ public static class ShellRecycleBin
             };
 
             int result = SHFileOperation(ref shf);
-            return result == 0 && !shf.fAnyOperationsAborted;
-        }
-        catch
-        {
-            try
+            if (result != 0 || shf.fAnyOperationsAborted)
             {
-                System.IO.File.Delete(filePath);
-                return true;
-            }
-            catch
-            {
+                System.Diagnostics.Debug.WriteLine($"[ShellRecycleBin] SHFileOperation failed with code {result}, aborted={shf.fAnyOperationsAborted} for '{filePath}'");
                 return false;
             }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[ShellRecycleBin] Exception recycling file '{filePath}': {ex.Message}");
+            return false;
         }
     }
 }

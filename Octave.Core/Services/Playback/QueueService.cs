@@ -217,9 +217,9 @@ public class QueueService : IQueueService
             _unshuffledQueue.Clear();
             foreach (var t in tracks)
             {
-                var item = new QueueItem { Id = Guid.NewGuid().ToString(), Track = t, IsPlaying = false };
-                _activeQueue.Add(item);
-                _unshuffledQueue.Add(item);
+                string itemId = Guid.NewGuid().ToString();
+                _activeQueue.Add(new QueueItem { Id = itemId, Track = t, IsPlaying = false });
+                _unshuffledQueue.Add(new QueueItem { Id = itemId, Track = t, IsPlaying = false });
             }
 
             _isShuffle = saved.IsShuffle;
@@ -252,15 +252,12 @@ public class QueueService : IQueueService
     {
         lock (_queueLock)
         {
-            var item = new QueueItem
-            {
-                Id = Guid.NewGuid().ToString(),
-                Track = track,
-                IsPlaying = false
-            };
+            string itemId = Guid.NewGuid().ToString();
+            var activeItem = new QueueItem { Id = itemId, Track = track, IsPlaying = false };
+            var unshuffledItem = new QueueItem { Id = itemId, Track = track, IsPlaying = false };
 
-            _unshuffledQueue.Add(item);
-            _activeQueue.Add(item);
+            _unshuffledQueue.Add(unshuffledItem);
+            _activeQueue.Add(activeItem);
 
             EmitPlaybackStateChanged();
         }
@@ -275,15 +272,12 @@ public class QueueService : IQueueService
             bool added = false;
             foreach (var track in tracks)
             {
-                var item = new QueueItem
-                {
-                    Id = Guid.NewGuid().ToString(),
-                    Track = track,
-                    IsPlaying = false
-                };
+                string itemId = Guid.NewGuid().ToString();
+                var activeItem = new QueueItem { Id = itemId, Track = track, IsPlaying = false };
+                var unshuffledItem = new QueueItem { Id = itemId, Track = track, IsPlaying = false };
 
-                _unshuffledQueue.Add(item);
-                _activeQueue.Add(item);
+                _unshuffledQueue.Add(unshuffledItem);
+                _activeQueue.Add(activeItem);
                 added = true;
             }
 
@@ -301,19 +295,16 @@ public class QueueService : IQueueService
     {
         lock (_queueLock)
         {
-            var item = new QueueItem
-            {
-                Id = Guid.NewGuid().ToString(),
-                Track = track,
-                IsPlaying = false
-            };
+            string itemId = Guid.NewGuid().ToString();
+            var activeItem = new QueueItem { Id = itemId, Track = track, IsPlaying = false };
+            var unshuffledItem = new QueueItem { Id = itemId, Track = track, IsPlaying = false };
 
             int activeInsertIndex = _currentIndex + 1;
             if (activeInsertIndex < 0 || activeInsertIndex > _activeQueue.Count)
             {
                 activeInsertIndex = _activeQueue.Count;
             }
-            _activeQueue.Insert(activeInsertIndex, item);
+            _activeQueue.Insert(activeInsertIndex, activeItem);
 
             int naturalInsertIndex = -1;
             if (_currentIndex >= 0 && _currentIndex < _activeQueue.Count)
@@ -324,11 +315,11 @@ public class QueueService : IQueueService
 
             if (naturalInsertIndex != -1)
             {
-                _unshuffledQueue.Insert(naturalInsertIndex + 1, item);
+                _unshuffledQueue.Insert(naturalInsertIndex + 1, unshuffledItem);
             }
             else
             {
-                _unshuffledQueue.Add(item);
+                _unshuffledQueue.Add(unshuffledItem);
             }
 
             EmitPlaybackStateChanged();
@@ -364,7 +355,7 @@ public class QueueService : IQueueService
             }
 
             _activeQueue.RemoveAt(index);
-            _unshuffledQueue.Remove(itemToRemove);
+            _unshuffledQueue.RemoveAll(i => i.Id == itemToRemove.Id);
 
             EmitPlaybackStateChanged();
         }
@@ -379,8 +370,8 @@ public class QueueService : IQueueService
                 var currentItem = _activeQueue[_currentIndex];
                 _activeQueue.Clear();
                 _unshuffledQueue.Clear();
-                _activeQueue.Add(currentItem);
-                _unshuffledQueue.Add(currentItem);
+                _activeQueue.Add(new QueueItem { Id = currentItem.Id, Track = currentItem.Track, IsPlaying = currentItem.IsPlaying });
+                _unshuffledQueue.Add(new QueueItem { Id = currentItem.Id, Track = currentItem.Track, IsPlaying = currentItem.IsPlaying });
                 _currentIndex = 0;
             }
             else
@@ -427,22 +418,26 @@ public class QueueService : IQueueService
             if (!_isShuffle)
             {
                 _unshuffledQueue.Clear();
-                _unshuffledQueue.AddRange(_activeQueue);
+                foreach (var it in _activeQueue)
+                {
+                    _unshuffledQueue.Add(new QueueItem { Id = it.Id, Track = it.Track, IsPlaying = it.IsPlaying });
+                }
             }
             else
             {
-                int oldUnshuffledIndex = _unshuffledQueue.FindIndex(i => ReferenceEquals(i, item));
+                int oldUnshuffledIndex = _unshuffledQueue.FindIndex(i => i.Id == item.Id);
                 if (oldUnshuffledIndex >= 0)
                 {
+                    var unshuffledItem = _unshuffledQueue[oldUnshuffledIndex];
                     _unshuffledQueue.RemoveAt(oldUnshuffledIndex);
                     int targetUnshuffledIndex = _unshuffledQueue.Count;
                     if (newIndex < _activeQueue.Count - 1)
                     {
                         var nextActiveItem = _activeQueue[newIndex + 1];
-                        int nextUnshuffledIndex = _unshuffledQueue.FindIndex(i => ReferenceEquals(i, nextActiveItem));
+                        int nextUnshuffledIndex = _unshuffledQueue.FindIndex(i => i.Id == nextActiveItem.Id);
                         if (nextUnshuffledIndex >= 0) targetUnshuffledIndex = nextUnshuffledIndex;
                     }
-                    _unshuffledQueue.Insert(Math.Clamp(targetUnshuffledIndex, 0, _unshuffledQueue.Count), item);
+                    _unshuffledQueue.Insert(Math.Clamp(targetUnshuffledIndex, 0, _unshuffledQueue.Count), unshuffledItem);
                 }
             }
 
@@ -485,14 +480,18 @@ public class QueueService : IQueueService
                 _activeQueue.Clear();
                 if (currentItem != null)
                 {
-                    _activeQueue.Add(currentItem);
+                    _activeQueue.Add(new QueueItem { Id = currentItem.Id, Track = currentItem.Track, IsPlaying = currentItem.IsPlaying });
                     _currentIndex = 0;
                 }
                 else
                 {
                     _currentIndex = -1;
                 }
-                _activeQueue.AddRange(listToShuffle);
+
+                foreach (var it in listToShuffle)
+                {
+                    _activeQueue.Add(new QueueItem { Id = it.Id, Track = it.Track, IsPlaying = false });
+                }
             }
             else
             {
@@ -503,11 +502,14 @@ public class QueueService : IQueueService
                 }
 
                 _activeQueue.Clear();
-                _activeQueue.AddRange(_unshuffledQueue);
+                foreach (var it in _unshuffledQueue)
+                {
+                    _activeQueue.Add(new QueueItem { Id = it.Id, Track = it.Track, IsPlaying = (currentItem != null && it.Id == currentItem.Id) });
+                }
 
                 if (currentItem != null)
                 {
-                    _currentIndex = _activeQueue.FindIndex(item => ReferenceEquals(item, currentItem));
+                    _currentIndex = _activeQueue.FindIndex(item => item.Id == currentItem.Id);
                 }
                 else
                 {

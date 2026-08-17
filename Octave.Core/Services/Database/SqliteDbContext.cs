@@ -136,11 +136,27 @@ public class SqliteDbContext
                 FOREIGN KEY(TrackId) REFERENCES Tracks(Id) ON DELETE CASCADE
             ) STRICT;
 
+            CREATE TABLE IF NOT EXISTS SchemaVersion (
+                Version INTEGER PRIMARY KEY,
+                AppliedAt INTEGER NOT NULL
+            ) STRICT;
+
             CREATE INDEX IF NOT EXISTS idx_tracks_artist ON Tracks(ArtistId);
             CREATE INDEX IF NOT EXISTS idx_tracks_album ON Tracks(AlbumId);
+            CREATE INDEX IF NOT EXISTS idx_tracks_title ON Tracks(Title COLLATE NOCASE);
+            CREATE INDEX IF NOT EXISTS idx_albums_title ON Albums(Title COLLATE NOCASE);
+            CREATE INDEX IF NOT EXISTS idx_artists_name ON Artists(Name COLLATE NOCASE);
+            CREATE INDEX IF NOT EXISTS idx_playlisttracks_playlist ON PlaylistTracks(PlaylistId, SortOrder);
             CREATE INDEX IF NOT EXISTS idx_history_time ON PlaybackHistory(PlayedAt DESC);";
 
         await cmd.ExecuteNonQueryAsync();
+
+        using (var vCmd = conn.CreateCommand())
+        {
+            vCmd.CommandText = "INSERT OR IGNORE INTO SchemaVersion (Version, AppliedAt) VALUES (1, @now);";
+            vCmd.Parameters.Add(new SqliteParameter("@now", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+            await vCmd.ExecuteNonQueryAsync();
+        }
 
         // Lightweight migrations for databases created before a column existed.
         await TryAddColumnAsync(conn, "Tracks", "Genre", "TEXT NOT NULL DEFAULT ''");
@@ -385,7 +401,7 @@ public class SqliteDbContext
 
             var dateAdded = DateTimeOffset.FromUnixTimeSeconds(epochSeconds).UtcDateTime;
             var genre = reader.IsDBNull(12) ? "" : reader.GetString(12);
-            var replayGain = reader.IsDBNull(13) ? 0.0 : reader.GetDouble(13);
+            var replayGain = reader.IsDBNull(13) ? 0.0f : (float)reader.GetDouble(13);
 
             tracks.Add(new Track(
                 id, title, artistId, artistName, albumId, albumTitle, durationSeconds, sourceUri, provider, trackNumber, year, dateAdded, genre, replayGain
@@ -478,7 +494,7 @@ public class SqliteDbContext
 
             var dateAdded = DateTimeOffset.FromUnixTimeSeconds(epochSeconds).UtcDateTime;
             var genre = reader.IsDBNull(12) ? "" : reader.GetString(12);
-            var replayGain = reader.IsDBNull(13) ? 0.0 : reader.GetDouble(13);
+            var replayGain = reader.IsDBNull(13) ? 0.0f : (float)reader.GetDouble(13);
 
             tracks.Add(new Track(
                 id, title, artistId, artistName, albId, albumTitle, durationSeconds, sourceUri, provider, trackNumber, year, dateAdded, genre, replayGain
@@ -544,7 +560,7 @@ public class SqliteDbContext
 
             var dateAdded = DateTimeOffset.FromUnixTimeSeconds(epochSeconds).UtcDateTime;
             var genre = reader.IsDBNull(12) ? "" : reader.GetString(12);
-            var replayGain = reader.IsDBNull(13) ? 0.0 : reader.GetDouble(13);
+            var replayGain = reader.IsDBNull(13) ? 0.0f : (float)reader.GetDouble(13);
 
             tracks.Add(new Track(
                 id, title, artId, rowArtistName, albumIdVal, albumTitle, durationSeconds, sourceUri, provider, trackNumber, year, dateAdded, genre, replayGain
@@ -574,6 +590,52 @@ public class SqliteDbContext
             return new Album(id, title, artistId, artistName, year, artworkUrl, provider);
         }
         return null;
+    }
+
+    public async Task<List<Album>> GetAlbumsByIdsAsync(IEnumerable<string> albumIds)
+    {
+        if (albumIds == null) return new List<Album>();
+        var ids = System.Linq.Enumerable.ToList(System.Linq.Enumerable.Distinct(albumIds));
+        if (ids.Count == 0) return new List<Album>();
+
+        var result = new List<Album>();
+        const int batchSize = 500;
+        using var conn = CreateConnection();
+
+        for (int offset = 0; offset < ids.Count; offset += batchSize)
+        {
+            int count = Math.Min(batchSize, ids.Count - offset);
+            using var cmd = conn.CreateCommand();
+
+            var paramNames = new List<string>(count);
+            for (int i = 0; i < count; i++)
+            {
+                string p = "@alb" + i;
+                paramNames.Add(p);
+                cmd.Parameters.Add(new SqliteParameter(p, ids[offset + i]));
+            }
+
+            cmd.CommandText = $@"
+                SELECT Id, Title, ArtistId, ArtistName, Year, ArtworkUrl, Provider 
+                FROM Albums 
+                WHERE Id IN ({string.Join(",", paramNames)});";
+
+            using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var id = reader.GetString(0);
+                var title = reader.GetString(1);
+                var artistId = reader.GetString(2);
+                var artistName = reader.GetString(3);
+                var year = reader.GetInt32(4);
+                var artworkUrl = reader.IsDBNull(5) ? null : reader.GetString(5);
+                var provider = reader.GetString(6);
+
+                result.Add(new Album(id, title, artistId, artistName, year, artworkUrl, provider));
+            }
+        }
+
+        return result;
     }
 
     public async Task<Artist?> GetArtistByIdAsync(string artistId)
@@ -643,7 +705,7 @@ public class SqliteDbContext
             var epochSeconds = reader.GetInt64(11);
             var dateAdded = DateTimeOffset.FromUnixTimeSeconds(epochSeconds).UtcDateTime;
             var genre = reader.IsDBNull(12) ? "" : reader.GetString(12);
-            var replayGain = reader.IsDBNull(13) ? 0.0 : reader.GetDouble(13);
+            var replayGain = reader.IsDBNull(13) ? 0.0f : (float)reader.GetDouble(13);
 
             return new Track(id, title, artistId, artistName, albumIdVal, albumTitle, durationSeconds, sourceUri, provider, trackNumber, year, dateAdded, genre, replayGain);
         }
@@ -765,7 +827,7 @@ public class SqliteDbContext
         return new Track(
             reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
             reader.GetString(4), reader.GetString(5), reader.GetDouble(6), reader.GetString(7),
-            reader.GetString(8), reader.GetInt32(9), reader.GetInt32(10), dateAdded, reader.GetString(12), reader.GetDouble(13));
+            reader.GetString(8), reader.GetInt32(9), reader.GetInt32(10), dateAdded, reader.GetString(12), (float)reader.GetDouble(13));
     }
 
     public async Task<List<Track>> GetRecentlyPlayedAsync(int limit)
@@ -983,7 +1045,7 @@ public class SqliteDbContext
                 reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
                 reader.GetString(4), reader.GetString(5), reader.GetDouble(6), reader.GetString(7),
                 reader.GetString(8), reader.GetInt32(9), reader.GetInt32(10), dateAdded,
-                reader.GetString(12), reader.GetDouble(13)));
+                reader.GetString(12), (float)reader.GetDouble(13)));
         }
         return tracks;
     }
@@ -1006,7 +1068,11 @@ public class SqliteDbContext
     {
         using var conn = CreateConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "DELETE FROM PlaylistTracks WHERE PlaylistId = @pid AND TrackId = @tid;";
+        // Deletes by surrogate Id if matching, or removes exactly ONE occurrence if trackId is a Track ID
+        cmd.CommandText = @"
+            DELETE FROM PlaylistTracks 
+            WHERE Id = @tid 
+               OR rowid IN (SELECT rowid FROM PlaylistTracks WHERE PlaylistId = @pid AND TrackId = @tid LIMIT 1);";
         cmd.Parameters.Add(new SqliteParameter("@pid", playlistId));
         cmd.Parameters.Add(new SqliteParameter("@tid", trackId));
         await cmd.ExecuteNonQueryAsync();
@@ -1036,7 +1102,7 @@ public class SqliteDbContext
                 reader.GetString(3), reader.GetString(4), reader.GetString(5), reader.GetString(6),
                 reader.GetString(7), reader.GetString(8), reader.GetDouble(9), reader.GetString(10),
                 reader.GetString(11), reader.GetInt32(12), reader.GetInt32(13), dateAdded,
-                reader.GetString(15), reader.GetDouble(16));
+                reader.GetString(15), (float)reader.GetDouble(16));
             entries.Add(new PlaylistTrackEntry(entryId, pid, track, sortOrder));
         }
         return entries;
@@ -1172,7 +1238,7 @@ public class SqliteDbContext
                 reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
                 reader.GetString(4), reader.GetString(5), reader.GetDouble(6), reader.GetString(7),
                 reader.GetString(8), reader.GetInt32(9), reader.GetInt32(10), dateAdded,
-                reader.GetString(12), reader.GetDouble(13));
+                reader.GetString(12), (float)reader.GetDouble(13));
         }
         return null;
     }
@@ -1212,7 +1278,7 @@ public class SqliteDbContext
                 reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
                 reader.GetString(4), reader.GetString(5), reader.GetDouble(6), reader.GetString(7),
                 reader.GetString(8), reader.GetInt32(9), reader.GetInt32(10), dateAdded,
-                reader.GetString(12), reader.GetDouble(13)));
+                reader.GetString(12), (float)reader.GetDouble(13)));
         }
         return tracks;
     }
@@ -1361,7 +1427,7 @@ public class SqliteDbContext
                         reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
                         reader.GetString(4), reader.GetString(5), reader.GetDouble(6), reader.GetString(7),
                         reader.GetString(8), reader.GetInt32(9), reader.GetInt32(10), dateAdded,
-                        reader.GetString(12), reader.GetDouble(13));
+                        reader.GetString(12), (float)reader.GetDouble(13));
                     byId[track.Id] = track;
                 }
             }
@@ -1568,7 +1634,7 @@ public class SqliteDbContext
                 var epochSeconds = reader.GetInt64(11);
                 var dateAdded = DateTimeOffset.FromUnixTimeSeconds(epochSeconds).UtcDateTime;
                 var genre = reader.IsDBNull(12) ? "" : reader.GetString(12);
-                var replayGain = reader.IsDBNull(13) ? 0.0 : reader.GetDouble(13);
+                var replayGain = reader.IsDBNull(13) ? 0.0f : (float)reader.GetDouble(13);
 
                 tracks.Add(new Track(
                     id, title, artistId, artistName, albumIdVal, albumTitle,

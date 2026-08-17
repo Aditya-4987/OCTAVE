@@ -20,9 +20,8 @@ public class ArtworkCacheManager : IArtworkCacheManager
         if (imageData == null || imageData.Length == 0)
             return null;
 
-        // 1. Compute a cryptographic hash string from the raw byte array using SHA-256 exclusively
-        using var sha256 = SHA256.Create();
-        byte[] hashBytes = sha256.ComputeHash(imageData);
+        // 1. Compute a cryptographic hash string from the raw byte array using SHA-256
+        byte[] hashBytes = SHA256.HashData(imageData);
         string sha256Hash = Convert.ToHexString(hashBytes).ToLowerInvariant();
 
         // 2. Map the mimeType string to a clean file extension (.jpg, .png). Default to .jpg if null.

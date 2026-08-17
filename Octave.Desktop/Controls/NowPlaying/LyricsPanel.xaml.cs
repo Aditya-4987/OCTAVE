@@ -59,11 +59,16 @@ public sealed partial class LyricsPanel : UserControl
         }
     }
 
+    private int _lastHighlightedIndex = -2;
+    private static readonly Brush DefaultLineBrush = new SolidColorBrush(Microsoft.UI.Colors.White);
+    private Brush? _accentBrush;
+
     private static void OnSyncedLinesChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         if (d is LyricsPanel panel)
         {
             panel._lineElements.Clear();
+            panel._lastHighlightedIndex = -2;
             panel.SyncedItemsControl.ItemsSource = panel.SyncedLines;
             panel.UpdateStateViews();
         }
@@ -111,8 +116,11 @@ public sealed partial class LyricsPanel : UserControl
     private void UpdateLyricHighlighting()
     {
         int targetIdx = CurrentLyricIndex;
-        Brush activeBrush = (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"];
-        Brush defaultBrush = new SolidColorBrush(Microsoft.UI.Colors.White);
+        if (targetIdx == _lastHighlightedIndex) return;
+        _lastHighlightedIndex = targetIdx;
+
+        _accentBrush ??= (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"];
+        Brush activeBrush = _accentBrush;
 
         for (int i = 0; i < _lineElements.Count; i++)
         {
@@ -137,7 +145,7 @@ public sealed partial class LyricsPanel : UserControl
             else
             {
                 tb.Opacity = 0.35;
-                tb.Foreground = defaultBrush;
+                tb.Foreground = DefaultLineBrush;
                 tb.FontSize = 18;
             }
         }
@@ -145,16 +153,18 @@ public sealed partial class LyricsPanel : UserControl
 
     private void UpdateSingleLineHighlight(TextBlock tb, int index)
     {
+        _accentBrush ??= (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"];
+
         if (index == CurrentLyricIndex)
         {
             tb.Opacity = 1.0;
-            tb.Foreground = (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"];
+            tb.Foreground = _accentBrush;
             tb.FontSize = 22;
         }
         else
         {
             tb.Opacity = 0.35;
-            tb.Foreground = new SolidColorBrush(Microsoft.UI.Colors.White);
+            tb.Foreground = DefaultLineBrush;
             tb.FontSize = 18;
         }
     }

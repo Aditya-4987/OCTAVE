@@ -101,4 +101,42 @@ Line three of unsynced lyrics";
         Assert.Equal(2, FindIndex(25.0));   // Line 3
         Assert.Equal(3, FindIndex(45.0));   // Line 4
     }
+
+    [Fact]
+    public void ParseLrcContent_WithPositiveOffset_ShiftsTimestampsEarlier()
+    {
+        string rawLrc = @"[offset:+500]
+[00:05.00]First line
+[00:10.00]Second line";
+
+        var data = LyricsService.ParseLrcContent("track_1", rawLrc);
+
+        Assert.Equal(LyricsState.Synced, data.State);
+        Assert.NotNull(data.SyncedLines);
+        Assert.Equal(2, data.SyncedLines.Count);
+
+        // 5000ms - 500ms = 4500ms (4.5s)
+        Assert.Equal(TimeSpan.FromSeconds(4.5), data.SyncedLines[0].Start);
+        // 10000ms - 500ms = 9500ms (9.5s)
+        Assert.Equal(TimeSpan.FromSeconds(9.5), data.SyncedLines[1].Start);
+    }
+
+    [Fact]
+    public void ParseLrcContent_WithNegativeOffset_ShiftsTimestampsLater()
+    {
+        string rawLrc = @"[offset:-1000]
+[00:05.00]First line
+[00:10.00]Second line";
+
+        var data = LyricsService.ParseLrcContent("track_1", rawLrc);
+
+        Assert.Equal(LyricsState.Synced, data.State);
+        Assert.NotNull(data.SyncedLines);
+        Assert.Equal(2, data.SyncedLines.Count);
+
+        // 5000ms - (-1000ms) = 6000ms (6.0s)
+        Assert.Equal(TimeSpan.FromSeconds(6.0), data.SyncedLines[0].Start);
+        // 10000ms - (-1000ms) = 11000ms (11.0s)
+        Assert.Equal(TimeSpan.FromSeconds(11.0), data.SyncedLines[1].Start);
+    }
 }

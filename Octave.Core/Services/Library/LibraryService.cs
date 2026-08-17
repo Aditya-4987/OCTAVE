@@ -104,6 +104,9 @@ public class LibraryService : ILibraryService
     public Task<Album?> GetAlbumByIdAsync(string albumId) =>
         _dbContext.GetAlbumByIdAsync(albumId);
 
+    public Task<List<Album>> GetAlbumsByIdsAsync(IEnumerable<string> albumIds) =>
+        _dbContext.GetAlbumsByIdsAsync(albumIds);
+
     public Task<Artist?> GetArtistByIdAsync(string artistId) =>
         _dbContext.GetArtistByIdAsync(artistId);
 

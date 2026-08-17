@@ -24,6 +24,7 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
     private readonly IArtworkCacheManager _artworkCacheManager;
     private readonly System.Threading.SemaphoreSlim _writeSemaphore = new(1, 1);
     private readonly System.Collections.Generic.List<string> _monitoredPaths = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string?> _folderArtCache = new(StringComparer.OrdinalIgnoreCase);
 
     public event EventHandler<LibraryScanProgressEventArgs>? ScanProgressChanged;
     public event EventHandler? LibraryChanged;
@@ -181,13 +182,13 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
 
                         string genre = tagFile.Tag.FirstGenre ?? "";
 
-                        double replayGain = 0.0;
+                        float replayGain = 0.0f;
                         try {
                             if (tagFile.GetTag(TagLib.TagTypes.Id3v2) is TagLib.Id3v2.Tag id3v2) {
                                 var txxx = System.Linq.Enumerable.FirstOrDefault(id3v2.GetFrames<TagLib.Id3v2.UserTextInformationFrame>(), f => f.Description.Equals("REPLAYGAIN_TRACK_GAIN", StringComparison.OrdinalIgnoreCase));
                                 if (txxx != null && txxx.Text.Length > 0) {
                                     string val = txxx.Text[0].Replace(" dB", "").Trim();
-                                    if (double.TryParse(val, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double parsedRg)) {
+                                    if (float.TryParse(val, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out float parsedRg)) {
                                         replayGain = parsedRg;
                                     }
                                 }
@@ -195,7 +196,7 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
                                 string[] rgComments = xiph.GetField("REPLAYGAIN_TRACK_GAIN");
                                 if (rgComments.Length > 0) {
                                     string val = rgComments[0].Replace(" dB", "").Trim();
-                                    if (double.TryParse(val, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double parsedRg)) {
+                                    if (float.TryParse(val, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out float parsedRg)) {
                                         replayGain = parsedRg;
                                     }
                                 }
@@ -293,7 +294,7 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
                     cleanCmd.CommandText = "DELETE FROM Albums WHERE Id NOT IN (SELECT DISTINCT AlbumId FROM Tracks);";
                     await cleanCmd.ExecuteNonQueryAsync(ct);
 
-                    cleanCmd.CommandText = "DELETE FROM Artists WHERE Id NOT IN (SELECT DISTINCT ArtistId FROM Albums);";
+                    cleanCmd.CommandText = "DELETE FROM Artists WHERE Id NOT IN (SELECT DISTINCT ArtistId FROM Albums UNION SELECT DISTINCT ArtistId FROM Tracks);";
                     await cleanCmd.ExecuteNonQueryAsync(ct);
                 }
 
@@ -418,13 +419,13 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
 
                 string genre = tagFile.Tag.FirstGenre ?? "";
 
-                double replayGain = 0.0;
+                float replayGain = 0.0f;
                 try {
                     if (tagFile.GetTag(TagLib.TagTypes.Id3v2) is TagLib.Id3v2.Tag id3v2) {
                         var txxx = System.Linq.Enumerable.FirstOrDefault(id3v2.GetFrames<TagLib.Id3v2.UserTextInformationFrame>(), f => f.Description.Equals("REPLAYGAIN_TRACK_GAIN", StringComparison.OrdinalIgnoreCase));
                         if (txxx != null && txxx.Text.Length > 0) {
                             string val = txxx.Text[0].Replace(" dB", "").Trim();
-                            if (double.TryParse(val, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double parsedRg)) {
+                            if (float.TryParse(val, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out float parsedRg)) {
                                 replayGain = parsedRg;
                             }
                         }
@@ -432,7 +433,7 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
                         string[] rgComments = xiph.GetField("REPLAYGAIN_TRACK_GAIN");
                         if (rgComments.Length > 0) {
                             string val = rgComments[0].Replace(" dB", "").Trim();
-                            if (double.TryParse(val, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double parsedRg)) {
+                            if (float.TryParse(val, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out float parsedRg)) {
                                 replayGain = parsedRg;
                             }
                         }
@@ -521,7 +522,7 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
                     cmd.CommandText = "DELETE FROM Albums WHERE Id NOT IN (SELECT DISTINCT AlbumId FROM Tracks);";
                     await cmd.ExecuteNonQueryAsync();
 
-                    cmd.CommandText = "DELETE FROM Artists WHERE Id NOT IN (SELECT DISTINCT ArtistId FROM Albums);";
+                    cmd.CommandText = "DELETE FROM Artists WHERE Id NOT IN (SELECT DISTINCT ArtistId FROM Albums UNION SELECT DISTINCT ArtistId FROM Tracks);";
                     await cmd.ExecuteNonQueryAsync();
                 }
 
@@ -617,24 +618,36 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
                 }
             }
 
-            // Fallback: Check track directory for high-res folder images
+            // Fallback: Check track directory for high-res folder images (cached per folder)
             string? dir = Path.GetDirectoryName(filePath);
-            if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+            if (!string.IsNullOrEmpty(dir))
             {
-                string[] candidateNames = { "cover.jpg", "cover.png", "folder.jpg", "folder.png", "album.jpg", "album.png", "front.jpg", "front.png" };
-                foreach (var name in candidateNames)
+                if (_folderArtCache.TryGetValue(dir, out var cachedArt))
                 {
-                    string candidatePath = Path.Combine(dir, name);
-                    if (File.Exists(candidatePath))
+                    return cachedArt;
+                }
+
+                if (Directory.Exists(dir))
+                {
+                    string[] candidateNames = { "cover.jpg", "cover.png", "folder.jpg", "folder.png", "album.jpg", "album.png", "front.jpg", "front.png" };
+                    foreach (var name in candidateNames)
                     {
-                        byte[] bytes = await File.ReadAllBytesAsync(candidatePath);
-                        if (bytes.Length > 512)
+                        string candidatePath = Path.Combine(dir, name);
+                        if (File.Exists(candidatePath))
                         {
-                            string mime = name.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ? "image/png" : "image/jpeg";
-                            return await _artworkCacheManager.CacheBytesAsync(bytes, mime);
+                            byte[] bytes = await File.ReadAllBytesAsync(candidatePath);
+                            if (bytes.Length > 512)
+                            {
+                                string mime = name.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ? "image/png" : "image/jpeg";
+                                string? cachedToken = await _artworkCacheManager.CacheBytesAsync(bytes, mime);
+                                _folderArtCache[dir] = cachedToken;
+                                return cachedToken;
+                            }
                         }
                     }
                 }
+
+                _folderArtCache[dir] = null;
             }
         }
         catch (Exception ex)

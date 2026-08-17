@@ -41,6 +41,11 @@ public partial class AlbumsViewModel : ObservableObject
         var albums = await _libraryService.GetAllAlbumsAsync();
         _dispatcher.TryEnqueue(() =>
         {
+            if (Items.Count == albums.Count && System.Linq.Enumerable.SequenceEqual(Items, albums))
+            {
+                return;
+            }
+
             Items.Clear();
             foreach (var album in albums)
             {

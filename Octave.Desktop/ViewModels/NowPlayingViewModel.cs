@@ -168,7 +168,7 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
             TrackTitle = state.CurrentTrack.Title;
             ArtistName = state.CurrentTrack.ArtistName;
             AlbumTitle = state.CurrentTrack.AlbumTitle;
-            CurrentArtworkUrl = state.CurrentTrack.SourceUri;
+            CurrentArtworkUrl = CurrentAlbum?.ArtworkUrl;
         }
         else
         {
@@ -279,6 +279,7 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
 
         CurrentArtist = artist;
         CurrentAlbum = album;
+        CurrentArtworkUrl = album?.ArtworkUrl;
         OnPropertyChanged(nameof(ArtistArtworkUrl));
         OnPropertyChanged(nameof(AlbumArtworkUrl));
         OnPropertyChanged(nameof(AlbumYear));

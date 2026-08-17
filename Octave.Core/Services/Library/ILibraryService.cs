@@ -44,6 +44,8 @@ public interface ILibraryService
 
     Task<Album?> GetAlbumByIdAsync(string albumId);
 
+    Task<List<Album>> GetAlbumsByIdsAsync(IEnumerable<string> albumIds);
+
     Task<Artist?> GetArtistByIdAsync(string artistId);
 
     Task<int> GetTotalTrackCountAsync();

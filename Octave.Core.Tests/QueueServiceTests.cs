@@ -140,4 +140,32 @@ public class QueueServiceTests : IDisposable
         // Verify Seek was NOT called on audio player (position reset to 0:00)
         _audioPlayerMock.Verify(a => a.Seek(It.IsAny<double>()), Times.Never);
     }
+
+    [Fact]
+    public void EnqueueRange_NullOrEmpty_DoesNotThrow()
+    {
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+        queueService.EnqueueRange(null!);
+        queueService.EnqueueRange(Array.Empty<Track>());
+        Assert.Empty(queueService.GetCurrentQueue());
+    }
+
+    [Fact]
+    public void Reorder_MovesTrackAndMaintainsSurrogateIds()
+    {
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
+        var t2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", "web", 2, 2024, DateTime.UtcNow);
+        var t3 = new Track("t3", "Track 3", "ar1", "Artist", "al1", "Album", 180, "http://test/3.mp3", "web", 3, 2024, DateTime.UtcNow);
+
+        queueService.EnqueueRange(new[] { t1, t2, t3 });
+
+        // Reorder index 0 to index 2
+        queueService.Reorder(0, 2);
+
+        var queue = queueService.GetCurrentQueue();
+        Assert.Equal("t2", queue[0].Track.Id);
+        Assert.Equal("t3", queue[1].Track.Id);
+        Assert.Equal("t1", queue[2].Track.Id);
+    }
 }

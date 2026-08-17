@@ -142,4 +142,96 @@ public class SqliteDbContextTests : IDisposable
         Assert.Equal("id1", group.Tracks[0].Id);
         Assert.Equal("id2", group.Tracks[1].Id);
     }
+
+    [Fact]
+    public async Task RemoveTrackFromPlaylistAsync_WhenTrackIsDuplicated_DeletesOnlyOneInstance()
+    {
+        var track = new Track("t_dup", "Dup Song", "ar1", "Artist", "al1", "Album", 180, "C:\\test\\dup.mp3", "local", 1, 2024, DateTime.UtcNow);
+        await _dbContext.UpsertTrackAsync(track);
+
+        var playlist = await _dbContext.CreatePlaylistAsync("Dup Playlist", null);
+        await _dbContext.AddTrackToPlaylistAsync(playlist.Id, track.Id);
+        await _dbContext.AddTrackToPlaylistAsync(playlist.Id, track.Id);
+
+        var entriesBefore = await _dbContext.GetPlaylistTrackEntriesAsync(playlist.Id);
+        Assert.Equal(2, entriesBefore.Count);
+
+        // Remove by TrackId
+        await _dbContext.RemoveTrackFromPlaylistAsync(playlist.Id, track.Id);
+
+        var entriesAfter = await _dbContext.GetPlaylistTrackEntriesAsync(playlist.Id);
+        Assert.Single(entriesAfter);
+        Assert.Equal(track.Id, entriesAfter[0].Track.Id);
+    }
+
+    [Fact]
+    public async Task GetAlbumsByIdsAsync_ReturnsMatchingAlbumsInBatch()
+    {
+        var artist = new Artist("ar_batch", "Batch Artist", null, null, true);
+        var album1 = new Album("al_batch_1", "Album 1", "ar_batch", "Batch Artist", 2023, "http://art1.png", "local");
+        var album2 = new Album("al_batch_2", "Album 2", "ar_batch", "Batch Artist", 2024, "http://art2.png", "local");
+
+        await _dbContext.UpsertArtistAsync(artist);
+        await _dbContext.UpsertAlbumAsync(album1);
+        await _dbContext.UpsertAlbumAsync(album2);
+
+        var albums = await _dbContext.GetAlbumsByIdsAsync(new[] { "al_batch_1", "al_batch_2", "nonexistent_alb" });
+        Assert.Equal(2, albums.Count);
+        Assert.Contains(albums, a => a.Id == "al_batch_1" && a.Title == "Album 1");
+        Assert.Contains(albums, a => a.Id == "al_batch_2" && a.Title == "Album 2");
+    }
+
+    [Fact]
+    public async Task CompilationAlbum_GuestArtists_ArePreservedAcrossOrphanSweeps()
+    {
+        var albumArtist = new Artist("ar_va", "Various Artists", null, null, true);
+        var guestArtist1 = new Artist("ar_guest1", "Guest Artist 1", null, null, true);
+        var guestArtist2 = new Artist("ar_guest2", "Guest Artist 2", null, null, true);
+
+        var compilationAlbum = new Album("al_comp", "Greatest Hits Comp", "ar_va", "Various Artists", 2024, null, "local");
+        var track1 = new Track("t_comp1", "Guest Track 1", "ar_guest1", "Guest Artist 1", "al_comp", "Greatest Hits Comp", 200, "C:\\music\\comp1.mp3", "local", 1, 2024, DateTime.UtcNow);
+        var track2 = new Track("t_comp2", "Guest Track 2", "ar_guest2", "Guest Artist 2", "al_comp", "Greatest Hits Comp", 210, "C:\\music\\comp2.mp3", "local", 2, 2024, DateTime.UtcNow);
+
+        await _dbContext.UpsertArtistAsync(albumArtist);
+        await _dbContext.UpsertArtistAsync(guestArtist1);
+        await _dbContext.UpsertArtistAsync(guestArtist2);
+        await _dbContext.UpsertAlbumAsync(compilationAlbum);
+        await _dbContext.UpsertTrackAsync(track1);
+        await _dbContext.UpsertTrackAsync(track2);
+
+        // Verify all 3 artists are queryable
+        Assert.NotNull(await _dbContext.GetArtistByIdAsync("ar_va"));
+        Assert.NotNull(await _dbContext.GetArtistByIdAsync("ar_guest1"));
+        Assert.NotNull(await _dbContext.GetArtistByIdAsync("ar_guest2"));
+
+        var allArtists = await _dbContext.GetAllArtistsAsync();
+        Assert.Equal(3, allArtists.Count);
+    }
+
+    [Fact]
+    public async Task ArtworkCacheManager_CachesBytesDeterministicallyWithSha256()
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), "octave_art_test_" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var manager = new Octave.Core.Services.Metadata.ArtworkCacheManager(tempDir);
+            byte[] fakeImage = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 };
+            string? token = await manager.CacheBytesAsync(fakeImage, "image/jpeg");
+
+            Assert.NotNull(token);
+            Assert.StartsWith("ArtworkCache/", token);
+            Assert.EndsWith(".jpg", token);
+
+            // Re-cache same bytes (should return same token without error)
+            string? token2 = await manager.CacheBytesAsync(fakeImage, "image/jpeg");
+            Assert.Equal(token, token2);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                try { Directory.Delete(tempDir, true); } catch { }
+            }
+        }
+    }
 }

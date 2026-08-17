@@ -88,7 +88,7 @@ public partial class LibraryViewModel : ObservableObject
 
     private void ApplySort()
     {
-        IEnumerable<Track> sorted = SortIndex switch
+        var sorted = (SortIndex switch
         {
             1 => _allTracks.OrderBy(t => t.ArtistName, StringComparer.OrdinalIgnoreCase)
                            .ThenBy(t => t.AlbumTitle, StringComparer.OrdinalIgnoreCase)
@@ -98,7 +98,12 @@ public partial class LibraryViewModel : ObservableObject
             3 => _allTracks.OrderByDescending(t => t.DateAdded),
             4 => _allTracks.OrderBy(t => t.DurationSeconds),
             _ => _allTracks.OrderBy(t => t.Title, StringComparer.OrdinalIgnoreCase)
-        };
+        }).ToList();
+
+        if (Items.Count == sorted.Count && Items.SequenceEqual(sorted))
+        {
+            return;
+        }
 
         Items.Clear();
         foreach (var track in sorted) Items.Add(track);

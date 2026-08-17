@@ -79,10 +79,12 @@ public sealed partial class SpectrumVisualizerControl : UserControl
 
     public void UpdateSpectrum(float[] fftData, double progressRatio)
     {
+        if (Visibility != Visibility.Visible) return;
         double canvasHeight = WaveformCanvas.ActualHeight;
         if (canvasHeight <= 0 || _bars.Count == 0) return;
 
-        Brush activeAccent = _accentBrush ?? (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"];
+        _accentBrush ??= (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"];
+        Brush activeAccent = _accentBrush;
         double clampedRatio = Math.Clamp(progressRatio, 0.0, 1.0);
         double baseline = canvasHeight - BaselineOffset;
         double maxAvailableHeight = Math.Max(2.0, canvasHeight - BaselineOffset);

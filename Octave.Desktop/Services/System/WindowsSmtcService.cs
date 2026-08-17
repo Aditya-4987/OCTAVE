@@ -50,28 +50,32 @@ public class WindowsSmtcService : ISmtcService
 
     private void SystemControls_ButtonPressed(SystemMediaTransportControls sender, SystemMediaTransportControlsButtonPressedEventArgs args)
     {
-        try
+        var button = args.Button;
+        global::System.Threading.ThreadPool.QueueUserWorkItem(_ =>
         {
-            switch (args.Button)
+            try
             {
-                case SystemMediaTransportControlsButton.Play:
-                    _queueService.Resume();
-                    break;
-                case SystemMediaTransportControlsButton.Pause:
-                    _queueService.Pause();
-                    break;
-                case SystemMediaTransportControlsButton.Next:
-                    _queueService.PlayNext();
-                    break;
-                case SystemMediaTransportControlsButton.Previous:
-                    _queueService.PlayPrevious();
-                    break;
+                switch (button)
+                {
+                    case SystemMediaTransportControlsButton.Play:
+                        _queueService.Resume();
+                        break;
+                    case SystemMediaTransportControlsButton.Pause:
+                        _queueService.Pause();
+                        break;
+                    case SystemMediaTransportControlsButton.Next:
+                        _queueService.PlayNext();
+                        break;
+                    case SystemMediaTransportControlsButton.Previous:
+                        _queueService.PlayPrevious();
+                        break;
+                }
             }
-        }
-        catch (Exception ex)
-        {
-            global::System.Diagnostics.Debug.WriteLine($"[SMTC] Button processing failed ({args.Button}): {ex.Message}");
-        }
+            catch (Exception ex)
+            {
+                global::System.Diagnostics.Debug.WriteLine($"[SMTC] Button processing failed ({button}): {ex.Message}");
+            }
+        });
     }
 
     private void QueueService_PlaybackStateChanged(object? sender, PlaybackState state)

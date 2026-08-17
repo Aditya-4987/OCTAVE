@@ -41,6 +41,11 @@ public partial class ArtistsViewModel : ObservableObject
         var artists = await _libraryService.GetAllArtistsAsync();
         _dispatcher.TryEnqueue(() =>
         {
+            if (Items.Count == artists.Count && System.Linq.Enumerable.SequenceEqual(Items, artists))
+            {
+                return;
+            }
+
             Items.Clear();
             foreach (var artist in artists)
             {

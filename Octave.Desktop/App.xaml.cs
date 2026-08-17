@@ -33,12 +33,30 @@ public partial class App : Application
 
     public static IServiceProvider Services { get; private set; } = null!;
 
-    // Native handle of the main window, exposed for WinRT pickers that require it.
+    // Native handle and instance of the main window, exposed for WinRT pickers and DPI scaling queries.
     public static IntPtr MainWindowHandle { get; private set; }
+    public static Window? MainWindowInstance { get; private set; }
 
     public App()
     {
         InitializeComponent();
+
+        UnhandledException += (s, e) =>
+        {
+            System.Diagnostics.Debug.WriteLine($"[App UnhandledException] {e.Message} (Handled={e.Handled})");
+            e.Handled = true;
+        };
+
+        AppDomain.CurrentDomain.UnhandledException += (s, e) =>
+        {
+            System.Diagnostics.Debug.WriteLine($"[AppDomain UnhandledException] {e.ExceptionObject}");
+        };
+
+        System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (s, e) =>
+        {
+            System.Diagnostics.Debug.WriteLine($"[TaskScheduler UnobservedTaskException] {e.Exception}");
+            e.SetObserved();
+        };
     }
 
     protected override async void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
@@ -148,6 +166,7 @@ public partial class App : Application
         }
 
         _window = new MainWindow();
+        MainWindowInstance = _window;
 
         // Retrieve native window handle and initialize SMTC platform controller
         IntPtr hwnd = WinRT.Interop.WindowNative.GetWindowHandle(_window);

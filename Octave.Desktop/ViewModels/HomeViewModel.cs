@@ -86,13 +86,9 @@ public partial class HomeViewModel : ObservableObject
 
         // Hydrate album artwork URLs for all tracks
         var allTracks = recent.Concat(most).Concat(lastAdded).Concat(favorites);
-        var albumIds = allTracks.Select(t => t.AlbumId).Distinct().ToList();
-        var artMap = new System.Collections.Generic.Dictionary<string, string?>();
-        foreach (var albumId in albumIds)
-        {
-            var album = await _libraryService.GetAlbumByIdAsync(albumId);
-            if (album != null) artMap[albumId] = album.ArtworkUrl;
-        }
+        var albumIds = allTracks.Select(t => t.AlbumId).Distinct();
+        var albums = await _libraryService.GetAlbumsByIdsAsync(albumIds);
+        var artMap = albums.ToDictionary(a => a.Id, a => a.ArtworkUrl);
 
         TrackDisplayItem ToDisplayItem(Track t) => new TrackDisplayItem(t, artMap.TryGetValue(t.AlbumId, out var url) ? url : null);
 

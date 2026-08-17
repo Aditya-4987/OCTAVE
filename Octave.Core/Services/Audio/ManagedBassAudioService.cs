@@ -33,6 +33,7 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
     // sync fires on BASS's own unmanaged thread - without this lock those races
     // can call into a freed handle.
     private readonly object _streamLock = new();
+    private readonly HashSet<int> _fadingStreams = new();
 
     private long _sessionIdCounter = 0;
     private long _currentSessionId = 0;
@@ -156,18 +157,7 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
 
                 if (fadeMs > 0 && isOldPlaying)
                 {
-                    // Smoothly fade out old stream over fadeMs milliseconds
-                    Bass.ChannelSlideAttribute(oldStream, ChannelAttribute.Volume, 0f, fadeMs);
-                    int streamToFree = oldStream;
-                    Task.Run(async () =>
-                    {
-                        await Task.Delay(fadeMs + 50);
-                        lock (_streamLock)
-                        {
-                            Bass.ChannelStop(streamToFree);
-                            Bass.StreamFree(streamToFree);
-                        }
-                    });
+                    FadeAndFreeStream(oldStream, fadeMs);
                 }
                 else
                 {
@@ -292,31 +282,51 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         if (resumed) StartPositionTimer();
     }
 
+    private void FadeAndFreeStream(int streamToFree, int fadeMs)
+    {
+        if (streamToFree == 0) return;
+
+        lock (_streamLock)
+        {
+            _fadingStreams.Add(streamToFree);
+        }
+
+        Bass.ChannelSlideAttribute(streamToFree, ChannelAttribute.Volume, 0f, fadeMs);
+        Task.Run(async () =>
+        {
+            await Task.Delay(fadeMs + 100);
+            lock (_streamLock)
+            {
+                if (_fadingStreams.Remove(streamToFree))
+                {
+                    Bass.ChannelStop(streamToFree);
+                    Bass.StreamFree(streamToFree);
+                }
+            }
+        });
+    }
+
     public void Stop()
     {
         StopPositionTimer();
         lock (_streamLock)
         {
-            if (_currentStream != 0 && _crossfadeDurationMs > 0 && Bass.ChannelIsActive(_currentStream) == ManagedBass.PlaybackState.Playing)
+            if (_currentStream != 0)
             {
                 int streamToStop = _currentStream;
-                int fadeMs = Math.Min(_crossfadeDurationMs, 500); // 500ms quick fade out on explicit stop
                 _currentStream = 0;
                 RemoveEqUnlocked();
-                Bass.ChannelSlideAttribute(streamToStop, ChannelAttribute.Volume, 0f, fadeMs);
-                Task.Run(async () =>
+
+                if (_crossfadeDurationMs > 0 && Bass.ChannelIsActive(streamToStop) == ManagedBass.PlaybackState.Playing)
                 {
-                    await Task.Delay(fadeMs + 50);
-                    lock (_streamLock)
-                    {
-                        Bass.ChannelStop(streamToStop);
-                        Bass.StreamFree(streamToStop);
-                    }
-                });
-            }
-            else
-            {
-                FreeStreamInternal();
+                    int fadeMs = Math.Min(_crossfadeDurationMs, 500); // 500ms quick fade out on explicit stop
+                    FadeAndFreeStream(streamToStop, fadeMs);
+                }
+                else
+                {
+                    Bass.ChannelStop(streamToStop);
+                    Bass.StreamFree(streamToStop);
+                }
             }
         }
     }
@@ -698,8 +708,8 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
             {
                 int startBin = (int)Math.Pow(256.0, (double)i / binCount);
                 int endBin = (int)Math.Pow(256.0, (double)(i + 1) / binCount);
-                if (endBin <= startBin) endBin = startBin + 1;
-                if (endBin > 256) endBin = 256;
+                startBin = Math.Clamp(startBin, 0, 255);
+                endBin = Math.Clamp(endBin, startBin + 1, 256);
 
                 float maxVal = 0f;
                 for (int b = startBin; b < endBin; b++)
@@ -805,9 +815,17 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
 
             lock (_streamLock)
             {
+                foreach (var fading in _fadingStreams)
+                {
+                    Bass.ChannelStop(fading);
+                    Bass.StreamFree(fading);
+                }
+                _fadingStreams.Clear();
+
                 // Free BASS stream if open
                 if (_currentStream != 0)
                 {
+                    RemoveEqUnlocked();
                     Bass.ChannelStop(_currentStream);
                     Bass.StreamFree(_currentStream);
                     _currentStream = 0;

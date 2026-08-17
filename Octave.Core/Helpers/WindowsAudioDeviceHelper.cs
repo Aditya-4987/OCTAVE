@@ -53,8 +53,16 @@ public static class WindowsAudioDeviceHelper
     private struct PROPVARIANT
     {
         [FieldOffset(0)] public ushort vt;
-        [FieldOffset(8)] public IntPtr blobData;
+        [FieldOffset(2)] public ushort wReserved1;
+        [FieldOffset(4)] public ushort wReserved2;
+        [FieldOffset(6)] public ushort wReserved3;
+        [FieldOffset(8)] public IntPtr pwszVal;
+        [FieldOffset(8)] public uint blobCount;
+        [FieldOffset(16)] public IntPtr blobData;
     }
+
+    [DllImport("ole32.dll", PreserveSig = true)]
+    private static extern int PropVariantClear(ref PROPVARIANT pvar);
 
     [StructLayout(LayoutKind.Sequential, Pack = 2)]
     private struct WAVEFORMATEX
@@ -83,45 +91,69 @@ public static class WindowsAudioDeviceHelper
         pid = 0
     };
 
-    public static (string Name, string Format, double SampleRateKhz, ushort BitDepth) GetDefaultOutputDeviceDetails()
+    private static readonly PROPERTYKEY PKEY_Device_FriendlyName = new PROPERTYKEY
     {
+        fmtid = new Guid(0xa45c254e, 0xdf1c, 0x4efd, 0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0),
+        pid = 14
+    };
+
+    private static (string Name, string Format, double SampleRateKhz, ushort BitDepth) _cachedDeviceDetails = ("Default Audio Device", "Unknown", 44.1, 16);
+    private static DateTime _lastCacheTime = DateTime.MinValue;
+    private static readonly object _cacheLock = new();
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(3);
+
+    public static (string Name, string Format, double SampleRateKhz, ushort BitDepth) GetDefaultOutputDeviceDetails(bool forceRefresh = false)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return ("Default Audio Device", "Unknown", 44.1, 16);
+        }
+
+        lock (_cacheLock)
+        {
+            if (!forceRefresh && DateTime.UtcNow - _lastCacheTime < CacheTtl)
+            {
+                return _cachedDeviceDetails;
+            }
+        }
+
+#pragma warning disable CA1416 // Validate platform compatibility
+        IMMDeviceEnumerator? enumerator = null;
+        IMMDevice? device = null;
+        IPropertyStore? store = null;
+        PROPVARIANT pvName = default;
+        PROPVARIANT pvFormat = default;
+
         try
         {
-            var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
+            enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
             // eRender = 0, eConsole = 0
-            if (enumerator.GetDefaultAudioEndpoint(0, 0, out var device) == 0 && device != null)
+            if (enumerator.GetDefaultAudioEndpoint(0, 0, out device) == 0 && device != null)
             {
                 string devName = "Default Audio Device";
                 string devFormat = "Unknown";
                 double devKhz = 44.1;
                 ushort devBits = 16;
 
-                if (device.OpenPropertyStore(0 /* STGM_READ */, out var store) == 0 && store != null)
+                if (device.OpenPropertyStore(0 /* STGM_READ */, out store) == 0 && store != null)
                 {
-                    // PKEY_Device_FriendlyName: {a45c254e-df1c-4efd-8020-67d146a850e0}, 14
-                    var pkeyName = new PROPERTYKEY
+                    var pkeyName = PKEY_Device_FriendlyName;
+                    if (store.GetValue(ref pkeyName, out pvName) == 0 && pvName.vt == 31 /* VT_LPWSTR */)
                     {
-                        fmtid = new Guid(0xa45c254e, 0xdf1c, 0x4efd, 0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0),
-                        pid = 14
-                    };
-
-                    if (store.GetValue(ref pkeyName, out var pvName) == 0 && pvName.vt == 31 /* VT_LPWSTR */)
-                    {
-                        devName = Marshal.PtrToStringUni(pvName.blobData) ?? devName;
+                        devName = Marshal.PtrToStringUni(pvName.pwszVal) ?? devName;
                     }
 
                     var pkeyFormat = PKEY_AudioEngine_DeviceFormat;
-                    if (store.GetValue(ref pkeyFormat, out var pvFormat) == 0 && pvFormat.vt == 65 /* VT_BLOB */)
+                    if (store.GetValue(ref pkeyFormat, out pvFormat) == 0 && pvFormat.vt == 65 /* VT_BLOB */)
                     {
-                        IntPtr blobPtr = pvFormat.blobData;
-                        int blobSize = Marshal.ReadInt32(blobPtr);
-                        IntPtr dataPtr = blobPtr + 4;
+                        uint blobSize = pvFormat.blobCount;
+                        IntPtr dataPtr = pvFormat.blobData;
 
-                        if (blobSize >= Marshal.SizeOf<WAVEFORMATEX>())
+                        if (dataPtr != IntPtr.Zero && blobSize >= (uint)Marshal.SizeOf<WAVEFORMATEX>())
                         {
                             var waveFormat = Marshal.PtrToStructure<WAVEFORMATEX>(dataPtr);
                             ushort bits = waveFormat.wBitsPerSample;
-                            if (blobSize >= Marshal.SizeOf<WAVEFORMATEXTENSIBLE>() && waveFormat.cbSize >= 22)
+                            if (blobSize >= (uint)Marshal.SizeOf<WAVEFORMATEXTENSIBLE>() && waveFormat.cbSize >= 22)
                             {
                                 var ext = Marshal.PtrToStructure<WAVEFORMATEXTENSIBLE>(dataPtr);
                                 if (ext.wValidBitsPerSample > 0) bits = ext.wValidBitsPerSample;
@@ -133,13 +165,28 @@ public static class WindowsAudioDeviceHelper
                     }
                 }
 
-                return (devName, devFormat, devKhz, devBits);
+                var result = (devName, devFormat, devKhz, devBits);
+                lock (_cacheLock)
+                {
+                    _cachedDeviceDetails = result;
+                    _lastCacheTime = DateTime.UtcNow;
+                }
+                return result;
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Fallback gracefully if COM call fails or non-Windows system
+            System.Diagnostics.Debug.WriteLine($"[WindowsAudioDeviceHelper] Query failed: {ex.Message}");
         }
+        finally
+        {
+            if (pvName.vt != 0) PropVariantClear(ref pvName);
+            if (pvFormat.vt != 0) PropVariantClear(ref pvFormat);
+            if (store != null) Marshal.ReleaseComObject(store);
+            if (device != null) Marshal.ReleaseComObject(device);
+            if (enumerator != null) Marshal.ReleaseComObject(enumerator);
+        }
+#pragma warning restore CA1416
 
         return ("Default Audio Device", "Unknown", 44.1, 16);
     }

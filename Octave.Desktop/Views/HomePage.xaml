@@ -153,8 +153,7 @@
                     <TextBlock Text="Add your local music folder to build your library and start listening." Foreground="#888888" TextWrapping="Wrap" TextAlignment="Center" FontSize="14" />
                     <Button Click="ScanFolder_Click" Style="{StaticResource PrimaryPlayButtonStyle}" HorizontalAlignment="Center" Margin="0,8,0,0">
                         <StackPanel Orientation="Horizontal" Spacing="8">
-                            <FontIcon Glyph="&#xE8B7;" FontFamily="Segoe MDL2 Assets" FontSize="16" />
-                            <TextBlock Text="Scan Music Folder" FontWeight="SemiBold" FontSize="14" VerticalAlignment="Center" />
+                            <TextBlock Text="Scan" FontWeight="SemiBold" FontSize="14" VerticalAlignment="Center" />
                         </StackPanel>
                     </Button>
                 </StackPanel>

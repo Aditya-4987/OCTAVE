@@ -36,6 +36,11 @@ public partial class PlaylistsViewModel : ObservableObject
         var playlists = await _playlistService.GetPlaylistsAsync();
         _dispatcher.TryEnqueue(() =>
         {
+            if (Items.Count == playlists.Count && System.Linq.Enumerable.SequenceEqual(Items, playlists))
+            {
+                return;
+            }
+
             Items.Clear();
             foreach (var p in playlists) Items.Add(p);
         });

@@ -32,16 +32,19 @@ public static class IdGenerator
         {
             // Fallback if path string cannot be resolved by GetFullPath
         }
-        canonical = canonical.Replace('/', '\\').Trim().ToLowerInvariant();
+        canonical = canonical.Replace('/', Path.DirectorySeparatorChar)
+                             .Replace('\\', Path.DirectorySeparatorChar)
+                             .Trim()
+                             .ToLowerInvariant();
         return GenerateDeterministicGuid($"track:{canonical}");
     }
 
     private static string GenerateDeterministicGuid(string input)
     {
         byte[] inputBytes = Encoding.UTF8.GetBytes(input);
-        byte[] hashBytes = MD5.HashData(inputBytes);
+        byte[] hashBytes = SHA256.HashData(inputBytes);
 
-        return new Guid(hashBytes).ToString();
+        return new Guid(hashBytes.AsSpan(0, 16)).ToString();
     }
 
     // File date resolution
@@ -61,8 +64,9 @@ public static class IdGenerator
                 ? DateTime.UtcNow
                 : dt;
         }
-        catch
+        catch (Exception ex)
         {
+            System.Diagnostics.Debug.WriteLine($"[IdGenerator] Failed to resolve file dates for '{filePath}': {ex.Message}");
             return DateTime.UtcNow;
         }
     }

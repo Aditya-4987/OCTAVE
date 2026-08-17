@@ -21,6 +21,10 @@ public class LyricsService : ILyricsService
         @"\[\d{1,3}:\d{2}(?:[\.:]\d{2,3})?\]",
         RegexOptions.Compiled);
 
+    private static readonly Regex OffsetRegex = new(
+        @"^\[offset:\s*(?<offset>[+-]?\d+)\s*\]",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     public async Task<LyricsData> GetLyricsAsync(Track track, CancellationToken cancellationToken = default)
     {
         if (track == null || string.IsNullOrWhiteSpace(track.SourceUri))
@@ -70,6 +74,35 @@ public class LyricsService : ILyricsService
 
             string candidate2 = audioPath + ".lrc";
             if (File.Exists(candidate2)) return candidate2;
+
+            string? dir = Path.GetDirectoryName(audioPath);
+            string fileNameWithoutExt = Path.GetFileNameWithoutExtension(audioPath);
+            string fileNameWithExt = Path.GetFileName(audioPath);
+
+            if (!string.IsNullOrEmpty(dir))
+            {
+                // Check dedicated "Lyrics" subfolder
+                string lyricsSubdir = Path.Combine(dir, "Lyrics");
+                if (Directory.Exists(lyricsSubdir))
+                {
+                    string candidate3 = Path.Combine(lyricsSubdir, fileNameWithoutExt + ".lrc");
+                    if (File.Exists(candidate3)) return candidate3;
+
+                    string candidate4 = Path.Combine(lyricsSubdir, fileNameWithExt + ".lrc");
+                    if (File.Exists(candidate4)) return candidate4;
+                }
+
+                // Check dedicated "lyrics" subfolder
+                string lowerLyricsSubdir = Path.Combine(dir, "lyrics");
+                if (Directory.Exists(lowerLyricsSubdir))
+                {
+                    string candidate5 = Path.Combine(lowerLyricsSubdir, fileNameWithoutExt + ".lrc");
+                    if (File.Exists(candidate5)) return candidate5;
+
+                    string candidate6 = Path.Combine(lowerLyricsSubdir, fileNameWithExt + ".lrc");
+                    if (File.Exists(candidate6)) return candidate6;
+                }
+            }
         }
         catch { }
 
@@ -86,6 +119,21 @@ public class LyricsService : ILyricsService
         string[] lines = rawContent.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.RemoveEmptyEntries);
         var syncedLines = new List<LyricLine>();
         var plainLines = new List<string>();
+
+        // Check for global [offset:+/-ms] tag
+        int offsetMs = 0;
+        foreach (string rawLine in lines)
+        {
+            string line = rawLine.Trim();
+            if (string.IsNullOrWhiteSpace(line)) continue;
+
+            var offsetMatch = OffsetRegex.Match(line);
+            if (offsetMatch.Success && int.TryParse(offsetMatch.Groups["offset"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedOffset))
+            {
+                offsetMs = parsedOffset;
+                break;
+            }
+        }
 
         foreach (string rawLine in lines)
         {
@@ -115,6 +163,13 @@ public class LyricsService : ILyricsService
                     }
 
                     var startTime = new TimeSpan(0, 0, min, sec, ms);
+                    if (offsetMs != 0)
+                    {
+                        // Positive offset shifts time earlier (sooner), negative offset shifts time later
+                        var adjusted = startTime - TimeSpan.FromMilliseconds(offsetMs);
+                        startTime = adjusted < TimeSpan.Zero ? TimeSpan.Zero : adjusted;
+                    }
+
                     syncedLines.Add(new LyricLine(startTime, null, text));
                 }
             }

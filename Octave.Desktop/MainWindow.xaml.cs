@@ -46,7 +46,9 @@ public sealed partial class MainWindow : Window
 
     private void CompositionTarget_Rendering(object? sender, object e)
     {
-        if (ProgressBarVisualizer == null || !ViewModel.IsVisualizerEnabled) return;
+        if (ProgressBarVisualizer == null || !ViewModel.IsVisualizerEnabled || ProgressBarVisualizer.Visibility != Visibility.Visible) return;
+        if (!ViewModel.IsPlaying) return;
+
         var fft = _audioPlayer.GetFftData(36);
         double ratio = (ViewModel.DurationSeconds > 0) ? (ViewModel.PositionSeconds / ViewModel.DurationSeconds) : 0.0;
         ProgressBarVisualizer.UpdateSpectrum(fft, ratio);
@@ -206,13 +208,7 @@ public sealed partial class MainWindow : Window
     public Visibility BoolToVisibility(bool isPlaying) => isPlaying ? Visibility.Visible : Visibility.Collapsed;
     public Visibility BoolToVisibilityNegation(bool isPlaying) => isPlaying ? Visibility.Collapsed : Visibility.Visible;
 
-    public string FormatSeconds(double seconds)
-    {
-        if (double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds < 0)
-            return "0:00";
-        var time = TimeSpan.FromSeconds(seconds);
-        return time.TotalHours >= 1 ? time.ToString(@"h\:mm\:ss") : time.ToString(@"m\:ss");
-    }
+    public string FormatSeconds(double seconds) => Converters.DurationFormatConverter.FormatSeconds(seconds);
 
     public Brush GetShuffleColor(bool isShuffle)
     {

@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml.Data;
 using Microsoft.UI.Xaml.Media.Imaging;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 
@@ -8,11 +9,25 @@ namespace Octave_Desktop.Converters;
 
 public class ArtworkPathConverter : IValueConverter
 {
-    private const int MaxCacheSize = 200;
-    private static readonly object CacheLock = new();
-    private static readonly System.Collections.Generic.Dictionary<string, BitmapImage> Cache = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly System.Collections.Generic.LinkedList<string> LruList = new();
+    private class CacheEntry
+    {
+        public required LinkedListNode<string> Node { get; init; }
+        public required BitmapImage Image { get; init; }
+    }
 
+    private const int MaxCacheSize = 250;
+    private static readonly object CacheLock = new();
+    private static readonly Dictionary<string, CacheEntry> Cache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly LinkedList<string> LruList = new();
+
+    public static void ClearCache()
+    {
+        lock (CacheLock)
+        {
+            Cache.Clear();
+            LruList.Clear();
+        }
+    }
 
     public object Convert(object value, Type targetType, object parameter, string language)
     {
@@ -49,7 +64,7 @@ public class ArtworkPathConverter : IValueConverter
                 uriString = isArtist ? "ms-appx:///Assets/PlaceholderArtist.png" : "ms-appx:///Assets/PlaceholderAlbum.png";
             }
 
-            int targetDecodeWidth = 320;
+            int targetLogicalWidth = 320;
             if (!string.IsNullOrWhiteSpace(parameterString))
             {
                 if (parameterString.Equals("Small", StringComparison.OrdinalIgnoreCase) || 
@@ -57,43 +72,57 @@ public class ArtworkPathConverter : IValueConverter
                     parameterString.Equals("56", StringComparison.OrdinalIgnoreCase) ||
                     parameterString.Equals("40", StringComparison.OrdinalIgnoreCase))
                 {
-                    targetDecodeWidth = 112;
+                    targetLogicalWidth = 112;
                 }
                 else if (parameterString.Equals("Artist", StringComparison.OrdinalIgnoreCase) ||
                          parameterString.Equals("Card", StringComparison.OrdinalIgnoreCase) ||
                          parameterString.Equals("Medium", StringComparison.OrdinalIgnoreCase) ||
                          parameterString.Equals("160", StringComparison.OrdinalIgnoreCase))
                 {
-                    targetDecodeWidth = 320;
+                    targetLogicalWidth = 320;
                 }
                 else if (parameterString.Equals("Large", StringComparison.OrdinalIgnoreCase) ||
                          parameterString.Equals("NowPlaying", StringComparison.OrdinalIgnoreCase) ||
                          parameterString.Equals("Background", StringComparison.OrdinalIgnoreCase) ||
                          parameterString.Equals("500", StringComparison.OrdinalIgnoreCase))
                 {
-                    targetDecodeWidth = 600;
+                    targetLogicalWidth = 600;
                 }
                 else if (int.TryParse(parameterString, out int customWidth) && customWidth > 0)
                 {
-                    targetDecodeWidth = customWidth;
+                    targetLogicalWidth = customWidth;
                 }
             }
 
-            string cacheKey = $"{uriString}_{targetDecodeWidth}";
+            double scale = 1.0;
+            try
+            {
+                if (App.MainWindowInstance?.Content?.XamlRoot != null)
+                {
+                    scale = App.MainWindowInstance.Content.XamlRoot.RasterizationScale;
+                }
+            }
+            catch { }
+            if (scale <= 0) scale = 1.0;
+
+            int targetPhysicalWidth = (int)Math.Round(targetLogicalWidth * scale);
+            if (targetPhysicalWidth <= 0) targetPhysicalWidth = targetLogicalWidth;
+
+            string cacheKey = $"{uriString}_{targetPhysicalWidth}_{scale:F2}";
 
             lock (CacheLock)
             {
-                if (Cache.TryGetValue(cacheKey, out var cachedImage))
+                if (Cache.TryGetValue(cacheKey, out var entry))
                 {
-                    LruList.Remove(cacheKey);
-                    LruList.AddFirst(cacheKey);
-                    return cachedImage;
+                    LruList.Remove(entry.Node);
+                    LruList.AddFirst(entry.Node);
+                    return entry.Image;
                 }
 
                 var newImage = new BitmapImage
                 {
-                    DecodePixelType = DecodePixelType.Logical,
-                    DecodePixelWidth = targetDecodeWidth,
+                    DecodePixelType = DecodePixelType.Physical,
+                    DecodePixelWidth = targetPhysicalWidth,
                     UriSource = new Uri(uriString)
                 };
 
@@ -104,8 +133,9 @@ public class ArtworkPathConverter : IValueConverter
                     Cache.Remove(oldestKey);
                 }
 
-                Cache[cacheKey] = newImage;
-                LruList.AddFirst(cacheKey);
+                var node = new LinkedListNode<string>(cacheKey);
+                LruList.AddFirst(node);
+                Cache[cacheKey] = new CacheEntry { Node = node, Image = newImage };
                 return newImage;
             }
         }

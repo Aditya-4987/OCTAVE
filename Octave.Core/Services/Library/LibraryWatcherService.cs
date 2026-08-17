@@ -129,6 +129,14 @@ public class LibraryWatcherService : ILibraryWatcherService, IDisposable
     {
         Debug.WriteLine($"[LibraryWatcher] Renamed: {e.OldFullPath} -> {e.FullPath}");
 
+        // If a directory was renamed or moved, trigger a full reconciliation sweep
+        if (Directory.Exists(e.FullPath))
+        {
+            Debug.WriteLine($"[LibraryWatcher] Directory renamed from {e.OldFullPath} to {e.FullPath}; scheduling reconciliation.");
+            _ = _libraryScanner.RequestFullReconciliationAsync();
+            return;
+        }
+
         // Handle old path: queue reconciliation
         string oldExt = Path.GetExtension(e.OldFullPath).ToLowerInvariant();
         if (IsSupportedExtension(oldExt))
@@ -270,7 +278,7 @@ public class LibraryWatcherService : ILibraryWatcherService, IDisposable
 
     private static bool IsSupportedExtension(string ext)
     {
-        return ext == ".mp3" || ext == ".flac" || ext == ".m4a" || ext == ".aac" || ext == ".ogg" || ext == ".wav" || ext == ".wma";
+        return ext == ".mp3" || ext == ".flac" || ext == ".m4a" || ext == ".aac" || ext == ".ogg" || ext == ".wav" || ext == ".wma" || ext == ".opus";
     }
 
     public void Dispose()
