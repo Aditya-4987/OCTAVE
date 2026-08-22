@@ -25,23 +25,29 @@ public class SqliteConcurrencyAndMigrationTests : IDisposable
 
     public SqliteConcurrencyAndMigrationTests()
     {
-        _dbPath = Path.GetTempFileName() + ".db";
+        // Guid-named path (not Path.GetTempFileName) — GetTempFileName creates a 0-byte
+        // file we would never delete, leaking one per test instance.
+        _dbPath = Path.Combine(Path.GetTempPath(), $"octave_b1_{Guid.NewGuid():N}.db");
         _dbContext = new SqliteDbContext(_dbPath);
         _dbContext.InitializeAsync().GetAwaiter().GetResult();
     }
 
     public void Dispose()
     {
-        try
+        // WAL mode leaves -wal/-shm sidecars next to the db; sweep all three.
+        foreach (var file in new[] { _dbPath, _dbPath + "-wal", _dbPath + "-shm" })
         {
-            if (File.Exists(_dbPath))
+            try
             {
-                File.Delete(_dbPath);
+                if (File.Exists(file))
+                {
+                    File.Delete(file);
+                }
             }
-        }
-        catch
-        {
-            // Best effort cleanup for temporary test db file
+            catch
+            {
+                // Best effort cleanup for temporary test db file
+            }
         }
     }
 
@@ -85,7 +91,7 @@ public class SqliteConcurrencyAndMigrationTests : IDisposable
     [Fact]
     public async Task InitializeAsync_LegacyPlaylistTracksSchema_PreservesAllRowsWithSurrogateIds()
     {
-        string legacyDbPath = Path.GetTempFileName() + ".db";
+        string legacyDbPath = Path.Combine(Path.GetTempPath(), $"octave_b1_legacy_{Guid.NewGuid():N}.db");
         try
         {
             // Build a pre-migration database whose PlaylistTracks has no surrogate Id column.
@@ -142,7 +148,10 @@ public class SqliteConcurrencyAndMigrationTests : IDisposable
         }
         finally
         {
-            try { if (File.Exists(legacyDbPath)) File.Delete(legacyDbPath); } catch { }
+            foreach (var file in new[] { legacyDbPath, legacyDbPath + "-wal", legacyDbPath + "-shm" })
+            {
+                try { if (File.Exists(file)) File.Delete(file); } catch { }
+            }
         }
     }
 

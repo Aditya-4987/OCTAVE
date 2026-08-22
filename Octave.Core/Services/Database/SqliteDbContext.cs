@@ -1849,6 +1849,7 @@ public class SqliteDbContext
         // Query 1: Tracks (Optimized with FTS5 when available, falling back to prefix/LIKE)
         string ftsQuery = BuildFtsQuery(query);
         bool ftsExecuted = false;
+        int tracksBeforeFts = tracks.Count;
         if (!string.IsNullOrWhiteSpace(ftsQuery))
         {
             try
@@ -1906,7 +1907,11 @@ public class SqliteDbContext
             catch (SqliteException ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[SqliteDbContext] FTS5 search unavailable, falling back to LIKE: {ex.Message}");
-                ftsExecuted = false;
+                // If rows already streamed out before the failure (the exception can hit
+                // mid-ReadAsync), keep the partial result and skip the LIKE fallback —
+                // re-querying would append duplicates. The pre-DB-03 guard
+                // (`tracks.Count == 0`) used to cover this incidentally.
+                ftsExecuted = tracks.Count > tracksBeforeFts;
             }
         }
 
