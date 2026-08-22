@@ -20,21 +20,39 @@ public class SqliteDbContext
             : $"Data Source={connectionStringOrPath}";
     }
 
-    private SqliteConnection CreateConnection()
+    // Async open + PRAGMA batch (DB-02): every caller of this context is async, so
+    // opening connections synchronously only blocked the calling thread. The
+    // try/catch guarantees a failed Open/PRAGMA never leaks the connection (DB-07).
+    private async Task<SqliteConnection> CreateConnectionAsync()
     {
         var connection = new SqliteConnection(_connectionString);
-        connection.Open();
-        using (var command = connection.CreateCommand())
+        try
         {
-            command.CommandText = "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;";
-            command.ExecuteNonQuery();
+            await connection.OpenAsync();
+            using var command = connection.CreateCommand();
+            command.CommandText =
+                "PRAGMA foreign_keys = ON;" +
+                // DB-01: WAL allows many readers + one writer, but a second concurrent
+                // writer (scanner batch-commit vs UI player-state write) fails with
+                // SQLITE_BUSY immediately unless it waits. busy_timeout makes writers
+                // queue politely instead of throwing — the single highest-leverage
+                // fix in this layer.
+                "PRAGMA busy_timeout = 5000;" +
+                "PRAGMA journal_mode = WAL;" +
+                "PRAGMA synchronous = NORMAL;";
+            await command.ExecuteNonQueryAsync();
+            return connection;
         }
-        return connection;
+        catch
+        {
+            await connection.DisposeAsync();
+            throw;
+        }
     }
 
     public async Task InitializeAsync()
     {
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         
         // Fully restored STRICT mode DDL exactly matching the frozen architecture
@@ -242,8 +260,13 @@ public class SqliteDbContext
         bool hasPlaylistTrackId = await CheckColumnExistsAsync(conn, "PlaylistTracks", "Id");
         if (!hasPlaylistTrackId)
         {
+            // DDL is transactional in SQLite, so run this destructive rebuild inside an
+            // explicit transaction (DB-05): a crash after DROP but before RENAME would
+            // otherwise auto-commit each statement and lose every playlist-track row.
             using var migrateCmd = conn.CreateCommand();
             migrateCmd.CommandText = @"
+                BEGIN IMMEDIATE;
+                DROP TABLE IF EXISTS PlaylistTracks_Temp;
                 CREATE TABLE PlaylistTracks_Temp (
                     Id TEXT PRIMARY KEY,
                     PlaylistId TEXT NOT NULL,
@@ -255,8 +278,21 @@ public class SqliteDbContext
                 INSERT INTO PlaylistTracks_Temp (Id, PlaylistId, TrackId, SortOrder)
                 SELECT lower(hex(randomblob(16))), PlaylistId, TrackId, SortOrder FROM PlaylistTracks;
                 DROP TABLE PlaylistTracks;
-                ALTER TABLE PlaylistTracks_Temp RENAME TO PlaylistTracks;";
-            await migrateCmd.ExecuteNonQueryAsync();
+                ALTER TABLE PlaylistTracks_Temp RENAME TO PlaylistTracks;
+                COMMIT;";
+            try
+            {
+                await migrateCmd.ExecuteNonQueryAsync();
+            }
+            catch
+            {
+                // Connection disposal below also rolls back, but roll back explicitly
+                // so a caller reusing pooled connections can never inherit a live tx.
+                using var rollbackCmd = conn.CreateCommand();
+                rollbackCmd.CommandText = "ROLLBACK;";
+                try { await rollbackCmd.ExecuteNonQueryAsync(); } catch { /* tx already closed */ }
+                throw;
+            }
         }
     }
 
@@ -289,7 +325,7 @@ public class SqliteDbContext
         }
         else
         {
-            localConn = CreateConnection();
+            localConn = await CreateConnectionAsync();
             conn = localConn;
         }
 
@@ -331,7 +367,7 @@ public class SqliteDbContext
         }
         else
         {
-            localConn = CreateConnection();
+            localConn = await CreateConnectionAsync();
             conn = localConn;
         }
 
@@ -370,22 +406,30 @@ public class SqliteDbContext
     public async Task UpsertTrackAsync(Track track, SqliteTransaction? tx = null)
     {
         SqliteConnection? localConn = null;
-        SqliteConnection conn;
-        if (tx != null)
-        {
-            conn = tx.Connection ?? throw new InvalidOperationException("Transaction has no associated connection.");
-        }
-        else
-        {
-            localConn = CreateConnection();
-            conn = localConn;
-        }
-
+        SqliteTransaction? localTx = null;
         try
         {
+            SqliteConnection conn;
+            SqliteTransaction effectiveTx;
+            if (tx != null)
+            {
+                conn = tx.Connection ?? throw new InvalidOperationException("Transaction has no associated connection.");
+                effectiveTx = tx;
+            }
+            else
+            {
+                // DB-04: the Artist/Album/Track trio must be atomic on the tx==null
+                // path too — without a wrapping transaction a mid-failure leaves a
+                // half-written graph (e.g. an Album row with no Track).
+                localConn = await CreateConnectionAsync();
+                localTx = (SqliteTransaction)await localConn.BeginTransactionAsync();
+                conn = localConn;
+                effectiveTx = localTx;
+            }
+
             using (var insertArtist = conn.CreateCommand())
             {
-                if (tx != null) insertArtist.Transaction = tx;
+                insertArtist.Transaction = effectiveTx;
                 insertArtist.CommandText = "INSERT OR IGNORE INTO Artists (Id, Name, IsLocal) VALUES (@id, @name, 1);";
                 insertArtist.Parameters.Add(new SqliteParameter("@id", track.ArtistId));
                 insertArtist.Parameters.Add(new SqliteParameter("@name", track.ArtistName));
@@ -394,7 +438,7 @@ public class SqliteDbContext
 
             using (var insertAlbum = conn.CreateCommand())
             {
-                if (tx != null) insertAlbum.Transaction = tx;
+                insertAlbum.Transaction = effectiveTx;
                 insertAlbum.CommandText = "INSERT OR IGNORE INTO Albums (Id, Title, ArtistId, ArtistName, Year, Provider) VALUES (@id, @title, @artistId, @artistName, @year, @provider);";
                 insertAlbum.Parameters.Add(new SqliteParameter("@id", track.AlbumId));
                 insertAlbum.Parameters.Add(new SqliteParameter("@title", track.AlbumTitle));
@@ -406,7 +450,7 @@ public class SqliteDbContext
             }
 
             using var cmd = conn.CreateCommand();
-            if (tx != null) cmd.Transaction = tx;
+            cmd.Transaction = effectiveTx;
 
             // DateAdded converted to Epoch Seconds to match strictly typed schema
             long epochSeconds = ((DateTimeOffset)track.DateAdded).ToUnixTimeSeconds();
@@ -445,17 +489,31 @@ public class SqliteDbContext
             cmd.Parameters.Add(new SqliteParameter("@replayGain", track.ReplayGain));
 
             await cmd.ExecuteNonQueryAsync();
+
+            if (localTx != null)
+            {
+                await localTx.CommitAsync();
+            }
+        }
+        catch
+        {
+            if (localTx != null)
+            {
+                try { await localTx.RollbackAsync(); } catch { /* connection already broken */ }
+            }
+            throw;
         }
         finally
         {
-            localConn?.Dispose();
+            localTx?.Dispose();
+            if (localConn != null) await localConn.DisposeAsync();
         }
     }
 
     public async Task<List<Track>> GetAllTracksAsync()
     {
         var tracks = new List<Track>();
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded, Genre, ReplayGain FROM Tracks ORDER BY Title ASC;";
 
@@ -488,7 +546,7 @@ public class SqliteDbContext
 
     public async Task<int> GetTotalTrackCountAsync()
     {
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT COUNT(*) FROM Tracks;";
         var result = await cmd.ExecuteScalarAsync();
@@ -498,7 +556,7 @@ public class SqliteDbContext
     public async Task<List<Artist>> GetAllArtistsAsync()
     {
         var artists = new List<Artist>();
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT Id, Name, Bio, ArtworkUrl, IsLocal FROM Artists ORDER BY Name ASC;";
 
@@ -519,7 +577,7 @@ public class SqliteDbContext
     public async Task<List<Album>> GetAllAlbumsAsync()
     {
         var albums = new List<Album>();
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT Id, Title, ArtistId, ArtistName, Year, ArtworkUrl, Provider FROM Albums ORDER BY Title ASC;";
 
@@ -542,7 +600,7 @@ public class SqliteDbContext
     public async Task<List<Track>> GetTracksByAlbumAsync(string albumId)
     {
         var tracks = new List<Track>();
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
             SELECT Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded, Genre, ReplayGain 
@@ -582,7 +640,7 @@ public class SqliteDbContext
     public async Task<List<Track>> GetTracksByArtistAsync(string artistId)
     {
         var tracks = new List<Track>();
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         
         string? artistName = null;
         using (var nameCmd = conn.CreateCommand())
@@ -647,7 +705,7 @@ public class SqliteDbContext
 
     public async Task<Album?> GetAlbumByIdAsync(string albumId)
     {
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT Id, Title, ArtistId, ArtistName, Year, ArtworkUrl, Provider FROM Albums WHERE Id = @albumId LIMIT 1;";
         cmd.Parameters.Add(new SqliteParameter("@albumId", albumId));
@@ -671,7 +729,7 @@ public class SqliteDbContext
     public async Task<Album?> GetAlbumByTitleAsync(string title, string? artistId = null)
     {
         if (string.IsNullOrWhiteSpace(title)) return null;
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         if (!string.IsNullOrWhiteSpace(artistId))
         {
@@ -709,7 +767,7 @@ public class SqliteDbContext
 
         var result = new List<Album>();
         const int batchSize = 500;
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
 
         for (int offset = 0; offset < ids.Count; offset += batchSize)
         {
@@ -749,7 +807,7 @@ public class SqliteDbContext
 
     public async Task<Artist?> GetArtistByIdAsync(string artistId)
     {
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT Id, Name, Bio, ArtworkUrl, IsLocal FROM Artists WHERE Id = @artistId LIMIT 1;";
         cmd.Parameters.Add(new SqliteParameter("@artistId", artistId));
@@ -771,7 +829,7 @@ public class SqliteDbContext
     public async Task<Artist?> GetArtistByNameAsync(string name)
     {
         if (string.IsNullOrWhiteSpace(name)) return null;
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT Id, Name, Bio, ArtworkUrl, IsLocal FROM Artists WHERE Name = @name COLLATE NOCASE LIMIT 1;";
         cmd.Parameters.Add(new SqliteParameter("@name", name.Trim()));
@@ -792,7 +850,7 @@ public class SqliteDbContext
     
     public async Task LogPlaybackHistoryAsync(string trackId)
     {
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "INSERT INTO PlaybackHistory (Id, TrackId, PlayedAt) VALUES (@id, @trackId, @playedAt);";
 
@@ -806,15 +864,15 @@ public class SqliteDbContext
     // Public helper required for Ticket #003 Consumer Transaction batching
     public async Task<SqliteTransaction> BeginTransactionAsync()
     {
-        // CreateConnection() already opens the connection; opening it again is
+        // CreateConnectionAsync() already opens the connection; opening it again is
         // redundant (and ADO.NET throws on a second Open of an open connection).
-        var conn = CreateConnection();
+        var conn = await CreateConnectionAsync();
         return (SqliteTransaction)await conn.BeginTransactionAsync();
     }
 
     public async Task<Track?> GetTrackByIdAsync(string trackId)
     {
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded, Genre, ReplayGain FROM Tracks WHERE Id = @trackId LIMIT 1;";
         cmd.Parameters.Add(new SqliteParameter("@trackId", trackId));
@@ -850,7 +908,7 @@ public class SqliteDbContext
     public async Task<List<DuplicateGroup>> GetDuplicatesAsync()
     {
         var groups = new List<DuplicateGroup>();
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $@"
             SELECT {TrackColumns}
@@ -964,7 +1022,7 @@ public class SqliteDbContext
     public async Task<List<Track>> GetRecentlyPlayedAsync(int limit)
     {
         var tracks = new List<Track>();
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $@"
             SELECT {PrefixColumns("t")}
@@ -982,7 +1040,7 @@ public class SqliteDbContext
     public async Task<List<Track>> GetMostPlayedAsync(int limit)
     {
         var tracks = new List<Track>();
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $@"
             SELECT {PrefixColumns("t")}
@@ -1000,7 +1058,7 @@ public class SqliteDbContext
     public async Task<List<Track>> GetLastAddedAsync(int limit)
     {
         var tracks = new List<Track>();
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $"SELECT {TrackColumns} FROM Tracks ORDER BY DateAdded DESC LIMIT @limit;";
         cmd.Parameters.Add(new SqliteParameter("@limit", limit));
@@ -1012,7 +1070,7 @@ public class SqliteDbContext
     public async Task<List<Track>> GetFavoritesAsync()
     {
         var tracks = new List<Track>();
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $@"
             SELECT {PrefixColumns("t")}
@@ -1027,7 +1085,7 @@ public class SqliteDbContext
     public async Task<HashSet<string>> GetFavoriteTrackIdsAsync()
     {
         var ids = new HashSet<string>(StringComparer.Ordinal);
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT TrackId FROM Favorites;";
         using var reader = await cmd.ExecuteReaderAsync();
@@ -1037,7 +1095,7 @@ public class SqliteDbContext
 
     public async Task<bool> IsFavoriteAsync(string trackId)
     {
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT 1 FROM Favorites WHERE TrackId = @id LIMIT 1;";
         cmd.Parameters.Add(new SqliteParameter("@id", trackId));
@@ -1047,7 +1105,7 @@ public class SqliteDbContext
 
     public async Task AddFavoriteAsync(string trackId)
     {
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "INSERT OR IGNORE INTO Favorites (TrackId, AddedAt) VALUES (@id, @at);";
         cmd.Parameters.Add(new SqliteParameter("@id", trackId));
@@ -1057,7 +1115,7 @@ public class SqliteDbContext
 
     public async Task RemoveFavoriteAsync(string trackId)
     {
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "DELETE FROM Favorites WHERE TrackId = @id;";
         cmd.Parameters.Add(new SqliteParameter("@id", trackId));
@@ -1075,7 +1133,7 @@ public class SqliteDbContext
         string id = Guid.NewGuid().ToString();
         long created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "INSERT INTO Playlists (Id, Title, Description, CreatedAt, IsLocalOnly) VALUES (@id, @title, @desc, @created, 1);";
         cmd.Parameters.Add(new SqliteParameter("@id", id));
@@ -1089,7 +1147,7 @@ public class SqliteDbContext
 
     public async Task DeletePlaylistAsync(string id)
     {
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "DELETE FROM Playlists WHERE Id = @id;"; // PlaylistTracks cascade
         cmd.Parameters.Add(new SqliteParameter("@id", id));
@@ -1098,7 +1156,7 @@ public class SqliteDbContext
 
     public async Task RenamePlaylistAsync(string id, string title)
     {
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "UPDATE Playlists SET Title = @title WHERE Id = @id;";
         cmd.Parameters.Add(new SqliteParameter("@title", title));
@@ -1109,7 +1167,7 @@ public class SqliteDbContext
     public async Task<List<Playlist>> GetPlaylistsAsync()
     {
         var playlists = new List<Playlist>();
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
             SELECT p.Id, p.Title, p.Description, p.CreatedAt, p.IsLocalOnly, COUNT(pt.TrackId)
@@ -1133,7 +1191,7 @@ public class SqliteDbContext
 
     public async Task<Playlist?> GetPlaylistByIdAsync(string id)
     {
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
             SELECT p.Id, p.Title, p.Description, p.CreatedAt, p.IsLocalOnly, COUNT(pt.TrackId)
@@ -1159,7 +1217,7 @@ public class SqliteDbContext
     public async Task<List<Track>> GetPlaylistTracksAsync(string playlistId)
     {
         var tracks = new List<Track>();
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
             SELECT t.Id, t.Title, t.ArtistId, t.ArtistName, t.AlbumId, t.AlbumTitle, t.DurationSeconds, t.SourceUri, t.Provider, t.TrackNumber, t.Year, t.DateAdded, t.Genre, t.ReplayGain
@@ -1183,7 +1241,7 @@ public class SqliteDbContext
 
     public async Task AddTrackToPlaylistAsync(string playlistId, string trackId)
     {
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         string entryId = Guid.NewGuid().ToString();
         cmd.CommandText = @"
@@ -1197,7 +1255,7 @@ public class SqliteDbContext
 
     public async Task RemoveTrackFromPlaylistAsync(string playlistId, string trackId)
     {
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         // Deletes by surrogate Id if matching, or removes exactly ONE occurrence if trackId is a Track ID
         cmd.CommandText = @"
@@ -1212,7 +1270,7 @@ public class SqliteDbContext
     public async Task<List<PlaylistTrackEntry>> GetPlaylistTrackEntriesAsync(string playlistId)
     {
         var entries = new List<PlaylistTrackEntry>();
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
             SELECT pt.Id, pt.PlaylistId, pt.SortOrder,
@@ -1241,7 +1299,7 @@ public class SqliteDbContext
 
     public async Task RemoveTrackEntryFromPlaylistAsync(string entryId)
     {
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "DELETE FROM PlaylistTracks WHERE Id = @id;";
         cmd.Parameters.Add(new SqliteParameter("@id", entryId));
@@ -1252,20 +1310,71 @@ public class SqliteDbContext
     {
         if (orderedTrackOrEntryIds == null || orderedTrackOrEntryIds.Count == 0) return;
 
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var tx = (SqliteTransaction)await conn.BeginTransactionAsync();
         try
         {
+            // Load current entries once. Keys may be surrogate entry Ids OR TrackIds
+            // (the API deliberately accepts both), so match by entry Id first, then
+            // consume matching TrackId entries in their current order. One position
+            // per entry keeps a track that appears multiple times in the playlist on
+            // distinct SortOrders — the old bulk `OR TrackId = @key` update stamped
+            // every copy with the same position (DB-08).
+            var entryOrder = new List<string>();
+            var trackIdByEntry = new Dictionary<string, string>();
+            using (var load = conn.CreateCommand())
+            {
+                load.Transaction = tx;
+                load.CommandText = "SELECT Id, TrackId FROM PlaylistTracks WHERE PlaylistId = @pid ORDER BY SortOrder ASC;";
+                load.Parameters.Add(new SqliteParameter("@pid", playlistId));
+                using var reader = await load.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    string entryId = reader.GetString(0);
+                    entryOrder.Add(entryId);
+                    trackIdByEntry[entryId] = reader.GetString(1);
+                }
+            }
+
+            var positioned = new HashSet<string>();
+            var updates = new List<(string EntryId, int Order)>();
+            int nextOrder = 0;
+            foreach (string key in orderedTrackOrEntryIds)
+            {
+                string? matchedEntry;
+                if (trackIdByEntry.ContainsKey(key))
+                {
+                    matchedEntry = key; // surrogate entry Id
+                }
+                else
+                {
+                    matchedEntry = null; // TrackId fallback: first not-yet-positioned copy
+                    foreach (var entryId in entryOrder)
+                    {
+                        if (!positioned.Contains(entryId) && trackIdByEntry[entryId] == key)
+                        {
+                            matchedEntry = entryId;
+                            break;
+                        }
+                    }
+                }
+
+                if (matchedEntry != null && positioned.Add(matchedEntry))
+                {
+                    updates.Add((matchedEntry, nextOrder++));
+                }
+            }
+
             using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
-            cmd.CommandText = "UPDATE PlaylistTracks SET SortOrder = @order WHERE PlaylistId = @pid AND (Id = @key OR TrackId = @key);";
+            cmd.CommandText = "UPDATE PlaylistTracks SET SortOrder = @order WHERE Id = @entry AND PlaylistId = @pid;";
             var pOrder = cmd.Parameters.Add(new SqliteParameter("@order", 0));
-            var pPid = cmd.Parameters.Add(new SqliteParameter("@pid", playlistId));
-            var pKey = cmd.Parameters.Add(new SqliteParameter("@key", ""));
-            for (int i = 0; i < orderedTrackOrEntryIds.Count; i++)
+            var pEntry = cmd.Parameters.Add(new SqliteParameter("@entry", ""));
+            cmd.Parameters.Add(new SqliteParameter("@pid", playlistId));
+            foreach (var (entryId, order) in updates)
             {
-                pOrder.Value = i;
-                pKey.Value = orderedTrackOrEntryIds[i];
+                pOrder.Value = order;
+                pEntry.Value = entryId;
                 await cmd.ExecuteNonQueryAsync();
             }
             await tx.CommitAsync();
@@ -1283,7 +1392,7 @@ public class SqliteDbContext
         string newTrackId = Octave.Core.Helpers.IdGenerator.FromTrackUri(newPath);
         if (oldTrackId == newTrackId) return;
 
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var tx = (SqliteTransaction)await conn.BeginTransactionAsync();
         try
         {
@@ -1377,7 +1486,7 @@ public class SqliteDbContext
     public async Task<List<string>> GetGenresAsync()
     {
         var genres = new List<string>();
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT DISTINCT Genre FROM Tracks WHERE Genre <> '' ORDER BY Genre COLLATE NOCASE ASC;";
         using var reader = await cmd.ExecuteReaderAsync();
@@ -1391,7 +1500,7 @@ public class SqliteDbContext
     public async Task<List<Track>> GetTracksByGenreAsync(string genre)
     {
         var tracks = new List<Track>();
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
             SELECT Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded, Genre, ReplayGain
@@ -1417,7 +1526,7 @@ public class SqliteDbContext
     public async Task<List<string>> GetMonitoredFoldersAsync()
     {
         var folders = new List<string>();
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT Path FROM MonitoredFolders ORDER BY Path ASC;";
         using var reader = await cmd.ExecuteReaderAsync();
@@ -1430,7 +1539,7 @@ public class SqliteDbContext
 
     public async Task AddMonitoredFolderAsync(string path)
     {
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "INSERT OR IGNORE INTO MonitoredFolders (Path) VALUES (@path);";
         cmd.Parameters.Add(new SqliteParameter("@path", path));
@@ -1439,7 +1548,7 @@ public class SqliteDbContext
 
     public async Task RemoveMonitoredFolderAsync(string path)
     {
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "DELETE FROM MonitoredFolders WHERE Path = @path;";
         cmd.Parameters.Add(new SqliteParameter("@path", path));
@@ -1458,7 +1567,7 @@ public class SqliteDbContext
         string escaped = normalized.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
         string likePrefix = escaped + "%";
 
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var tx = (SqliteTransaction)await conn.BeginTransactionAsync();
         try
         {
@@ -1489,7 +1598,7 @@ public class SqliteDbContext
     {
         if (string.IsNullOrEmpty(trackId)) return;
 
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var tx = (SqliteTransaction)await conn.BeginTransactionAsync();
         try
         {
@@ -1529,7 +1638,7 @@ public class SqliteDbContext
         var byId = new Dictionary<string, Track>(StringComparer.Ordinal);
         const int BatchSize = 500;
 
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
 
         for (int offset = 0; offset < ids.Count; offset += BatchSize)
         {
@@ -1577,7 +1686,7 @@ public class SqliteDbContext
         IReadOnlyList<string> orderedTrackIds, IReadOnlyList<string>? unshuffledTrackIds, int currentIndex, double positionSeconds,
         float volume, bool isShuffle, RepeatMode repeatMode)
     {
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var tx = (SqliteTransaction)await conn.BeginTransactionAsync();
         try
         {
@@ -1632,7 +1741,7 @@ public class SqliteDbContext
     public async Task UpdatePlaybackProgressAsync(
         int currentIndex, double positionSeconds, float volume, bool isShuffle, RepeatMode repeatMode)
     {
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         await UpsertPlayerStateRowAsync(conn, null, currentIndex, positionSeconds, volume, isShuffle, repeatMode);
     }
 
@@ -1663,7 +1772,7 @@ public class SqliteDbContext
 
     public async Task<PersistedPlayerState?> LoadPlayerStateAsync()
     {
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
 
         int currentIndex;
         double position;
@@ -1718,15 +1827,28 @@ public class SqliteDbContext
         var tracks = new List<Track>();
         var albums = new List<Album>();
         var artists = new List<Artist>();
+        var playlists = new List<Playlist>();
 
-        using var conn = CreateConnection();
+        // DB-07: an empty/whitespace query used to build '%%' and (with FTS skipped for
+        // empty input) LIKE-match every row — returning the entire library when no limit
+        // was set. Short-circuit to an explicitly empty result instead.
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return new SearchResults(tracks, albums, artists, playlists);
+        }
+
+        // DB-07: never materialize an unbounded result set — callers that pass no
+        // explicit limit get a sane per-category cap rather than a whole-table scan.
+        limit ??= 200;
+
+        using var conn = await CreateConnectionAsync();
         string wildQuery = $"%{query}%";
         string prefixQuery = $"{query}%";
         string exactQuery = query;
 
         // Query 1: Tracks (Optimized with FTS5 when available, falling back to prefix/LIKE)
         string ftsQuery = BuildFtsQuery(query);
-        bool usedFts = false;
+        bool ftsExecuted = false;
         if (!string.IsNullOrWhiteSpace(ftsQuery))
         {
             try
@@ -1772,16 +1894,23 @@ public class SqliteDbContext
                         genre, replayGain
                     ));
                 }
-                usedFts = tracks.Count > 0;
+                // DB-03: record that FTS ran successfully — separate from how many rows
+                // it returned, so a legitimate no-match doesn't ALSO pay for a full
+                // leading-wildcard LIKE table scan.
+                ftsExecuted = true;
             }
-            catch (Exception ex)
+            // DB-06: only SQLite-level failures (missing/corrupt FTS table, malformed
+            // MATCH) may silently fall back to LIKE; any other exception is a genuine
+            // bug and must surface instead of being swallowed into a Debug.WriteLine
+            // that no-op's in Release builds.
+            catch (SqliteException ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[SqliteDbContext] FTS5 search exception: {ex.Message}");
-                usedFts = false;
+                System.Diagnostics.Debug.WriteLine($"[SqliteDbContext] FTS5 search unavailable, falling back to LIKE: {ex.Message}");
+                ftsExecuted = false;
             }
         }
 
-        if (!usedFts && tracks.Count == 0)
+        if (!ftsExecuted)
         {
             using var cmd = conn.CreateCommand();
             string sql = @"
@@ -1909,7 +2038,6 @@ public class SqliteDbContext
         }
 
         // Query 4: Playlists
-        var playlists = new List<Playlist>();
         {
             using var cmd = conn.CreateCommand();
             string sql = @"
@@ -1977,7 +2105,7 @@ public class SqliteDbContext
     {
         if (string.IsNullOrWhiteSpace(cacheKey)) return null;
 
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT DataJson, ExpiresAt FROM ExternalDataCache WHERE CacheKey = @key LIMIT 1;";
         cmd.Parameters.Add(new SqliteParameter("@key", cacheKey));
@@ -2004,7 +2132,7 @@ public class SqliteDbContext
     {
         if (string.IsNullOrWhiteSpace(cacheKey)) return null;
 
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT DataJson, TypeName, CreatedAt, ExpiresAt FROM ExternalDataCache WHERE CacheKey = @key LIMIT 1;";
         cmd.Parameters.Add(new SqliteParameter("@key", cacheKey));
@@ -2027,7 +2155,7 @@ public class SqliteDbContext
     {
         if (string.IsNullOrWhiteSpace(cacheKey) || string.IsNullOrWhiteSpace(dataJson)) return;
 
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
             INSERT INTO ExternalDataCache (CacheKey, DataJson, TypeName, CreatedAt, ExpiresAt)
@@ -2051,7 +2179,7 @@ public class SqliteDbContext
     {
         if (string.IsNullOrWhiteSpace(cacheKey)) return;
 
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "DELETE FROM ExternalDataCache WHERE CacheKey = @key;";
         cmd.Parameters.Add(new SqliteParameter("@key", cacheKey));
@@ -2061,7 +2189,7 @@ public class SqliteDbContext
 
     public async Task ClearExpiredCachedExternalDataAsync()
     {
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "DELETE FROM ExternalDataCache WHERE ExpiresAt > 0 AND ExpiresAt <= @now;";
         cmd.Parameters.Add(new SqliteParameter("@now", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
@@ -2071,7 +2199,7 @@ public class SqliteDbContext
 
     public async Task ClearAllCachedExternalDataAsync()
     {
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "DELETE FROM ExternalDataCache;";
 
@@ -2082,7 +2210,7 @@ public class SqliteDbContext
     {
         if (string.IsNullOrWhiteSpace(key)) return null;
 
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT Value FROM AppSettings WHERE Key = @key;";
         cmd.Parameters.Add(new SqliteParameter("@key", key));
@@ -2095,7 +2223,7 @@ public class SqliteDbContext
     {
         if (string.IsNullOrWhiteSpace(key)) return;
 
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
             INSERT INTO AppSettings (Key, Value) VALUES (@key, @val)
@@ -2109,7 +2237,7 @@ public class SqliteDbContext
     public async Task<Dictionary<string, string>> GetAllSettingsAsync()
     {
         var settings = new Dictionary<string, string>();
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT Key, Value FROM AppSettings;";
 
@@ -2128,7 +2256,7 @@ public class SqliteDbContext
     {
         if (string.IsNullOrWhiteSpace(sessionId)) return;
 
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
             INSERT INTO LibraryEnrichmentSessions (SessionId, StartedAt, CompletedAt, IsDryRun, TotalTracks)
@@ -2157,7 +2285,7 @@ public class SqliteDbContext
     {
         if (string.IsNullOrWhiteSpace(trackId)) return;
 
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
             INSERT INTO LibraryEnrichmentState (TrackId, SessionId, Status, Confidence, HardGatesPassed, PlanJson, CandidatesJson, UpdatedAt)
@@ -2187,7 +2315,7 @@ public class SqliteDbContext
     {
         if (string.IsNullOrWhiteSpace(trackId)) return null;
 
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT Status, Confidence, HardGatesPassed, PlanJson, CandidatesJson FROM LibraryEnrichmentState WHERE TrackId = @tid;";
         cmd.Parameters.Add(new SqliteParameter("@tid", trackId));
@@ -2209,7 +2337,7 @@ public class SqliteDbContext
     public async Task<List<(string TrackId, string? PlanJson, string? CandidatesJson)>> GetEnrichmentRecordsByStatusAsync(int status)
     {
         var results = new List<(string TrackId, string? PlanJson, string? CandidatesJson)>();
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT TrackId, PlanJson, CandidatesJson FROM LibraryEnrichmentState WHERE Status = @status ORDER BY UpdatedAt DESC;";
         cmd.Parameters.Add(new SqliteParameter("@status", status));
@@ -2228,7 +2356,7 @@ public class SqliteDbContext
 
     public async Task ClearEnrichmentStateAsync()
     {
-        using var conn = CreateConnection();
+        using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "DELETE FROM LibraryEnrichmentState WHERE Status != 8;"; // Preserves 8 (NeverAskAgain)
         await cmd.ExecuteNonQueryAsync();

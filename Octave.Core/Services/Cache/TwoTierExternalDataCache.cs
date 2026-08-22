@@ -59,8 +59,20 @@ public class TwoTierExternalDataCache : IExternalDataCache
             }
         }
 
-        // 2. Check L2 Persistent SQLite Cache
-        var record = await _dbContext.GetCachedExternalDataRecordAsync(key).ConfigureAwait(false);
+        // 2. Check L2 Persistent SQLite Cache. A DB failure here (e.g. SQLITE_BUSY
+        // before busy_timeout existed, a missing/corrupt table) must degrade to a
+        // cache miss — letting it throw defeats the orchestrators' offline/stale
+        // fallback paths (CACHE-01).
+        (string DataJson, string TypeName, long CreatedAt, long ExpiresAt)? record = null;
+        try
+        {
+            record = await _dbContext.GetCachedExternalDataRecordAsync(key).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[TwoTierExternalDataCache] L2 read failed for '{key}', treating as miss: {ex.Message}");
+        }
+
         if (record.HasValue)
         {
             var (dataJson, typeName, createdEpoch, expiresEpoch) = record.Value;
