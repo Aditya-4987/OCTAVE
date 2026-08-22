@@ -1,9 +1,28 @@
+# Local ideation / reference material
 /PROJECT_ideation/
 /INSPIRATIONS/
 /BASS_ADDONS/
-/.vs
-/claude
-/Octave.Core/bin/
-/Octave.Desktop/bin/
-/Octave.Core/obj/
-/Octave.Desktop/obj/
+
+# Claude Code local state
+.claude/
+
+# Visual Studio / Rider IDE state
+.vs/
+.idea/
+*.user
+*.suo
+
+# Build artifacts (all projects)
+[Bb]in/
+[Oo]bj/
+*.userprefs
+artifacts/
+publish/
+
+# Test results
+TestResults/
+*.trx
+
+# Stray logs and scratch files at the repo root
+build.log
+temp

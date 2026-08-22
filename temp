@@ -1,3 +1,0 @@
-future cleanups: 
-convert MainViewModel observable fields to partial properties.
-Convert all ObservableProperty backing fields to partial properties to eliminate MVVMTK0045.

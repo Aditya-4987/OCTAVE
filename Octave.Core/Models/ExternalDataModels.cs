@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using Octave.Core.Models;
 
 namespace Octave.Core.Models;
 

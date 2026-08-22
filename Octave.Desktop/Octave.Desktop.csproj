@@ -26,7 +26,8 @@
     <Content Include="Assets\StoreLogo.png" />
     <Content Include="Assets\AppIcon.ico" />
     <Content Include="Assets\Wide310x150Logo.scale-200.png" />
-    <Content Include="Assets\test.mp3">
+    <!-- Dev-only audio fixture: kept out of Release packaging (PH-08). -->
+    <Content Include="Assets\test.mp3" Condition="'$(Configuration)' == 'Debug'">
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
