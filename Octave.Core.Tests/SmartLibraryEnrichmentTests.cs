@@ -564,4 +564,65 @@ public class SmartLibraryEnrichmentTests : IDisposable
         Assert.Null(plan.ProposedUpdate?.Lyrics);
         Assert.False(plan.PlannedActions.HasFlag(EnrichmentActions.WriteLyrics));
     }
+
+    // =================================================================
+    // 10. EXACT-ID HARD SAFETY GATE (SLE-01 — Batch 2)
+    // =================================================================
+
+    [Fact]
+    public async Task HardSafetyGates_ExactMbidOnFileTags_PassesDespiteGarbageFuzzyFields()
+    {
+        // Regression proof for SLE-01: the gate used to compare the path-hash Track.Id
+        // against a candidate MBID (never true), so known-correct-MBID tracks were
+        // demoted to NeedsReview. With the fix, an exact MBID on the FILE satisfies
+        // every fuzzy gate outright.
+        string filePath = CreateTestMp3("mbid_gate.mp3", "Qwerty Wrong Title", "Zzzz Wrong Artist", "Wrong Album", 1999, 1);
+        using (var tag = TagLib.File.Create(filePath))
+        {
+            tag.Tag.MusicBrainzTrackId = "mb_gate_exact_1";
+            tag.Save();
+        }
+
+        var track = new Track("t_mbid_gate", "Qwerty Wrong Title", "a9", "Zzzz Wrong Artist", "alb9", "Wrong Album", 111.0, filePath, "Local", 1, 1999, DateTime.UtcNow);
+        await _dbContext.UpsertTrackAsync(track);
+
+        // Candidate matches ONLY by MBID; every fuzzy dimension is garbage and would
+        // fail Gates 1-4 (version, title, artist, duration) if they were consulted.
+        var candidateMeta = new ExternalTrackMetadata(
+            "Completely Different Song", "Unrelated Artist", "Other Album", 1970, null, 7, 2, 999.0, null,
+            new ExternalIds(MusicBrainzId: "mb_gate_exact_1"));
+        var candidate = new TrackMatchCandidate("MusicBrainz", new ExternalIds(MusicBrainzId: "mb_gate_exact_1"), 0.99, "Mocked score", candidateMeta);
+
+        var mockMatcher = new Mock<ITrackMetadataMatcher>();
+        mockMatcher.Setup(m => m.FindMatchesForTrackAsync(It.IsAny<Track>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { candidate });
+
+        var rateRegistry = new ProviderRateLimiterRegistry();
+        var httpClient = new HttpClient(new MockHttpMessageHandler());
+        var httpService = new HttpService(rateRegistry, httpClient);
+        var settingsService = new ExternalDataSettingsService(_dbContext, httpService, new TheAudioDbOptions());
+        await settingsService.LoadSettingsAsync();
+
+        var service = new SmartLibraryEnrichmentService(
+            _dbContext,
+            mockMatcher.Object,
+            new Mock<ITrackMetadataEditor>().Object,
+            new Mock<IExternalArtworkOrchestrator>().Object,
+            new Mock<IArtistEnrichmentService>().Object,
+            new Mock<IOnlineLyricsOrchestrator>().Object,
+            settingsService,
+            new Mock<ILibraryService>().Object,
+            _artworkCacheManager,
+            httpService);
+
+        var summary = await service.RunEnrichmentScanAsync(dryRun: true);
+
+        Assert.Equal(1, summary.SafeReadyCount);
+        Assert.Equal(0, summary.NeedsReviewCount);
+
+        var persisted = await _dbContext.GetEnrichmentStateRecordAsync(track.Id);
+        Assert.True(persisted.HasValue);
+        Assert.Equal((int)EnrichmentTrackStatus.SafeReadyToApply, persisted.Value.Status);
+        Assert.True(persisted.Value.HardGatesPassed);
+    }
 }

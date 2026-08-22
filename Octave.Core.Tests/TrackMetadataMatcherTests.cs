@@ -319,4 +319,130 @@ public class TrackMetadataMatcherTests
             }
         }
     }
+
+    // =================================================================
+    // 10. EXACT EXTERNAL-ID MATCH (MATCH-01 — Batch 2)
+    // =================================================================
+
+    // Minimal parseable MP3 (ID3v2.3 header + one MPEG frame) so TagLib can open,
+    // tag and save the fixture — mirrors the fixture used by TrackEnrichmentWorkflowTests.
+    private static readonly byte[] ValidMp3Bytes = new byte[] {
+        0x49, 0x44, 0x33, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0xFF, 0xFB, 0x90, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    };
+
+    [Fact]
+    public void ScoreCandidate_ExactMbidFromLocalTags_ShortCircuitsToPerfectConfidence()
+    {
+        var mockOrchestrator = new Mock<IExternalMetadataOrchestrator>();
+        var matcher = new TrackMetadataMatcher(mockOrchestrator.Object);
+
+        // Local fuzzy fields are garbage — only the file's stored MBID is reliable.
+        var localTrack = new Track("hash_of_path", "Xkcd Fuzzy Title", "ar9", "Wrong Artist", "al9", "Wrong Album", 111.0, "C:/music/x.mp3", "Local", 0, 0, DateTime.UtcNow);
+        var localIds = new ExternalIds(MusicBrainzId: "mbid-target-123");
+
+        var candidate = new ExternalTrackMetadata(
+            "Xkcd Fuzzy Title", "Wrong Artist", "Wrong Album", 0, null, 0, null, 111.0, null,
+            new ExternalIds(MusicBrainzId: "mbid-target-123"));
+
+        var result = matcher.ScoreCandidate(localTrack, candidate, "MusicBrainz", candidate.ExternalIds, localIds);
+
+        Assert.Equal(1.0, result.Confidence);
+        Assert.True(result.IsExactIdMatch);
+        Assert.Contains("Exact MusicBrainz ID match", result.MatchEvidence);
+    }
+
+    [Fact]
+    public void ScoreCandidate_ExactIsrcFromLocalTags_ShortCircuitsToPerfectConfidence()
+    {
+        var mockOrchestrator = new Mock<IExternalMetadataOrchestrator>();
+        var matcher = new TrackMetadataMatcher(mockOrchestrator.Object);
+
+        var localTrack = new Track("hash_of_path", "Fuzzy Title", "ar9", "Wrong Artist", "al9", "Wrong Album", 111.0, "C:/music/x.mp3", "Local", 0, 0, DateTime.UtcNow);
+        var localIds = new ExternalIds(Isrc: "GBUM71029603");
+
+        var candidate = new ExternalTrackMetadata(
+            "Fuzzy Title", "Wrong Artist", "Wrong Album", 0, null, 0, null, 111.0, "GBUM71029603",
+            new ExternalIds(Isrc: "gbum71029603")); // case-insensitive on purpose
+
+        var result = matcher.ScoreCandidate(localTrack, candidate, "Spotify", candidate.ExternalIds, localIds);
+
+        Assert.Equal(1.0, result.Confidence);
+        Assert.True(result.IsExactIdMatch);
+        Assert.Contains("Exact ISRC match", result.MatchEvidence);
+    }
+
+    [Fact]
+    public void ScoreCandidate_PathHashIdMatchingCandidateMbid_DoesNotShortCircuit()
+    {
+        // Regression guard for MATCH-01: the OLD code compared localTrack.Id (a path
+        // hash) to the candidate MBID. A hash can never legitimately equal an MBID, so
+        // this must NOT produce a perfect score — the exact-ID path requires real
+        // tag-derived localIds.
+        var mockOrchestrator = new Mock<IExternalMetadataOrchestrator>();
+        var matcher = new TrackMetadataMatcher(mockOrchestrator.Object);
+
+        var localTrack = new Track("mbid-target-123", "Fuzzy Title", "ar9", "Wrong Artist", "al9", "Wrong Album", 111.0, "C:/nonexistent/file.mp3", "Local", 0, 0, DateTime.UtcNow);
+
+        var candidate = new ExternalTrackMetadata(
+            "Fuzzy Title", "Wrong Artist", "Wrong Album", 0, null, 0, null, 111.0, null,
+            new ExternalIds(MusicBrainzId: "mbid-target-123"));
+
+        var result = matcher.ScoreCandidate(localTrack, candidate, "MusicBrainz", candidate.ExternalIds, localIds: null);
+
+        Assert.NotEqual(1.0, result.Confidence);
+        Assert.False(result.IsExactIdMatch);
+        Assert.DoesNotContain("Exact MusicBrainz ID match", result.MatchEvidence);
+        Assert.DoesNotContain("Exact ISRC match", result.MatchEvidence);
+    }
+
+    [Fact]
+    public async Task FindMatchesForTrackAsync_LocalFileTagsWithMbid_RankExactIdCandidateFirst()
+    {
+        var mockOrchestrator = new Mock<IExternalMetadataOrchestrator>();
+
+        string tempDir = Path.Combine(Path.GetTempPath(), "Octave_MatcherTests_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        string taggedFile = Path.Combine(tempDir, "tagged.mp3");
+        try
+        {
+            File.WriteAllBytes(taggedFile, ValidMp3Bytes);
+            using (var tagFile = TagLib.File.Create(taggedFile))
+            {
+                tagFile.Tag.MusicBrainzTrackId = "mbid-e2e-1";
+                tagFile.Save();
+            }
+
+            // Local fuzzy metadata is completely wrong; only the file's MBID is truth.
+            var localTrack = new Track(
+                "hash_of_path", "Qwerty Wrong Title", "ar9", "Zzzz Wrong Artist",
+                "al9", "Wrong Album", 123.0, taggedFile, "Local", 0, 0, DateTime.UtcNow);
+
+            var garbageButRightId = new TrackMatchCandidate(
+                "MusicBrainz", new ExternalIds("mbid-e2e-1"), 0.5, "Initial",
+                new ExternalTrackMetadata("Completely Different Song", "Other Artist", "Other Album", 1999, null, 1, 1, 999.0, null, new ExternalIds("mbid-e2e-1")));
+
+            var perfectFuzzyNoId = new TrackMatchCandidate(
+                "MusicBrainz", new ExternalIds("mbid-other"), 0.5, "Initial",
+                new ExternalTrackMetadata("Qwerty Wrong Title", "Zzzz Wrong Artist", "Wrong Album", 2020, null, 1, 1, 123.0, null, new ExternalIds("mbid-other")));
+
+            mockOrchestrator.Setup(o => o.SearchTrackCandidatesAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<double?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new[] { perfectFuzzyNoId, garbageButRightId });
+
+            var matcher = new TrackMetadataMatcher(mockOrchestrator.Object);
+            var ranked = await matcher.FindMatchesForTrackAsync(localTrack);
+
+            Assert.Equal(2, ranked.Count);
+            Assert.Equal("mbid-e2e-1", ranked[0].ExternalIds.MusicBrainzId);
+            Assert.Equal(1.0, ranked[0].Confidence);
+            Assert.Contains("Exact MusicBrainz ID match", ranked[0].MatchEvidence);
+            Assert.True(ranked[0].Confidence > ranked[1].Confidence);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, true); } catch { }
+        }
+    }
 }

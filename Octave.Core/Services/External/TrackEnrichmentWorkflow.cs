@@ -105,15 +105,8 @@ public class TrackEnrichmentWorkflow : ITrackEnrichmentWorkflow
                     if (!string.IsNullOrWhiteSpace(tagFile.Tag.Comment)) currentComment = tagFile.Tag.Comment;
                     if (!string.IsNullOrWhiteSpace(tagFile.Tag.Lyrics)) currentLyrics = tagFile.Tag.Lyrics;
 
-                    var localIds = new Dictionary<string, string>();
-                    if (!string.IsNullOrWhiteSpace(tagFile.Tag.MusicBrainzReleaseId)) localIds["MusicBrainzReleaseId"] = tagFile.Tag.MusicBrainzReleaseId;
-                    if (!string.IsNullOrWhiteSpace(tagFile.Tag.MusicBrainzArtistId)) localIds["MusicBrainzArtistId"] = tagFile.Tag.MusicBrainzArtistId;
-                    if (!string.IsNullOrWhiteSpace(tagFile.Tag.MusicBrainzReleaseGroupId)) localIds["MusicBrainzReleaseGroupId"] = tagFile.Tag.MusicBrainzReleaseGroupId;
-
-                    currentExtIds = new ExternalIds(
-                        MusicBrainzId: tagFile.Tag.MusicBrainzTrackId,
-                        Isrc: tagFile.Tag.ISRC,
-                        AdditionalIds: localIds.Count > 0 ? localIds : null);
+                    // Shared with matcher/scan so all consumers see identical local IDs.
+                    currentExtIds = ExternalTagIds.Read(tagFile.Tag);
                 }
             }
             catch (Exception ex)
@@ -229,14 +222,21 @@ public class TrackEnrichmentWorkflow : ITrackEnrichmentWorkflow
             var discCountComp = CreateNullableComparison("Disc Count", currentDiscCount, null);
             var lyricsComp = CreateComparison("Lyrics", currentLyrics, proposedLyrics);
             var artworkComp = CreateComparison("Artwork", currentArtworkUrl, proposedArtworkUrl);
+            // Defensive local: providers construct candidates dynamically, so honor a
+            // null despite the non-nullable declaration.
+            ExternalIds? candidateIds = c.ExternalIds;
+
             var extIdsComp = new FieldComparison<ExternalIds>(
                 "External IDs",
                 currentExtIds,
-                c.ExternalIds,
-                !currentExtIds.Equals(c.ExternalIds),
+                candidateIds,
+                // ENR-01: ExternalIds now has value-based equality (dictionary members
+                // used to compare by reference, flagging IDs as perpetually different
+                // and rewriting them on every apply). Null proposed = nothing to apply.
+                candidateIds != null && !currentExtIds.Equals(candidateIds),
                 true);
 
-            string candidateId = c.ExternalIds.MusicBrainzId ?? Guid.NewGuid().ToString("N");
+            string candidateId = candidateIds?.MusicBrainzId ?? Guid.NewGuid().ToString("N");
 
             previews.Add(new CandidatePreview(
                 candidateId,

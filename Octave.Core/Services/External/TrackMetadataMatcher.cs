@@ -59,11 +59,16 @@ public class TrackMetadataMatcher : ITrackMetadataMatcher
             return Array.Empty<TrackMatchCandidate>();
         }
 
+        // MATCH-01: the local track's real identifiers live in its file tags, not in
+        // Track.Id (a path hash). Read them once so the exact-ID short-circuit in
+        // ScoreCandidate can actually fire; null for remote/unreadable sources.
+        ExternalIds? localIds = ExternalTagIds.TryReadFromFile(track.SourceUri);
+
         // Re-score every candidate using the deterministic scoring engine
         var scoredList = new List<TrackMatchCandidate>();
         foreach (var c in initialCandidates)
         {
-            var scoreResult = ScoreCandidate(track, c.Metadata, c.ProviderName, c.ExternalIds);
+            var scoreResult = ScoreCandidate(track, c.Metadata, c.ProviderName, c.ExternalIds, localIds);
 
             scoredList.Add(new TrackMatchCandidate(
                 c.ProviderName,
@@ -144,27 +149,26 @@ public class TrackMetadataMatcher : ITrackMetadataMatcher
         Track localTrack,
         ExternalTrackMetadata candidate,
         string providerName,
-        ExternalIds? candidateIds = null)
+        ExternalIds? candidateIds = null,
+        ExternalIds? localIds = null)
     {
         if (candidate == null)
             return new MatchScoreResult(0.0, "Null candidate", false, false);
 
         var evidenceParts = new List<string>();
 
-        // 1. Exact External ID Match (MBID / ISRC)
-        if (candidateIds != null)
+        // 1. Exact External ID Match (MBID / ISRC) — compares the LOCAL FILE's stored
+        //    identifiers against the candidate's. (MATCH-01: this used to compare the
+        //    path-hash localTrack.Id, which can never equal an MBID/ISRC, so the branch
+        //    was dead code and genuine ID-exact matches were demoted to fuzzy scores.)
+        if (candidateIds != null && localIds != null)
         {
-            // If local track already had an MBID or ISRC that matches
-            if (!string.IsNullOrWhiteSpace(candidateIds.Isrc) &&
-                !string.IsNullOrWhiteSpace(localTrack.Id) &&
-                localTrack.Id.Equals(candidateIds.Isrc, StringComparison.OrdinalIgnoreCase))
+            if (IsExactIdMatch(localIds.Isrc, candidateIds.Isrc))
             {
                 return new MatchScoreResult(1.0, "Exact ISRC match", true, false);
             }
 
-            if (!string.IsNullOrWhiteSpace(candidateIds.MusicBrainzId) &&
-                !string.IsNullOrWhiteSpace(localTrack.Id) &&
-                localTrack.Id.Equals(candidateIds.MusicBrainzId, StringComparison.OrdinalIgnoreCase))
+            if (IsExactIdMatch(localIds.MusicBrainzId, candidateIds.MusicBrainzId))
             {
                 return new MatchScoreResult(1.0, "Exact MusicBrainz ID match", true, false);
             }
@@ -288,4 +292,9 @@ public class TrackMetadataMatcher : ITrackMetadataMatcher
         string t = text.Trim().ToLowerInvariant();
         return t == "unknown artist" || t == "unknown" || t == "track" || t.StartsWith("track ");
     }
+
+    private static bool IsExactIdMatch(string? localId, string? candidateId) =>
+        !string.IsNullOrWhiteSpace(localId) &&
+        !string.IsNullOrWhiteSpace(candidateId) &&
+        localId.Trim().Equals(candidateId.Trim(), StringComparison.OrdinalIgnoreCase);
 }

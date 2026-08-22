@@ -355,4 +355,75 @@ public class TrackEnrichmentWorkflowTests : IDisposable
             File.SetAttributes(filePath, FileAttributes.Normal);
         }
     }
+
+    // =================================================================
+    // 7. EXTERNAL IDS COMPARISON (ENR-01 / AR-03 — Batch 2)
+    // =================================================================
+
+    private async Task<(string FilePath, Track Track)> CreateTestTrackWithIdsAsync(string fileName)
+    {
+        var (filePath, track) = await CreateTestTrackAsync(fileName);
+
+        // Stamp the file with real identifiers (recording MBID + release id).
+        using (var tagFile = TagLib.File.Create(filePath))
+        {
+            tagFile.Tag.MusicBrainzTrackId = "mb-wf-1";
+            tagFile.Tag.MusicBrainzReleaseId = "mb-rel-9";
+            tagFile.Save();
+        }
+
+        return (filePath, track);
+    }
+
+    private static TrackEnrichmentWorkflow CreateWorkflow(SqliteDbContext dbContext, ITrackMetadataMatcher matcher) =>
+        new(dbContext, matcher, new TrackMetadataEditor(dbContext, new Mock<ILibraryService>().Object, new ArtworkCacheManager(Path.Combine(Path.GetTempPath(), "Octave_WF_Cache_" + Guid.NewGuid().ToString("N")))));
+
+    [Fact]
+    public async Task CreateEnrichmentPlan_IdenticalExternalIds_NotFlaggedAsDifference()
+    {
+        // Regression for ENR-01: ExternalIds dictionaries used to compare BY REFERENCE,
+        // so a candidate carrying the SAME ids as the file was flagged "different" and
+        // rewritten on every apply.
+        var (_, track) = await CreateTestTrackWithIdsAsync("ids_equal.mp3");
+
+        var candidateMeta = new ExternalTrackMetadata(
+            "Original Title", "Original Artist", "Original Album", 1999, "Pop", 1, null, 240.0, null,
+            new ExternalIds(
+                MusicBrainzId: "mb-wf-1",
+                AdditionalIds: new Dictionary<string, string> { ["MusicBrainzReleaseId"] = "mb-rel-9" })); // different dict instance, same content
+        var candidateMatch = new TrackMatchCandidate("MusicBrainz", candidateMeta.ExternalIds, 0.95, "Matched", candidateMeta);
+
+        var mockMatcher = new Mock<ITrackMetadataMatcher>();
+        mockMatcher.Setup(m => m.FindMatchesForTrackAsync(It.IsAny<Track>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { candidateMatch });
+
+        var workflow = CreateWorkflow(_dbContext, mockMatcher.Object);
+        var plan = await workflow.CreateEnrichmentPlanAsync(track);
+
+        Assert.NotNull(plan.BestCandidate);
+        Assert.False(plan.BestCandidate.ExternalIds.HasDifference,
+            "Identical external ids must not be flagged as a difference (ENR-01)");
+    }
+
+    [Fact]
+    public async Task CreateEnrichmentPlan_DifferentExternalIds_FlaggedAsDifference()
+    {
+        var (_, track) = await CreateTestTrackWithIdsAsync("ids_diff.mp3");
+
+        var candidateMeta = new ExternalTrackMetadata(
+            "Original Title", "Original Artist", "Original Album", 1999, "Pop", 1, null, 240.0, null,
+            new ExternalIds(MusicBrainzId: "mb-different"));
+        var candidateMatch = new TrackMatchCandidate("MusicBrainz", candidateMeta.ExternalIds, 0.95, "Matched", candidateMeta);
+
+        var mockMatcher = new Mock<ITrackMetadataMatcher>();
+        mockMatcher.Setup(m => m.FindMatchesForTrackAsync(It.IsAny<Track>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { candidateMatch });
+
+        var workflow = CreateWorkflow(_dbContext, mockMatcher.Object);
+        var plan = await workflow.CreateEnrichmentPlanAsync(track);
+
+        Assert.NotNull(plan.BestCandidate);
+        Assert.True(plan.BestCandidate.ExternalIds.HasDifference);
+        Assert.Equal("mb-different", plan.BestCandidate.ExternalIds.ProposedValue?.MusicBrainzId);
+    }
 }

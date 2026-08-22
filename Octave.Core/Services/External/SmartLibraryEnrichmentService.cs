@@ -283,6 +283,11 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
         TagLib.File? tagFile = null;
         try { tagFile = TagLib.File.Create(track.SourceUri); } catch { }
 
+        // SLE-01: capture the file's real identifiers while the tag is open — the
+        // exact-ID safety gate below used to compare the path-hash Track.Id against a
+        // candidate MBID, which can never match (dead gate).
+        ExternalIds localIds = tagFile != null ? ExternalTagIds.Read(tagFile.Tag) : ExternalIds.Empty;
+
         var albumRecord = await _dbContext.GetAlbumByIdAsync(track.AlbumId).ConfigureAwait(false);
         var artistRecord = await _dbContext.GetArtistByIdAsync(track.ArtistId).ConfigureAwait(false);
 
@@ -316,7 +321,7 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
         plan.Confidence = topCandidate.Confidence;
 
         // 3. Evaluate Mandatory Hard Safety Gates
-        var gates = EvaluateHardSafetyGates(track, topCandidate);
+        var gates = EvaluateHardSafetyGates(track, topCandidate, localIds);
         plan.SafetyGates = gates;
 
         // 4. Generate Actions & Updates
@@ -596,16 +601,23 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
             editResult.SummaryMessage);
     }
 
-    private SafetyGateResult EvaluateHardSafetyGates(Track localTrack, TrackMatchCandidate candidate)
+    private SafetyGateResult EvaluateHardSafetyGates(Track localTrack, TrackMatchCandidate candidate, ExternalIds localIds)
     {
         var positiveEvidence = new List<string>();
         var warnings = new List<string>();
 
-        // Exact MBID / ISRC Match satisfies gates directly
+        // Exact MBID / ISRC Match satisfies gates directly. (SLE-01: compares the
+        // local FILE's stored identifiers — the previous localTrack.Id comparison was
+        // a path hash vs MBID and could never fire.)
         if (candidate.ExternalIds != null)
         {
-            if (!string.IsNullOrWhiteSpace(candidate.ExternalIds.MusicBrainzId) &&
-                localTrack.Id.Equals(candidate.ExternalIds.MusicBrainzId, StringComparison.OrdinalIgnoreCase))
+            if (IsExactIdMatch(localIds.Isrc, candidate.ExternalIds.Isrc))
+            {
+                positiveEvidence.Add("Exact ISRC match");
+                return new SafetyGateResult(true, true, true, true, true, positiveEvidence, warnings);
+            }
+
+            if (IsExactIdMatch(localIds.MusicBrainzId, candidate.ExternalIds.MusicBrainzId))
             {
                 positiveEvidence.Add("Exact MusicBrainz ID match");
                 return new SafetyGateResult(true, true, true, true, true, positiveEvidence, warnings);
@@ -705,6 +717,11 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
         string t = text.Trim().ToLowerInvariant();
         return t == "unknown artist" || t == "unknown" || t == "track" || t.StartsWith("track ");
     }
+
+    private static bool IsExactIdMatch(string? localId, string? candidateId) =>
+        !string.IsNullOrWhiteSpace(localId) &&
+        !string.IsNullOrWhiteSpace(candidateId) &&
+        localId.Trim().Equals(candidateId.Trim(), StringComparison.OrdinalIgnoreCase);
 
     private void NotifyProgress(
         string sessionId,

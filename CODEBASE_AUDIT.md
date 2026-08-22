@@ -1257,6 +1257,39 @@ None of these break behavior or lose data; they are intentionally **not** assign
 
 *(Appended at the end of the document per the user's instruction: every resolved issue is recorded here as it lands. Newest session first. Format: batch → commit → per-ID status → acceptance evidence → notes/behavior changes. IDs marked ✅ should be treated as fixed; later batches must not re-fix them.)*
 
+### Session 2026-08-23 — Batch 2 verification *(independent review pass)*
+
+**Scope**: full read of the uncommitted Batch 2 working-tree changes against §12.7/§15 Batch 2 specs, plus build/test verification. The Batch 2 implementation itself was authored outside this session; this entry records the review that accepted it.
+
+**Verdict — all four findings genuinely fixed; acceptance criterion met.**
+
+| ID | Status | Evidence |
+|----|--------|----------|
+| MATCH-01 / SLE-01 | ✅ Fixed (verified) | `TrackMetadataMatcher.FindMatchesForTrackAsync` reads the file's real IDs once via new `ExternalTagIds.TryReadFromFile(SourceUri)` and threads them into every `ScoreCandidate` call as a new optional `localIds` parameter; the short-circuit now compares `localIds.Isrc↔candidateIds.Isrc` and `MusicBrainzId↔MusicBrainzId` (trim + OrdinalIgnoreCase) and returns `1.0` **before** fuzzy scoring. The dead `localTrack.Id` comparison is gone repo-wide (grep-verified zero stragglers). `SmartLibraryEnrichmentService` captures tag IDs while its existing tag-open is live (`ExternalTagIds.Read`) and passes them into `EvaluateHardSafetyGates`, which compares stored ISRC/MBID — and now honors exact ISRC too, which the old gate never did. Shared helper `ExternalTagIds` makes matcher/scan/workflow see one identical view of local IDs. |
+| ENR-01 | ✅ Fixed (verified) | `ExternalIds` has manual value equality: scalars Ordinal, dictionary keys OrdinalIgnoreCase + values Ordinal, order-independent XOR-folded `GetHashCode`. Workflow diff flag = `candidateIds != null && !currentExtIds.Equals(candidateIds)` — identical IDs no longer flagged/rewritten; null proposed = nothing to apply (also fixes a latent NRE on `candidateId`). "No fuzzy confidence gate" holds structurally: the workflow rejects nothing by confidence (all candidates become previews tiered purely by score), and the pipeline's single threshold (`HighConfidenceThreshold = 0.85`) is cleared by construction because an exact-ID match scores 1.0. |
+| AR-03 | ✅ Fixed (verified) | `ExternalIds.GetId`'s dictionary fallback routes through a case-insensitive lookup (exact hit first, then OrdinalIgnoreCase scan) aligned with the already-case-insensitive switch; value equality covers dict/set-key usage. |
+
+**Acceptance verified** ("a track carrying a known MBID/ISRC matches by ID"): `ScoreCandidate_ExactMbidFromLocalTags_ShortCircuitsToPerfectConfidence` + ISRC twin (direct proof: 1.0, `IsExactIdMatch=true`); `ScoreCandidate_PathHashIdMatchingCandidateMbid_DoesNotShortCircuit` (reverse guard — the old buggy input can no longer trigger the short-circuit); `FindMatchesForTrackAsync_LocalFileTagsWithMbid_RankExactIdCandidateFirst` (full pipeline, real tagged MP3); `HardSafetyGates_ExactMbidOnFileTags_PassesDespiteGarbageFuzzyFields` (end-to-end gate → persisted `SafeReadyToApply`); workflow pair proving both directions of the ID diff; 6 × `ExternalIdsEqualityTests`.
+
+**Minor observations recorded, deliberately not blocking**: (a) null-vs-empty `AdditionalIds` compare unequal in the new equality — a provider returning an empty non-null dict would re-trigger the perpetual-difference symptom in miniature (`ExternalTagIds.Read` normalizes its own side; providers are unnormalized); hardening candidate for B7/B16. (b) `FindMatchesForFileAsync` opens the file twice (fuzzy tags, then `TryReadFromFile`) — perf nit only.
+
+**Final state**: `dotnet build Octave.Desktop` = 0/0 · `dotnet test Octave.Core.Tests` = **149/149** (136 prior + 13 new: 4 matcher, 2 workflow, 1 SLE gate, 6 equality). Committed together with the RV patch below as separate commits.
+
+### Session 2026-08-23 — Batch 0 + 1 patch review *(post-fix verification pass)*
+
+**Scope**: full re-read of both batch commits (`5bc3889`, `a80fd68`) against §15 Batch 0/1 specs. Baseline re-verified before any edit: build 0/0, tests 136/136 — the §18 entries above are accurate.
+
+**Review verdict — no regressions found; two defects patched:**
+
+| # | Severity | Location | Finding & Fix |
+|---|----------|----------|---------------|
+| RV-01 | ⚠️ Bug (edge) | `SqliteDbContext.SearchLibraryAsync` FTS catch | **DB-03/DB-06 interaction dropped a guard the old code had incidentally.** A `SqliteException` can surface *mid-`ReadAsync`* (I/O error / corruption while stepping rows) after some FTS rows were already added to `tracks`. The new `ftsExecuted = false` then ran the LIKE fallback, which **appends duplicate rows** to the partial result (the old code's `tracks.Count == 0` condition used to prevent this by accident). **Fix**: snapshot `tracks.Count` before the FTS block; in the catch, if rows already streamed out, treat FTS as executed (keep the partial result, skip the fallback). Zero-row failures still fall back exactly as DB-03 prescribes. |
+| RV-02 | 💡 Hygiene | `SqliteConcurrencyAndMigrationTests.cs` | **Temp-file leaks in the new acceptance tests**: (a) `_dbPath = Path.GetTempFileName() + ".db"` creates a 0-byte `.tmp` file that is never deleted — one orphan per test instance (×9 across the suite); (b) Dispose never removed WAL mode's `-wal`/`-shm` sidecar files, so each test left up to 3 files in `%TEMP%`. **Fix**: Guid-named temp paths (no `GetTempFileName` orphan); Dispose sweeps `{db, db-wal, db-shm}` for both fixtures. |
+
+**Verified-correct during review** (probed, no action): all 67 call sites converted to `CreateConnectionAsync` with zero sync stragglers (grep); `BeginTransactionAsync`'s internal connection is properly captured (`tx.Connection`) and disposed by every scanner caller; DB-04's local-tx commit/rollback/dispose ordering is correct on both tx paths; DB-05's multi-statement batch executes fully under Microsoft.Data.Sqlite and its explicit ROLLBACK covers pooled-connection inheritance; DB-08's entry-first/TrackId-consumed matching keeps duplicates distinct and preserves both key semantics (both covered by tests 3/4); `limit ??= 200` is compatible with all callers (`ShellViewModel` passes `limit: 8`; `SearchViewModel` uses the default cap safely); CACHE-01's catch correctly wraps only the L2 read with writes still deliberately non-fatal.
+
+**Final state**: `dotnet build Octave.Desktop` = 0/0 · `dotnet test Octave.Core.Tests` = **136/136**. Changes not yet committed at review time.
+
 ### Session 2026-08-23 — Batches 0 + 1
 
 **Pre-work**: the entire external-data/enrichment subsystem (~30 source files + 11 test files) was still uncommitted in the working tree. Committed as baseline `bc65400` *after* verifying green: `dotnet build Octave.Desktop` = 0/0, `dotnet test Octave.Core.Tests` = 128/128. This unblocked clean per-batch commits and resolved the "too many uncommitted changes" symptom (the bulk of which was tracked build artifacts, i.e. PH-01/PH-02 below).
