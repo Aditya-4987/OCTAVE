@@ -9,6 +9,7 @@ public interface ILibraryService
 {
     event System.EventHandler? LibraryUpdated;
     event System.EventHandler? FavoritesChanged;
+    void NotifyLibraryUpdated();
     Task ScanLocalLibraryAsync(string rootDir, CancellationToken ct);
 
     // Home dashboards & favorites.

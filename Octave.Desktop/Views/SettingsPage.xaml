@@ -199,6 +199,236 @@
                 </ItemsControl>
             </StackPanel>
 
+            <!-- ============================================================= -->
+            <!-- ONLINE & EXTERNAL DATA SETTINGS -->
+            <!-- ============================================================= -->
+            <StackPanel Spacing="16">
+                <TextBlock Text="Online &amp; External Data" FontSize="20" FontWeight="Bold" Foreground="White" />
+                <TextBlock Text="Configure external providers, community metadata, online artwork, synchronized lyrics, and write safety policies."
+                           FontSize="12" Foreground="#888888" TextWrapping="Wrap" />
+
+                <!-- 0. Smart Library Enrichment Launcher -->
+                <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
+                        BorderBrush="#25FFFFFF" BorderThickness="1" CornerRadius="10" Padding="16">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
+                            <TextBlock Text="Smart Library Enrichment" FontSize="15" FontWeight="Bold" Foreground="White" />
+                            <TextBlock Text="Scan your local library to preview or automatically enrich missing metadata, album artwork, lyrics, and artist biographies."
+                                       FontSize="12" Foreground="#888888" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <Button Grid.Column="1" VerticalAlignment="Center" Margin="12,0,0,0"
+                                Content="Scan &amp; Enrich Library..."
+                                Click="OpenLibraryEnrichment_Click"
+                                Background="{ThemeResource SystemControlHighlightAccentBrush}"
+                                Foreground="White" FontWeight="SemiBold" Height="36" />
+                    </Grid>
+                </Border>
+
+                <!-- 1. Privacy & Offline Behavior -->
+                <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
+                        BorderBrush="#25FFFFFF" BorderThickness="1" CornerRadius="10" Padding="16">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="PRIVACY &amp; OFFLINE MODE" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" CharacterSpacing="80" />
+                        <TextBlock Text="OCTAVE connects to online community databases (MusicBrainz, Cover Art Archive, LRCLIB, and TheAudioDB) to retrieve metadata, high-resolution artwork, biographies, and synchronized lyrics. Song title, artist, and album names are transmitted during search queries."
+                                   FontSize="12" Foreground="#888888" TextWrapping="Wrap" />
+                        
+                        <ToggleSwitch Header="Offline-Only Mode (Disable All Remote API Requests)"
+                                      IsOn="{x:Bind ExternalSettings.OfflineOnlyMode, Mode=TwoWay}"
+                                      Toggled="SettingToggled"
+                                      OffContent="Online enrichment active (Uses internet &amp; cache)"
+                                      OnContent="Offline only (Uses local database &amp; existing cache only)" />
+
+                        <StackPanel Spacing="8" Visibility="{x:Bind BoolToVisibilityInverted(ExternalSettings.OfflineOnlyMode), Mode=OneWay}">
+                            <ToggleSwitch Header="Enable Online Metadata Lookup (MusicBrainz)"
+                                          IsOn="{x:Bind ExternalSettings.EnableOnlineMetadata, Mode=TwoWay}"
+                                          Toggled="SettingToggled" />
+                            <ToggleSwitch Header="Enable Online Lyrics Retrieval (LRCLIB)"
+                                          IsOn="{x:Bind ExternalSettings.EnableOnlineLyrics, Mode=TwoWay}"
+                                          Toggled="SettingToggled" />
+                            <ToggleSwitch Header="Enable Online Album Artwork Retrieval (Cover Art Archive)"
+                                          IsOn="{x:Bind ExternalSettings.EnableOnlineArtwork, Mode=TwoWay}"
+                                          Toggled="SettingToggled" />
+                            <ToggleSwitch Header="Enable Artist Enrichment (TheAudioDB)"
+                                          IsOn="{x:Bind ExternalSettings.EnableArtistEnrichment, Mode=TwoWay}"
+                                          Toggled="SettingToggled" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- 2. External Providers -->
+                <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
+                        BorderBrush="#25FFFFFF" BorderThickness="1" CornerRadius="10" Padding="16">
+                    <StackPanel Spacing="14">
+                        <TextBlock Text="EXTERNAL PROVIDERS" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" CharacterSpacing="80" />
+                        
+                        <!-- MusicBrainz -->
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                                <TextBlock Text="MusicBrainz" FontWeight="SemiBold" Foreground="White" />
+                                <TextBlock Text="Music identity, release dates, track numbering &amp; fuzzy matching. (Rate-limited to 1 req/s, no key required)" FontSize="12" Foreground="#888888" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" IsOn="{x:Bind ExternalSettings.MusicBrainzEnabled, Mode=TwoWay}" Toggled="SettingToggled" VerticalAlignment="Center" />
+                        </Grid>
+
+                        <MenuFlyoutSeparator />
+
+                        <!-- LRCLIB -->
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                                <TextBlock Text="LRCLIB" FontWeight="SemiBold" Foreground="White" />
+                                <TextBlock Text="Synchronized timestamped (.lrc) and plain text lyrics. (No key required)" FontSize="12" Foreground="#888888" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" IsOn="{x:Bind ExternalSettings.LrcLibEnabled, Mode=TwoWay}" Toggled="SettingToggled" VerticalAlignment="Center" />
+                        </Grid>
+
+                        <MenuFlyoutSeparator />
+
+                        <!-- Cover Art Archive -->
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                                <TextBlock Text="Cover Art Archive" FontWeight="SemiBold" Foreground="White" />
+                                <TextBlock Text="Internet Archive community repository for front album artwork. (No key required)" FontSize="12" Foreground="#888888" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" IsOn="{x:Bind ExternalSettings.CoverArtArchiveEnabled, Mode=TwoWay}" Toggled="SettingToggled" VerticalAlignment="Center" />
+                        </Grid>
+
+                        <MenuFlyoutSeparator />
+
+                        <!-- TheAudioDB -->
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                                <TextBlock Text="TheAudioDB" FontWeight="SemiBold" Foreground="White" />
+                                <TextBlock Text="Artist biographies, genres, formation dates, social links, and profile photos." FontSize="12" Foreground="#888888" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" IsOn="{x:Bind ExternalSettings.TheAudioDbEnabled, Mode=TwoWay}" Toggled="SettingToggled" VerticalAlignment="Center" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- 3. API Credentials -->
+                <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
+                        BorderBrush="#25FFFFFF" BorderThickness="1" CornerRadius="10" Padding="16">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="API CREDENTIALS" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" CharacterSpacing="80" />
+                        <TextBlock Text="Configure provider authentication keys. Keys are stored locally and never exposed in logs or diagnostics." FontSize="12" Foreground="#888888" TextWrapping="Wrap" />
+                        
+                        <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <TextBlock Text="TheAudioDB API Key" FontWeight="SemiBold" Foreground="White" />
+                                <TextBlock Text="{x:Bind ExternalSettings.TheAudioDbStatusText, Mode=OneWay}" FontSize="12" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
+                            <PasswordBox Grid.Column="0"
+                                         Header="API Key (Default public test key is '2')"
+                                         Password="{x:Bind ExternalSettings.TheAudioDbApiKey, Mode=TwoWay}"
+                                         PasswordRevealMode="Peek"
+                                         PasswordChanged="TheAudioDbPasswordBox_PasswordChanged"
+                                         PlaceholderText="Enter TheAudioDB API Key"
+                                         Margin="0,0,8,0" />
+                            <Button Grid.Column="1" VerticalAlignment="Bottom" Height="36"
+                                    Content="Test Connection"
+                                    Command="{x:Bind ExternalSettings.TestTheAudioDbConnectionCommand}"
+                                    IsEnabled="{x:Bind BoolToInverted(ExternalSettings.IsTestingConnection), Mode=OneWay}" />
+                        </Grid>
+
+                        <ProgressBar IsIndeterminate="True" Visibility="{x:Bind BoolToVisibility(ExternalSettings.IsTestingConnection), Mode=OneWay}" />
+                        <InfoBar IsOpen="{x:Bind ExternalSettings.IsConnectionTestVisible, Mode=OneWay}"
+                                 Message="{x:Bind ExternalSettings.ConnectionTestMessage, Mode=OneWay}"
+                                 Severity="{x:Bind ExternalSettings.ConnectionTestSeverity, Mode=OneWay}"
+                                 IsClosable="True" />
+                    </StackPanel>
+                </Border>
+
+                <!-- 4. Metadata Write Policy -->
+                <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
+                        BorderBrush="#25FFFFFF" BorderThickness="1" CornerRadius="10" Padding="16">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="METADATA WRITE &amp; AUTOMATION POLICY" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" CharacterSpacing="80" />
+                        <TextBlock Text="Control when and how external metadata is written to local audio files." FontSize="12" Foreground="#888888" TextWrapping="Wrap" />
+
+                        <ComboBox Header="Automatic Write Policy"
+                                  SelectedIndex="{x:Bind ExternalSettings.WritePolicyIndex, Mode=TwoWay}"
+                                  SelectionChanged="SettingSelectionChanged"
+                                  HorizontalAlignment="Stretch">
+                            <ComboBoxItem Content="Never write automatically (Review changes before applying)" />
+                            <ComboBoxItem Content="Write only when metadata is missing &amp; match is high confidence (Recommended)" />
+                            <ComboBoxItem Content="Write only on high confidence matches" />
+                            <ComboBoxItem Content="Always prefer online metadata" />
+                        </ComboBox>
+
+                        <ToggleSwitch Header="Write MusicBrainz IDs to file tags when available"
+                                      IsOn="{x:Bind ExternalSettings.WriteExternalIdsToTags, Mode=TwoWay}"
+                                      Toggled="SettingToggled" />
+                        <ToggleSwitch Header="Automatically download missing album artwork"
+                                      IsOn="{x:Bind ExternalSettings.AutoDownloadMissingArtwork, Mode=TwoWay}"
+                                      Toggled="SettingToggled" />
+                        <ToggleSwitch Header="Automatically download missing artist profile images"
+                                      IsOn="{x:Bind ExternalSettings.AutoDownloadMissingArtistImages, Mode=TwoWay}"
+                                      Toggled="SettingToggled" />
+                        <ToggleSwitch Header="Auto-fill empty/missing metadata tags"
+                                      IsOn="{x:Bind ExternalSettings.AutoFillMissingMetadata, Mode=TwoWay}"
+                                      Toggled="SettingToggled" />
+                        <ToggleSwitch Header="Replace existing metadata tags with online values"
+                                      IsOn="{x:Bind ExternalSettings.ReplaceExistingMetadata, Mode=TwoWay}"
+                                      Toggled="SettingToggled" />
+                        <ToggleSwitch Header="Replace existing embedded artwork with online covers"
+                                      IsOn="{x:Bind ExternalSettings.ReplaceExistingArtwork, Mode=TwoWay}"
+                                      Toggled="SettingToggled" />
+                    </StackPanel>
+                </Border>
+
+                <!-- 5. Two-Tier Caching & Network Rate Limits -->
+                <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
+                        BorderBrush="#25FFFFFF" BorderThickness="1" CornerRadius="10" Padding="16">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="CACHING &amp; NETWORK RATE LIMITS" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" CharacterSpacing="80" />
+                        
+                        <ToggleSwitch Header="Use cached metadata and artwork when offline"
+                                      IsOn="{x:Bind ExternalSettings.UseCachedDataOffline, Mode=TwoWay}"
+                                      Toggled="SettingToggled" />
+                        <ToggleSwitch Header="Allow stale cached responses if provider is temporarily unavailable"
+                                      IsOn="{x:Bind ExternalSettings.AllowStaleCacheOnProviderFailure, Mode=TwoWay}"
+                                      Toggled="SettingToggled" />
+
+                        <ComboBox Header="Cache Retention Duration"
+                                  SelectedIndex="{x:Bind ExternalSettings.CacheRetentionDaysIndex, Mode=TwoWay}"
+                                  SelectionChanged="SettingSelectionChanged"
+                                  HorizontalAlignment="Stretch">
+                            <ComboBoxItem Content="7 Days" />
+                            <ComboBoxItem Content="30 Days (Default)" />
+                            <ComboBoxItem Content="90 Days" />
+                            <ComboBoxItem Content="180 Days" />
+                            <ComboBoxItem Content="365 Days" />
+                        </ComboBox>
+
+                        <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
+                            <TextBlock Text="Maximum Concurrent External Requests:" VerticalAlignment="Center" Foreground="White" FontSize="14" />
+                            <Slider Grid.Column="1" Width="180" Minimum="1" Maximum="10" StepFrequency="1"
+                                    Value="{x:Bind ExternalSettings.MaxConcurrentRequests, Mode=TwoWay}"
+                                    ValueChanged="SettingSliderChanged" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- 6. Online Library Scan Preferences -->
+                <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
+                        BorderBrush="#25FFFFFF" BorderThickness="1" CornerRadius="10" Padding="16">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="ONLINE SCAN PREFERENCES" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" CharacterSpacing="80" />
+                        <TextBlock Text="Configure targeted filters for automatic and manual library enrichment scan passes." FontSize="12" Foreground="#888888" TextWrapping="Wrap" />
+
+                        <CheckBox Content="Scan entire library" IsChecked="{x:Bind ExternalSettings.ScanEntireLibrary, Mode=TwoWay}" Click="SettingCheckBoxClicked" />
+                        <CheckBox Content="Scan only tracks with missing metadata" IsChecked="{x:Bind ExternalSettings.ScanOnlyMissingMetadata, Mode=TwoWay}" Click="SettingCheckBoxClicked" />
+                        <CheckBox Content="Scan only tracks with missing artwork" IsChecked="{x:Bind ExternalSettings.ScanOnlyMissingArtwork, Mode=TwoWay}" Click="SettingCheckBoxClicked" />
+                        <CheckBox Content="Scan only tracks with missing lyrics" IsChecked="{x:Bind ExternalSettings.ScanOnlyMissingLyrics, Mode=TwoWay}" Click="SettingCheckBoxClicked" />
+                        <CheckBox Content="Recheck previously failed online matches" IsChecked="{x:Bind ExternalSettings.RecheckPreviouslyFailedMatches, Mode=TwoWay}" Click="SettingCheckBoxClicked" />
+                        <CheckBox Content="Recheck ambiguous online matches" IsChecked="{x:Bind ExternalSettings.RecheckAmbiguousMatches, Mode=TwoWay}" Click="SettingCheckBoxClicked" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
             <TextBlock Text="Engine Diagnostic Harness" FontSize="18" FontWeight="SemiBold" Foreground="White" />
             
             <Button Content="Ignite Main Engines (Run Static Fire)" 

@@ -36,12 +36,19 @@
             <StackPanel Grid.Column="1" VerticalAlignment="Bottom">
                 <TextBlock Text="ALBUM" FontSize="12" FontWeight="Bold" Foreground="#AAAAAA" />
                 <TextBlock Text="{x:Bind ViewModel.Title, Mode=OneWay}" FontSize="64" FontWeight="Bold" Foreground="White" TextWrapping="Wrap" Margin="0,8,0,8" />
-                <TextBlock Text="{x:Bind ViewModel.Subtitle, Mode=OneWay}" FontSize="16" Foreground="#AAAAAA" Margin="0,0,0,24" />
+                <TextBlock Text="{x:Bind ViewModel.Subtitle, Mode=OneWay}" FontSize="16" Foreground="#AAAAAA" Margin="0,0,0,8" />
+                <TextBlock Text="{x:Bind ViewModel.Description, Mode=OneWay}" FontSize="13" Foreground="#CCCCCC" TextWrapping="Wrap" MaxHeight="60" TextTrimming="CharacterEllipsis" Margin="0,0,0,16" Visibility="{x:Bind local:EntityDetailPage.HasTextVisibility(ViewModel.Description), Mode=OneWay}" />
                 
-                <StackPanel Orientation="Horizontal" Spacing="24" VerticalAlignment="Center">
+                <StackPanel Orientation="Horizontal" Spacing="16" VerticalAlignment="Center">
                     <Button Command="{x:Bind ViewModel.PlayAllCommand}" Style="{StaticResource PrimaryPlayButtonStyle}">
                         <FontIcon Glyph="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="24" />
                     </Button>
+
+                    <Button Command="{x:Bind ViewModel.EnrichEntityCommand}" ToolTipService.ToolTip="Fetch Online Information / Artwork" Style="{StaticResource GhostIconButtonStyle}">
+                        <FontIcon Glyph="&#xE721;" FontFamily="Segoe MDL2 Assets" Foreground="#AAAAAA" FontSize="20" />
+                    </Button>
+
+                    <ProgressRing IsActive="{x:Bind ViewModel.IsEnriching, Mode=OneWay}" Width="20" Height="20" Visibility="{x:Bind local:EntityDetailPage.VisibleWhen(ViewModel.IsEnriching), Mode=OneWay}" Margin="0,0,8,0" />
                     
                     <Button Click="BackButton_Click" Style="{StaticResource GhostIconButtonStyle}">
                         <FontIcon Glyph="&#xE72B;" FontFamily="Segoe MDL2 Assets" Foreground="#AAAAAA" FontSize="20" />

@@ -211,6 +211,16 @@ public sealed partial class NowPlayingPage : Page
         }
     }
 
+    private void AlbumPanelControl_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (e.NewSize.Height > 0)
+        {
+            double boundedHeight = Math.Clamp(e.NewSize.Height, 440, 560);
+            LyricsPanelControl.MaxHeight = boundedHeight;
+            LyricsPanelControl.Height = boundedHeight;
+        }
+    }
+
     private void CreditsPanelControl_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (e.NewSize.Height > 0)

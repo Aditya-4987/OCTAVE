@@ -38,6 +38,29 @@ public class LyricsService : ILyricsService
             return new LyricsData(track.Id, LyricsState.Unavailable, null, null);
         }
 
+        // 1. Check embedded tag lyrics first
+        if (File.Exists(track.SourceUri))
+        {
+            try
+            {
+                using var tagFile = TagLib.File.Create(track.SourceUri);
+                string? embedded = tagFile.Tag.Lyrics;
+                if (!string.IsNullOrWhiteSpace(embedded))
+                {
+                    var parsedEmbedded = ParseLrcContent(track.Id, embedded);
+                    if (parsedEmbedded.State == LyricsState.Synced || parsedEmbedded.State == LyricsState.Unsynced)
+                    {
+                        return parsedEmbedded;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[LyricsService] Embedded tag reading failed for '{track.SourceUri}': {ex.Message}");
+            }
+        }
+
+        // 2. Check local LRC sidecar files
         string? lrcPath = FindLocalLrcFile(track.SourceUri);
         if (string.IsNullOrEmpty(lrcPath) || !File.Exists(lrcPath))
         {

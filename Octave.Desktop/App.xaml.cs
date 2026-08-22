@@ -18,6 +18,15 @@ using Octave.Core.Services.Library;
 using Octave.Core.Interfaces;
 using Octave.Core.Services.Playback;
 using Octave.Core.Services.Metadata;
+using Octave.Core.Services.Cache;
+using Octave.Core.Services.External;
+using Octave.Core.Services.External.MusicBrainz;
+using Octave.Core.Services.External.Artwork;
+using Octave.Core.Services.External.Lyrics;
+using Octave.Core.Models;
+using Octave.Core.Services.External.Artist;
+using Octave.Core.Interfaces.External;
+using Octave.Core.Services.Network;
 using Octave_Desktop.ViewModels;
 using Octave_Desktop.Services.System;
 using System.IO;
@@ -76,6 +85,31 @@ public partial class App : Application
                 // Artwork Cache Manager
                 services.AddSingleton<IArtworkCacheManager>(new ArtworkCacheManager(cachePath));
 
+                // Network & Two-Tier Cache Infrastructure
+                services.AddSingleton<IProviderRateLimiterRegistry, ProviderRateLimiterRegistry>();
+                services.AddSingleton<IHttpService, HttpService>();
+                services.AddSingleton<IExternalDataCache, TwoTierExternalDataCache>();
+
+                // External Providers & Orchestrators
+                services.AddSingleton<TheAudioDbOptions>();
+                services.AddSingleton<Octave.Core.Services.External.Settings.IExternalDataSettingsService, Octave.Core.Services.External.Settings.ExternalDataSettingsService>();
+                services.AddSingleton<IExternalMetadataProvider, MusicBrainzMetadataProvider>();
+                services.AddSingleton<IExternalAlbumArtworkProvider, CoverArtArchiveArtworkProvider>();
+                services.AddSingleton<TheAudioDbArtistEnrichmentProvider>();
+                services.AddSingleton<IArtistEnrichmentProvider>(sp => sp.GetRequiredService<TheAudioDbArtistEnrichmentProvider>());
+                services.AddSingleton<IExternalArtistImageProvider>(sp => sp.GetRequiredService<TheAudioDbArtistEnrichmentProvider>());
+                services.AddSingleton<IArtistEnrichmentService, ArtistEnrichmentService>();
+                services.AddSingleton<IExternalLyricsProvider, LrcLibLyricsProvider>();
+                services.AddSingleton<IOnlineLyricsOrchestrator, OnlineLyricsOrchestrator>();
+                services.AddSingleton<IExternalMetadataOrchestrator, ExternalMetadataOrchestrator>();
+                services.AddSingleton<IExternalArtworkOrchestrator, ExternalArtworkOrchestrator>();
+                services.AddSingleton<ITrackMetadataMatcher, TrackMetadataMatcher>();
+
+                // Local Tag Editor & Enrichment Workflow
+                services.AddSingleton<ITrackMetadataEditor, TrackMetadataEditor>();
+                services.AddSingleton<ITrackEnrichmentWorkflow, TrackEnrichmentWorkflow>();
+                services.AddSingleton<ISmartLibraryEnrichmentService, SmartLibraryEnrichmentService>();
+
                 // Engine
                 services.AddSingleton<IAudioPlayerService, ManagedBassAudioService>();
 
@@ -83,12 +117,13 @@ public partial class App : Application
                 services.AddSingleton<ILibraryScanner, LocalLibraryScanner>();
                 services.AddSingleton<ILibraryWatcherService, LibraryWatcherService>();
 
-                // Facades
+                // Facades & Services
                 services.AddSingleton<ILibraryService, LibraryService>();
                 services.AddSingleton<IQueueService, QueueService>();
                 services.AddSingleton<IPlaylistService, PlaylistService>();
                 services.AddSingleton<ISmtcService, WindowsSmtcService>();
-                services.AddSingleton<ILyricsService, Octave.Core.Services.Metadata.LyricsService>();
+                services.AddSingleton<Octave.Core.Services.Metadata.LyricsService>();
+                services.AddSingleton<ILyricsService, CompositeLyricsService>();
 
                 // ViewModels
                 services.AddSingleton<MainViewModel>();
@@ -102,6 +137,9 @@ public partial class App : Application
                 services.AddTransient<EntityDetailViewModel>();
                 services.AddTransient<SearchViewModel>();
                 services.AddTransient<NowPlayingViewModel>();
+                services.AddTransient<MetadataEnrichmentViewModel>();
+                services.AddTransient<ExternalDataSettingsViewModel>();
+                services.AddTransient<LibraryEnrichmentViewModel>();
             })
             .Build();
 

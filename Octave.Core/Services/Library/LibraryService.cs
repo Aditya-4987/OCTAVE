@@ -27,6 +27,8 @@ public class LibraryService : ILibraryService
         _scanner.LibraryChanged += (s, e) => LibraryUpdated?.Invoke(this, EventArgs.Empty);
     }
 
+    public void NotifyLibraryUpdated() => LibraryUpdated?.Invoke(this, EventArgs.Empty);
+
     public Task<List<Track>> GetRecentlyPlayedAsync(int limit) => _dbContext.GetRecentlyPlayedAsync(limit);
     public Task<List<Track>> GetMostPlayedAsync(int limit) => _dbContext.GetMostPlayedAsync(limit);
     public Task<List<Track>> GetLastAddedAsync(int limit) => _dbContext.GetLastAddedAsync(limit);

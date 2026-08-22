@@ -1,0 +1,322 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
+using Moq;
+using Octave.Core.Helpers;
+using Octave.Core.Models;
+using Octave.Core.Services.External;
+using Xunit;
+
+namespace Octave.Core.Tests;
+
+public class TrackMetadataMatcherTests
+{
+    // =================================================================
+    // 1. EXACT MATCH
+    // =================================================================
+
+    [Fact]
+    public void ScoreCandidate_ExactMatch_YieldsHighConfidence()
+    {
+        var mockOrchestrator = new Mock<IExternalMetadataOrchestrator>();
+        var matcher = new TrackMetadataMatcher(mockOrchestrator.Object);
+
+        var localTrack = new Track("tr1", "Bohemian Rhapsody", "ar1", "Queen", "al1", "A Night at the Opera", 354.0, "C:/music/bohemian.flac", "Local", 11, 1975, DateTime.UtcNow);
+
+        var candidate = new ExternalTrackMetadata(
+            "Bohemian Rhapsody",
+            "Queen",
+            "A Night at the Opera",
+            1975,
+            "Rock",
+            11,
+            1,
+            354.2,
+            "GBUM71029603",
+            new ExternalIds("mb-rec-123"));
+
+        var result = matcher.ScoreCandidate(localTrack, candidate, "MusicBrainz");
+
+        Assert.True(result.Confidence >= 0.95, $"Expected confidence >= 0.95, got {result.Confidence}");
+        Assert.False(result.IsVersionMismatch);
+        Assert.Contains("Exact Title Match", result.MatchEvidence);
+        Assert.Contains("Exact Artist Match", result.MatchEvidence);
+        Assert.Contains("Exact Duration", result.MatchEvidence);
+    }
+
+    // =================================================================
+    // 2. PUNCTUATION DIFFERENCES
+    // =================================================================
+
+    [Fact]
+    public void ScoreCandidate_PunctuationDifferences_MatchesCorrectly()
+    {
+        var mockOrchestrator = new Mock<IExternalMetadataOrchestrator>();
+        var matcher = new TrackMetadataMatcher(mockOrchestrator.Object);
+
+        var localTrack = new Track("tr1", "Rock 'N' Roll Train", "ar1", "AC/DC", "al1", "Black Ice", 261.0, "C:/music/track.mp3", "Local", 1, 2008, DateTime.UtcNow);
+
+        var candidate = new ExternalTrackMetadata(
+            "Rock N Roll Train",
+            "AC DC",
+            "Black Ice",
+            2008,
+            "Hard Rock",
+            1,
+            1,
+            261.0,
+            null,
+            ExternalIds.Empty);
+
+        var result = matcher.ScoreCandidate(localTrack, candidate, "MusicBrainz");
+
+        // Normalized matching strips punctuation and apostrophes
+        Assert.True(result.Confidence >= 0.90, $"Expected confidence >= 0.90, got {result.Confidence}");
+    }
+
+    // =================================================================
+    // 3. UNICODE & DIACRITICS
+    // =================================================================
+
+    [Fact]
+    public void ScoreCandidate_UnicodeDiacritics_MatchesAccurately()
+    {
+        var mockOrchestrator = new Mock<IExternalMetadataOrchestrator>();
+        var matcher = new TrackMetadataMatcher(mockOrchestrator.Object);
+
+        // Local track has plain ASCII, candidate has accents (or vice versa)
+        var localTrack = new Track("tr1", "Joga", "ar1", "Bjork", "al1", "Homogenic", 305.0, "C:/music/joga.flac", "Local", 2, 1997, DateTime.UtcNow);
+
+        var candidate = new ExternalTrackMetadata(
+            "Jóga",
+            "Björk",
+            "Homogenic",
+            1997,
+            "Electronic",
+            2,
+            1,
+            305.5,
+            null,
+            ExternalIds.Empty);
+
+        var result = matcher.ScoreCandidate(localTrack, candidate, "MusicBrainz");
+
+        Assert.True(result.Confidence >= 0.95, $"Expected confidence >= 0.95, got {result.Confidence}");
+    }
+
+    // =================================================================
+    // 4. DURATION MISMATCH
+    // =================================================================
+
+    [Fact]
+    public void ScoreCandidate_LargeDurationMismatch_AppliesPenalty()
+    {
+        var mockOrchestrator = new Mock<IExternalMetadataOrchestrator>();
+        var matcher = new TrackMetadataMatcher(mockOrchestrator.Object);
+
+        // Local track is 3 minutes (180s), candidate is an extended 12-minute version (720s)
+        var localTrack = new Track("tr1", "Rapper's Delight", "ar1", "The Sugarhill Gang", "al1", "Sugarhill Gang", 180.0, "C:/music/track.mp3", "Local", 1, 1979, DateTime.UtcNow);
+
+        var candidate = new ExternalTrackMetadata(
+            "Rapper's Delight",
+            "The Sugarhill Gang",
+            "Sugarhill Gang",
+            1979,
+            "Hip Hop",
+            1,
+            1,
+            874.0, // Long version
+            null,
+            ExternalIds.Empty);
+
+        var result = matcher.ScoreCandidate(localTrack, candidate, "MusicBrainz");
+
+        // Duration penalty must pull confidence below high match
+        Assert.True(result.Confidence < 0.70, $"Expected confidence < 0.70 due to duration mismatch, got {result.Confidence}");
+        Assert.Contains("Duration Mismatch", result.MatchEvidence);
+    }
+
+    // =================================================================
+    // 5. REMIX / VERSION MISMATCH
+    // =================================================================
+
+    [Fact]
+    public void ScoreCandidate_RemixVsOriginal_AppliesVersionMismatchPenalty()
+    {
+        var mockOrchestrator = new Mock<IExternalMetadataOrchestrator>();
+        var matcher = new TrackMetadataMatcher(mockOrchestrator.Object);
+
+        var localTrack = new Track("tr1", "Levitating (Klangkarussell Remix)", "ar1", "Dua Lipa", "al1", "Club Future Nostalgia", 240.0, "C:/music/remix.mp3", "Local", 1, 2020, DateTime.UtcNow);
+
+        var candidateOriginal = new ExternalTrackMetadata(
+            "Levitating",
+            "Dua Lipa",
+            "Future Nostalgia",
+            2020,
+            "Pop",
+            5,
+            1,
+            203.0,
+            null,
+            ExternalIds.Empty);
+
+        var result = matcher.ScoreCandidate(localTrack, candidateOriginal, "MusicBrainz");
+
+        Assert.True(result.IsVersionMismatch);
+        Assert.True(result.Confidence < 0.60, $"Expected confidence < 0.60 due to version mismatch, got {result.Confidence}");
+        Assert.Contains("Version Mismatch", result.MatchEvidence);
+    }
+
+    // =================================================================
+    // 6. LIVE RECORDING VS STUDIO RECORDING
+    // =================================================================
+
+    [Fact]
+    public void ScoreCandidate_LiveVsStudio_AppliesLivePenalty()
+    {
+        var mockOrchestrator = new Mock<IExternalMetadataOrchestrator>();
+        var matcher = new TrackMetadataMatcher(mockOrchestrator.Object);
+
+        // Local track is standard studio version
+        var localTrack = new Track("tr1", "Comfortably Numb", "ar1", "Pink Floyd", "al1", "The Wall", 382.0, "C:/music/numb.flac", "Local", 6, 1979, DateTime.UtcNow);
+
+        // Candidate is live album recording
+        var candidateLive = new ExternalTrackMetadata(
+            "Comfortably Numb (Live in Berlin)",
+            "Pink Floyd",
+            "Pulse (Live)",
+            1995,
+            "Progressive Rock",
+            10,
+            2,
+            550.0,
+            null,
+            ExternalIds.Empty);
+
+        var result = matcher.ScoreCandidate(localTrack, candidateLive, "MusicBrainz");
+
+        Assert.True(result.IsVersionMismatch);
+        Assert.True(result.Confidence < 0.60, $"Expected confidence < 0.60 due to Live mismatch, got {result.Confidence}");
+        Assert.Contains("Live", result.MatchEvidence);
+    }
+
+    // =================================================================
+    // 7. MULTIPLE CANDIDATE RESULTS & RANKING
+    // =================================================================
+
+    [Fact]
+    public async Task FindMatchesForTrackAsync_ReturnsRankedCandidates()
+    {
+        var mockOrchestrator = new Mock<IExternalMetadataOrchestrator>();
+
+        var localTrack = new Track("tr1", "Time", "ar1", "Pink Floyd", "al1", "The Dark Side of the Moon", 413.0, "C:/music/time.flac", "Local", 4, 1973, DateTime.UtcNow);
+
+        var candExact = new TrackMatchCandidate("MusicBrainz", new ExternalIds("mb-1"), 0.5, "Initial",
+            new ExternalTrackMetadata("Time", "Pink Floyd", "The Dark Side of the Moon", 1973, "Progressive Rock", 4, 1, 413.0, "GBAYE7300040", new ExternalIds("mb-1")));
+
+        var candLive = new TrackMatchCandidate("MusicBrainz", new ExternalIds("mb-2"), 0.5, "Initial",
+            new ExternalTrackMetadata("Time (Live at Wembley)", "Pink Floyd", "Live 1974", 1974, "Rock", 3, 1, 330.0, null, new ExternalIds("mb-2")));
+
+        var candCover = new TrackMatchCandidate("MusicBrainz", new ExternalIds("mb-3"), 0.5, "Initial",
+            new ExternalTrackMetadata("Time", "Greenslade", "Cover Album", 2000, "Rock", 1, 1, 413.0, null, new ExternalIds("mb-3")));
+
+        mockOrchestrator.Setup(o => o.SearchTrackCandidatesAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<double?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { candLive, candCover, candExact });
+
+        var matcher = new TrackMetadataMatcher(mockOrchestrator.Object);
+
+        var ranked = await matcher.FindMatchesForTrackAsync(localTrack);
+
+        Assert.Equal(3, ranked.Count);
+        // Studio exact version should be ranked #1 with highest confidence
+        Assert.Equal("mb-1", ranked[0].ExternalIds.MusicBrainzId);
+        Assert.True(ranked[0].Confidence >= 0.95);
+
+        // Lower ranked candidates
+        Assert.True(ranked[0].Confidence > ranked[1].Confidence);
+        Assert.True(ranked[1].Confidence >= ranked[2].Confidence);
+    }
+
+    // =================================================================
+    // 8. AMBIGUOUS MATCH
+    // =================================================================
+
+    [Fact]
+    public void ScoreCandidate_AmbiguousMatch_YieldsModerateScore()
+    {
+        var mockOrchestrator = new Mock<IExternalMetadataOrchestrator>();
+        var matcher = new TrackMetadataMatcher(mockOrchestrator.Object);
+
+        // Track with minimal information
+        var localTrack = new Track("tr1", "Hold On", "ar1", "Alabama Shakes", "al1", "", 228.0, "C:/music/track.mp3", "Local", 1, 2012, DateTime.UtcNow);
+
+        // Candidate with matching title and artist, but different duration and missing album
+        var candidate = new ExternalTrackMetadata(
+            "Hold On",
+            "Alabama Shakes",
+            "Unknown Compilation",
+            2015,
+            null,
+            null,
+            null,
+            245.0, // 17s duration difference
+            null,
+            ExternalIds.Empty);
+
+        var result = matcher.ScoreCandidate(localTrack, candidate, "MusicBrainz");
+
+        // Moderate confidence (not strong enough to be auto-applied blindly, but a viable candidate)
+        Assert.InRange(result.Confidence, 0.60, 0.80);
+    }
+
+    // =================================================================
+    // 9. MISSING TAGS (FILENAME PARSING FALLBACK)
+    // =================================================================
+
+    [Fact]
+    public async Task FindMatchesForTrackAsync_MissingTags_UsesFilenameInformation()
+    {
+        var mockOrchestrator = new Mock<IExternalMetadataOrchestrator>();
+
+        string capturedSearchTitle = string.Empty;
+        string capturedSearchArtist = string.Empty;
+
+        mockOrchestrator.Setup(o => o.SearchTrackCandidatesAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<double?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, string, double?, CancellationToken>((title, artist, album, dur, ct) =>
+            {
+                capturedSearchTitle = title;
+                capturedSearchArtist = artist;
+            })
+            .ReturnsAsync(new[]
+            {
+                new TrackMatchCandidate("MusicBrainz", new ExternalIds("mb-recovered"), 0.95, "Found",
+                    new ExternalTrackMetadata("Money", "Pink Floyd", "Dark Side", 1973, "Rock", 6, 1, 382.0, null, new ExternalIds("mb-recovered")))
+            });
+
+        string tempAudioFile = Path.Combine(Path.GetTempPath(), "06 - Pink Floyd - Money.mp3");
+        try
+        {
+            File.WriteAllText(tempAudioFile, "dummy audio content");
+
+            // Local track with missing/generic tags
+            var untaggedTrack = new Track("tr_blank", "Track 06", "ar_blank", "Unknown Artist", "al_blank", "Unknown Album", 382.0, tempAudioFile, "Local", 6, 0, DateTime.UtcNow);
+
+            var matcher = new TrackMetadataMatcher(mockOrchestrator.Object);
+            var results = await matcher.FindMatchesForTrackAsync(untaggedTrack);
+
+            Assert.Equal("Money", capturedSearchTitle);
+            Assert.Equal("Pink Floyd", capturedSearchArtist);
+            Assert.Single(results);
+            Assert.Equal("mb-recovered", results[0].ExternalIds.MusicBrainzId);
+        }
+        finally
+        {
+            if (File.Exists(tempAudioFile))
+            {
+                try { File.Delete(tempAudioFile); } catch { }
+            }
+        }
+    }
+}

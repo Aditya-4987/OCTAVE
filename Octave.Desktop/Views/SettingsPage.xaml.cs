@@ -11,12 +11,16 @@ namespace Octave_Desktop.Views;
 public sealed partial class SettingsPage : Page
 {
     public ShellViewModel ViewModel { get; }
+    public ExternalDataSettingsViewModel ExternalSettings { get; }
 
     public Visibility BoolToVisibility(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility BoolToVisibilityInverted(bool value) => value ? Visibility.Collapsed : Visibility.Visible;
+    public bool BoolToInverted(bool value) => !value;
 
     public SettingsPage()
     {
         ViewModel = App.Services.GetRequiredService<ShellViewModel>();
+        ExternalSettings = App.Services.GetRequiredService<ExternalDataSettingsViewModel>();
         InitializeComponent();
     }
 
@@ -24,6 +28,46 @@ public sealed partial class SettingsPage : Page
     {
         base.OnNavigatedTo(e);
         await ViewModel.LoadFoldersAsync();
+        await ExternalSettings.InitializeAsync();
+    }
+
+    private void SettingToggled(object sender, RoutedEventArgs e)
+    {
+        _ = ExternalSettings.SaveCommand.ExecuteAsync(null);
+    }
+
+    private void SettingSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        _ = ExternalSettings.SaveCommand.ExecuteAsync(null);
+    }
+
+    private void SettingSliderChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        _ = ExternalSettings.SaveCommand.ExecuteAsync(null);
+    }
+
+    private void SettingCheckBoxClicked(object sender, RoutedEventArgs e)
+    {
+        _ = ExternalSettings.SaveCommand.ExecuteAsync(null);
+    }
+
+    private void TheAudioDbPasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
+    {
+        if (sender is PasswordBox pb)
+        {
+            ExternalSettings.TheAudioDbApiKey = pb.Password;
+            _ = ExternalSettings.SaveCommand.ExecuteAsync(null);
+        }
+    }
+
+    private async void OpenLibraryEnrichment_Click(object sender, RoutedEventArgs e)
+    {
+        var vm = App.Services.GetRequiredService<LibraryEnrichmentViewModel>();
+        var dialog = new Controls.LibraryEnrichmentDialog(vm)
+        {
+            XamlRoot = this.XamlRoot
+        };
+        await dialog.ShowAsync();
     }
 
     private async void AddFolder_Click(object sender, RoutedEventArgs e)

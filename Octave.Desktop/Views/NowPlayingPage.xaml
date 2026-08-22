@@ -41,15 +41,16 @@
 
                 <!-- Album Art Panel -->
                 <np:AlbumArtPanel Grid.Column="0"
-                                 x:Name="AlbumPanelControl"
-                                 HorizontalAlignment="Center"
-                                 VerticalAlignment="Center"
-                                 TrackTitle="{x:Bind ViewModel.TrackTitle, Mode=OneWay}"
-                                 ArtistName="{x:Bind ViewModel.ArtistName, Mode=OneWay}"
-                                 AlbumTitle="{x:Bind ViewModel.AlbumTitle, Mode=OneWay}"
-                                 ArtworkUrl="{x:Bind ViewModel.CurrentArtworkUrl, Mode=OneWay}"
-                                 IsPlaying="{x:Bind ViewModel.IsPlaying, Mode=OneWay}"
-                                 PlayPauseRequested="AlbumPanelControl_PlayPauseRequested">
+                                  x:Name="AlbumPanelControl"
+                                  HorizontalAlignment="Center"
+                                  VerticalAlignment="Center"
+                                  SizeChanged="AlbumPanelControl_SizeChanged"
+                                  TrackTitle="{x:Bind ViewModel.TrackTitle, Mode=OneWay}"
+                                  ArtistName="{x:Bind ViewModel.ArtistName, Mode=OneWay}"
+                                  AlbumTitle="{x:Bind ViewModel.AlbumTitle, Mode=OneWay}"
+                                  ArtworkUrl="{x:Bind ViewModel.CurrentArtworkUrl, Mode=OneWay}"
+                                  IsPlaying="{x:Bind ViewModel.IsPlaying, Mode=OneWay}"
+                                  PlayPauseRequested="AlbumPanelControl_PlayPauseRequested">
                     <np:AlbumArtPanel.RenderTransform>
                         <TranslateTransform x:Name="AlbumPanelTransform" />
                     </np:AlbumArtPanel.RenderTransform>
@@ -58,6 +59,9 @@
                 <!-- Lyrics Panel -->
                 <np:LyricsPanel Grid.Column="1"
                                 x:Name="LyricsPanelControl"
+                                VerticalAlignment="Stretch"
+                                MinHeight="440"
+                                MaxHeight="540"
                                 State="{x:Bind ViewModel.LyricsState, Mode=OneWay}"
                                 SyncedLines="{x:Bind ViewModel.SyncedLines, Mode=OneWay}"
                                 UnsyncedText="{x:Bind ViewModel.UnsyncedText, Mode=OneWay}"

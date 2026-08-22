@@ -136,10 +136,48 @@ public class SqliteDbContext
                 FOREIGN KEY(TrackId) REFERENCES Tracks(Id) ON DELETE CASCADE
             ) STRICT;
 
+            CREATE TABLE IF NOT EXISTS ExternalDataCache (
+                CacheKey TEXT PRIMARY KEY,
+                DataJson TEXT NOT NULL,
+                TypeName TEXT NOT NULL,
+                CreatedAt INTEGER NOT NULL,
+                ExpiresAt INTEGER NOT NULL
+            ) STRICT;
+
+            CREATE TABLE IF NOT EXISTS AppSettings (
+                Key TEXT PRIMARY KEY,
+                Value TEXT NOT NULL
+            ) STRICT;
+
+            CREATE TABLE IF NOT EXISTS LibraryEnrichmentSessions (
+                SessionId TEXT PRIMARY KEY,
+                StartedAt INTEGER NOT NULL,
+                CompletedAt INTEGER,
+                IsDryRun INTEGER NOT NULL CHECK(IsDryRun IN (0, 1)),
+                TotalTracks INTEGER NOT NULL
+            ) STRICT;
+
+            CREATE TABLE IF NOT EXISTS LibraryEnrichmentState (
+                TrackId TEXT PRIMARY KEY,
+                SessionId TEXT NOT NULL,
+                Status INTEGER NOT NULL,
+                Confidence REAL NOT NULL DEFAULT 0.0,
+                HardGatesPassed INTEGER NOT NULL CHECK(HardGatesPassed IN (0, 1)),
+                PlanJson TEXT,
+                CandidatesJson TEXT,
+                UpdatedAt INTEGER NOT NULL,
+                FOREIGN KEY(TrackId) REFERENCES Tracks(Id) ON DELETE CASCADE
+            ) STRICT;
+
             CREATE TABLE IF NOT EXISTS SchemaVersion (
                 Version INTEGER PRIMARY KEY,
                 AppliedAt INTEGER NOT NULL
             ) STRICT;
+
+            CREATE INDEX IF NOT EXISTS idx_enrichstate_status ON LibraryEnrichmentState(Status);
+            CREATE INDEX IF NOT EXISTS idx_enrichstate_session ON LibraryEnrichmentState(SessionId);
+
+            CREATE INDEX IF NOT EXISTS idx_extcache_expires ON ExternalDataCache(ExpiresAt);
 
             CREATE INDEX IF NOT EXISTS idx_tracks_artist ON Tracks(ArtistId);
             CREATE INDEX IF NOT EXISTS idx_tracks_album ON Tracks(AlbumId);
@@ -1929,5 +1967,270 @@ public class SqliteDbContext
             }
         }
         return string.Join(" AND ", terms);
+    }
+
+    // =================================================================
+    // EXTERNAL DATA L2 PERSISTENT CACHE
+    // =================================================================
+
+    public async Task<string?> GetCachedExternalDataAsync(string cacheKey, bool allowStale = false)
+    {
+        if (string.IsNullOrWhiteSpace(cacheKey)) return null;
+
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT DataJson, ExpiresAt FROM ExternalDataCache WHERE CacheKey = @key LIMIT 1;";
+        cmd.Parameters.Add(new SqliteParameter("@key", cacheKey));
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        if (await reader.ReadAsync())
+        {
+            var dataJson = reader.GetString(0);
+            var expiresAt = reader.GetInt64(1);
+            long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+            if (!allowStale && expiresAt > 0 && expiresAt <= now)
+            {
+                return null;
+            }
+
+            return dataJson;
+        }
+
+        return null;
+    }
+
+    public async Task<(string DataJson, string TypeName, long CreatedAt, long ExpiresAt)?> GetCachedExternalDataRecordAsync(string cacheKey)
+    {
+        if (string.IsNullOrWhiteSpace(cacheKey)) return null;
+
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT DataJson, TypeName, CreatedAt, ExpiresAt FROM ExternalDataCache WHERE CacheKey = @key LIMIT 1;";
+        cmd.Parameters.Add(new SqliteParameter("@key", cacheKey));
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        if (await reader.ReadAsync())
+        {
+            return (
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetInt64(2),
+                reader.GetInt64(3)
+            );
+        }
+
+        return null;
+    }
+
+    public async Task SetCachedExternalDataAsync(string cacheKey, string dataJson, string typeName, long createdAt, long expiresAt)
+    {
+        if (string.IsNullOrWhiteSpace(cacheKey) || string.IsNullOrWhiteSpace(dataJson)) return;
+
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            INSERT INTO ExternalDataCache (CacheKey, DataJson, TypeName, CreatedAt, ExpiresAt)
+            VALUES (@key, @data, @typeName, @created, @expires)
+            ON CONFLICT(CacheKey) DO UPDATE SET
+                DataJson = excluded.DataJson,
+                TypeName = excluded.TypeName,
+                CreatedAt = excluded.CreatedAt,
+                ExpiresAt = excluded.ExpiresAt;";
+
+        cmd.Parameters.Add(new SqliteParameter("@key", cacheKey));
+        cmd.Parameters.Add(new SqliteParameter("@data", dataJson));
+        cmd.Parameters.Add(new SqliteParameter("@typeName", typeName));
+        cmd.Parameters.Add(new SqliteParameter("@created", createdAt));
+        cmd.Parameters.Add(new SqliteParameter("@expires", expiresAt));
+
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task RemoveCachedExternalDataAsync(string cacheKey)
+    {
+        if (string.IsNullOrWhiteSpace(cacheKey)) return;
+
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM ExternalDataCache WHERE CacheKey = @key;";
+        cmd.Parameters.Add(new SqliteParameter("@key", cacheKey));
+
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task ClearExpiredCachedExternalDataAsync()
+    {
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM ExternalDataCache WHERE ExpiresAt > 0 AND ExpiresAt <= @now;";
+        cmd.Parameters.Add(new SqliteParameter("@now", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task ClearAllCachedExternalDataAsync()
+    {
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM ExternalDataCache;";
+
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task<string?> GetSettingAsync(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return null;
+
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT Value FROM AppSettings WHERE Key = @key;";
+        cmd.Parameters.Add(new SqliteParameter("@key", key));
+
+        var result = await cmd.ExecuteScalarAsync();
+        return result != null && result != DBNull.Value ? result.ToString() : null;
+    }
+
+    public async Task SetSettingAsync(string key, string value)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return;
+
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            INSERT INTO AppSettings (Key, Value) VALUES (@key, @val)
+            ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value;";
+        cmd.Parameters.Add(new SqliteParameter("@key", key));
+        cmd.Parameters.Add(new SqliteParameter("@val", value ?? string.Empty));
+
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task<Dictionary<string, string>> GetAllSettingsAsync()
+    {
+        var settings = new Dictionary<string, string>();
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT Key, Value FROM AppSettings;";
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            string key = reader.GetString(0);
+            string val = reader.GetString(1);
+            settings[key] = val;
+        }
+
+        return settings;
+    }
+
+    public async Task SaveEnrichmentSessionAsync(string sessionId, long startedAt, long? completedAt, bool isDryRun, int totalTracks)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId)) return;
+
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            INSERT INTO LibraryEnrichmentSessions (SessionId, StartedAt, CompletedAt, IsDryRun, TotalTracks)
+            VALUES (@sid, @started, @completed, @dry, @total)
+            ON CONFLICT(SessionId) DO UPDATE SET
+                CompletedAt = excluded.CompletedAt,
+                TotalTracks = excluded.TotalTracks;";
+
+        cmd.Parameters.Add(new SqliteParameter("@sid", sessionId));
+        cmd.Parameters.Add(new SqliteParameter("@started", startedAt));
+        cmd.Parameters.Add(new SqliteParameter("@completed", (object?)completedAt ?? DBNull.Value));
+        cmd.Parameters.Add(new SqliteParameter("@dry", isDryRun ? 1 : 0));
+        cmd.Parameters.Add(new SqliteParameter("@total", totalTracks));
+
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task SetEnrichmentStateRecordAsync(
+        string trackId,
+        string sessionId,
+        int status,
+        double confidence,
+        bool hardGatesPassed,
+        string? planJson,
+        string? candidatesJson)
+    {
+        if (string.IsNullOrWhiteSpace(trackId)) return;
+
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            INSERT INTO LibraryEnrichmentState (TrackId, SessionId, Status, Confidence, HardGatesPassed, PlanJson, CandidatesJson, UpdatedAt)
+            VALUES (@tid, @sid, @status, @conf, @gates, @plan, @cands, @now)
+            ON CONFLICT(TrackId) DO UPDATE SET
+                SessionId = excluded.SessionId,
+                Status = excluded.Status,
+                Confidence = excluded.Confidence,
+                HardGatesPassed = excluded.HardGatesPassed,
+                PlanJson = excluded.PlanJson,
+                CandidatesJson = excluded.CandidatesJson,
+                UpdatedAt = excluded.UpdatedAt;";
+
+        cmd.Parameters.Add(new SqliteParameter("@tid", trackId));
+        cmd.Parameters.Add(new SqliteParameter("@sid", sessionId ?? string.Empty));
+        cmd.Parameters.Add(new SqliteParameter("@status", status));
+        cmd.Parameters.Add(new SqliteParameter("@conf", confidence));
+        cmd.Parameters.Add(new SqliteParameter("@gates", hardGatesPassed ? 1 : 0));
+        cmd.Parameters.Add(new SqliteParameter("@plan", (object?)planJson ?? DBNull.Value));
+        cmd.Parameters.Add(new SqliteParameter("@cands", (object?)candidatesJson ?? DBNull.Value));
+        cmd.Parameters.Add(new SqliteParameter("@now", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task<(int Status, double Confidence, bool HardGatesPassed, string? PlanJson, string? CandidatesJson)?> GetEnrichmentStateRecordAsync(string trackId)
+    {
+        if (string.IsNullOrWhiteSpace(trackId)) return null;
+
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT Status, Confidence, HardGatesPassed, PlanJson, CandidatesJson FROM LibraryEnrichmentState WHERE TrackId = @tid;";
+        cmd.Parameters.Add(new SqliteParameter("@tid", trackId));
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        if (await reader.ReadAsync())
+        {
+            int status = reader.GetInt32(0);
+            double conf = reader.GetDouble(1);
+            bool gates = reader.GetInt32(2) == 1;
+            string? planJson = !reader.IsDBNull(3) ? reader.GetString(3) : null;
+            string? candsJson = !reader.IsDBNull(4) ? reader.GetString(4) : null;
+            return (status, conf, gates, planJson, candsJson);
+        }
+
+        return null;
+    }
+
+    public async Task<List<(string TrackId, string? PlanJson, string? CandidatesJson)>> GetEnrichmentRecordsByStatusAsync(int status)
+    {
+        var results = new List<(string TrackId, string? PlanJson, string? CandidatesJson)>();
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT TrackId, PlanJson, CandidatesJson FROM LibraryEnrichmentState WHERE Status = @status ORDER BY UpdatedAt DESC;";
+        cmd.Parameters.Add(new SqliteParameter("@status", status));
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            string tid = reader.GetString(0);
+            string? plan = !reader.IsDBNull(1) ? reader.GetString(1) : null;
+            string? cands = !reader.IsDBNull(2) ? reader.GetString(2) : null;
+            results.Add((tid, plan, cands));
+        }
+
+        return results;
+    }
+
+    public async Task ClearEnrichmentStateAsync()
+    {
+        using var conn = CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM LibraryEnrichmentState WHERE Status != 8;"; // Preserves 8 (NeverAskAgain)
+        await cmd.ExecuteNonQueryAsync();
     }
 }

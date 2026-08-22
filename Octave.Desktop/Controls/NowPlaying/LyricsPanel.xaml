@@ -5,14 +5,16 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:models="using:Octave.Core.Models"
-    mc:Ignorable="d">
+    mc:Ignorable="d"
+    VerticalAlignment="Stretch">
 
     <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
             BorderBrush="#25FFFFFF"
             BorderThickness="1"
             CornerRadius="16"
-            Padding="24">
-        <Grid>
+            Padding="24"
+            VerticalAlignment="Stretch">
+        <Grid VerticalAlignment="Stretch">
             <!-- Loading State -->
             <StackPanel x:Name="LoadingContainer" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="12" Visibility="Collapsed">
                 <ProgressRing IsActive="True" Width="36" Height="36" />
@@ -26,7 +28,11 @@
             </StackPanel>
 
             <!-- Unsynced Lyrics View -->
-            <ScrollViewer x:Name="UnsyncedScrollViewer" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
+            <ScrollViewer x:Name="UnsyncedScrollViewer"
+                          VerticalScrollBarVisibility="Auto"
+                          VerticalScrollMode="Enabled"
+                          HorizontalScrollMode="Disabled"
+                          Visibility="Collapsed">
                 <TextBlock x:Name="UnsyncedTextBlock"
                            FontSize="18"
                            LineHeight="30"
@@ -34,12 +40,15 @@
                            TextWrapping="Wrap"/>
             </ScrollViewer>
 
-            <!-- Synced Lyrics View (Virtualized via ListView) -->
+            <!-- Synced Lyrics View (Virtualized via ListView with bounded scrolling) -->
             <ListView x:Name="SyncedListView"
                       SelectionMode="None"
                       IsItemClickEnabled="False"
                       Padding="0,20,0,20"
                       ShowsScrollingPlaceholders="False"
+                      ScrollViewer.VerticalScrollBarVisibility="Auto"
+                      ScrollViewer.VerticalScrollMode="Enabled"
+                      ScrollViewer.HorizontalScrollMode="Disabled"
                       Visibility="Collapsed">
                 <ListView.ItemTemplate>
                     <DataTemplate x:DataType="models:LyricLine">
