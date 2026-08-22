@@ -26,7 +26,10 @@ public class ExternalDataSettings
     public bool TheAudioDbEnabled { get; set; } = true;
 
     // API Credentials
-    public string TheAudioDbApiKey { get; set; } = "2";
+    // INT-07: default empty — the shipped "2" placeholder read as a real credential
+    // and silently enabled TheAudioDB artist lookups. (The public test key "2" is
+    // still offered as a hint in the Settings UI.)
+    public string TheAudioDbApiKey { get; set; } = "";
 
     // Caching & Network
     public bool UseCachedDataOffline { get; set; } = true;

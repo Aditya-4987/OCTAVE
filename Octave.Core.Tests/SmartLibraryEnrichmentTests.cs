@@ -625,4 +625,304 @@ public class SmartLibraryEnrichmentTests : IDisposable
         Assert.Equal((int)EnrichmentTrackStatus.SafeReadyToApply, persisted.Value.Status);
         Assert.True(persisted.Value.HardGatesPassed);
     }
+
+    // =================================================================
+    // 11. WRITE-POLICY SETTINGS (INT-02 / SLE-02 / INT-03 — Batch 3)
+    // =================================================================
+
+    private const EnrichmentActions AllMetadataTagWrites =
+        EnrichmentActions.WriteTitle | EnrichmentActions.WriteArtist | EnrichmentActions.WriteAlbum |
+        EnrichmentActions.WriteGenre | EnrichmentActions.WriteYear | EnrichmentActions.WriteTrackNumber |
+        EnrichmentActions.WriteDiscNumber;
+
+    private async Task<(SmartLibraryEnrichmentService Service, ExternalDataSettings Settings)> CreateServiceWithDefaultsAsync(
+        ITrackMetadataMatcher matcher,
+        IArtistEnrichmentService? artistService = null)
+    {
+        var rateRegistry = new ProviderRateLimiterRegistry();
+        var httpClient = new HttpClient(new MockHttpMessageHandler());
+        var httpService = new HttpService(rateRegistry, httpClient);
+        var settingsService = new ExternalDataSettingsService(_dbContext, httpService, new TheAudioDbOptions());
+        await settingsService.LoadSettingsAsync();
+
+        var service = new SmartLibraryEnrichmentService(
+            _dbContext,
+            matcher,
+            new Mock<ITrackMetadataEditor>().Object,
+            new Mock<IExternalArtworkOrchestrator>().Object,
+            artistService ?? new Mock<IArtistEnrichmentService>().Object,
+            new Mock<IOnlineLyricsOrchestrator>().Object,
+            settingsService,
+            new Mock<ILibraryService>().Object,
+            _artworkCacheManager,
+            httpService);
+
+        return (service, settingsService.CurrentSettings);
+    }
+
+    // Local fields are gate-clean (title/artist/album identical to the candidate) but
+    // carry a REAL year and a MISSING genre — so genre exercises fill-missing while
+    // year exercises overwrite-permission without tripping any safety gate.
+    private async Task<Track> CreateGateCleanTrackAsync(string fileName)
+    {
+        string filePath = CreateTestMp3(fileName, "Fix You", "Coldplay", "Parachutes", 1999, 4);
+        var track = new Track("t_" + fileName, "Fix You", "a1", "Coldplay", "alb1", "Parachutes", 310.0, filePath, "Local", 4, 1999, DateTime.UtcNow);
+        await _dbContext.UpsertTrackAsync(track);
+        return track;
+    }
+
+    private static TrackMatchCandidate CreateGateCleanCandidate() =>
+        new("MusicBrainz",
+            new ExternalIds(MusicBrainzId: "mb_policy_1"),
+            0.95,
+            "Exact match",
+            new ExternalTrackMetadata("Fix You", "Coldplay", "Parachutes", 2005, "Rock", 4, 2, 310.0, null,
+                new ExternalIds(MusicBrainzId: "mb_policy_1")));
+
+    private static ITrackMetadataMatcher MatcherReturning(TrackMatchCandidate candidate)
+    {
+        var mockMatcher = new Mock<ITrackMetadataMatcher>();
+        mockMatcher.Setup(m => m.FindMatchesForTrackAsync(It.IsAny<Track>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { candidate });
+        return mockMatcher.Object;
+    }
+
+    [Fact]
+    public async Task WritePolicy_AutoFillMissingMetadataOff_ProposesNoMetadataTagWrites()
+    {
+        // INT-02 regression: the master autofill toggle (default false) used to do
+        // nothing — scans wrote tag text even with it off.
+        var track = await CreateGateCleanTrackAsync("policy_autofill_off.mp3");
+        var (service, settings) = await CreateServiceWithDefaultsAsync(MatcherReturning(CreateGateCleanCandidate()));
+        Assert.False(settings.AutoFillMissingMetadata); // guard: default really is off
+
+        var plan = await service.BuildPlanForTrackAsync(track, settings);
+
+        Assert.Equal(EnrichmentTrackStatus.SafeReadyToApply, plan.Status);
+        Assert.Equal(EnrichmentActions.None, plan.PlannedActions & AllMetadataTagWrites);
+    }
+
+    [Fact]
+    public async Task WritePolicy_NeverWriteAutomatically_SuppressesWritesEvenWhenAutoFillOn()
+    {
+        var track = await CreateGateCleanTrackAsync("policy_never.mp3");
+        var (service, defaults) = await CreateServiceWithDefaultsAsync(MatcherReturning(CreateGateCleanCandidate()));
+        var settings = defaults.Clone();
+        settings.AutoFillMissingMetadata = true;
+        settings.WritePolicy = MetadataWritePolicy.NeverWriteAutomatically;
+
+        var plan = await service.BuildPlanForTrackAsync(track, settings);
+
+        Assert.Equal(EnrichmentActions.None, plan.PlannedActions & AllMetadataTagWrites);
+    }
+
+    [Fact]
+    public async Task WritePolicy_FillMissing_FillsGenreButNeverOverwritesRealYear()
+    {
+        // Default policy + explicit replace permission: permission alone is not
+        // sufficient under a fill-missing policy.
+        var track = await CreateGateCleanTrackAsync("policy_fill_missing.mp3");
+        var (service, defaults) = await CreateServiceWithDefaultsAsync(MatcherReturning(CreateGateCleanCandidate()));
+        var settings = defaults.Clone();
+        settings.AutoFillMissingMetadata = true;
+        settings.ScanOnlyMissingMetadata = false; // let the write policy itself decide
+        settings.ReplaceExistingMetadata = true;
+
+        var plan = await service.BuildPlanForTrackAsync(track, settings);
+
+        // Genre is missing → filled. The fixture tag carries no disc number → filled
+        // from the candidate too. The real year (1999) is untouched — the point.
+        Assert.Equal(EnrichmentActions.WriteGenre | EnrichmentActions.WriteDiscNumber, plan.PlannedActions & AllMetadataTagWrites);
+        Assert.Equal("Rock", plan.ProposedUpdate?.Genre);
+    }
+
+    [Fact]
+    public async Task WritePolicy_AlwaysPreferOnline_WithReplacePermission_OverwritesRealYear()
+    {
+        var track = await CreateGateCleanTrackAsync("policy_prefer_online.mp3");
+        var (service, defaults) = await CreateServiceWithDefaultsAsync(MatcherReturning(CreateGateCleanCandidate()));
+        var settings = defaults.Clone();
+        settings.AutoFillMissingMetadata = true;
+        settings.ScanOnlyMissingMetadata = false;
+        settings.ReplaceExistingMetadata = true;
+        settings.WritePolicy = MetadataWritePolicy.AlwaysPreferOnline;
+
+        var plan = await service.BuildPlanForTrackAsync(track, settings);
+
+        // Minimal-diff: only fields whose candidate value actually differs from the
+        // file (year 1999→2005, genre missing→Rock, disc missing→2) are flagged —
+        // identical title/artist/album/track-number values are not restamped.
+        Assert.Equal(EnrichmentActions.WriteYear | EnrichmentActions.WriteGenre | EnrichmentActions.WriteDiscNumber,
+            plan.PlannedActions & AllMetadataTagWrites);
+        Assert.Equal(2005, plan.ProposedUpdate?.Year);
+    }
+
+    [Fact]
+    public async Task WritePolicy_OverwritePolicies_WithoutReplacePermission_StillFillMissingOnly()
+    {
+        var track = await CreateGateCleanTrackAsync("policy_no_replace_perm.mp3");
+        var (service, defaults) = await CreateServiceWithDefaultsAsync(MatcherReturning(CreateGateCleanCandidate()));
+        var settings = defaults.Clone();
+        settings.AutoFillMissingMetadata = true;
+        settings.ScanOnlyMissingMetadata = false;
+        settings.WritePolicy = MetadataWritePolicy.AlwaysPreferOnline;
+        // ReplaceExistingMetadata stays false
+
+        var plan = await service.BuildPlanForTrackAsync(track, settings);
+
+        // Fill-missing only: genre + disc (both missing locally); the real year and
+        // every identical-value field stay untouched without replace permission.
+        Assert.Equal(EnrichmentActions.WriteGenre | EnrichmentActions.WriteDiscNumber, plan.PlannedActions & AllMetadataTagWrites);
+    }
+
+    [Fact]
+    public async Task DiscNumber_ExistingLocalValue_NotRestampedByFillMissingPolicy()
+    {
+        // New finding (this session): the disc write compared against nothing at all
+        // (Track has no DiscNumber column), so every scan restamped existing disc
+        // numbers whenever the candidate carried one. The fix reads the tag value.
+        string filePath = CreateTestMp3("disc_existing.mp3", "Fix You", "Coldplay", "Parachutes", 1999, 4);
+        using (var tagFile = TagLib.File.Create(filePath))
+        {
+            tagFile.Tag.Disc = 2;
+            tagFile.Save();
+        }
+        var track = new Track("t_disc_existing", "Fix You", "a1", "Coldplay", "alb1", "Parachutes", 310.0, filePath, "Local", 4, 1999, DateTime.UtcNow);
+        await _dbContext.UpsertTrackAsync(track);
+
+        var (service, defaults) = await CreateServiceWithDefaultsAsync(MatcherReturning(CreateGateCleanCandidate()));
+        var settings = defaults.Clone();
+        settings.AutoFillMissingMetadata = true; // fill-missing policy active
+        settings.ScanOnlyMissingMetadata = false; // isolate the disc decision from the completeness filter
+
+        var plan = await service.BuildPlanForTrackAsync(track, settings);
+
+        Assert.Equal(EnrichmentActions.None, plan.PlannedActions & EnrichmentActions.WriteDiscNumber);
+    }
+
+    [Fact]
+    public async Task DiscNumber_MissingLocalValue_IsFilledWhenAutoFillOn()
+    {
+        var track = await CreateGateCleanTrackAsync("disc_missing.mp3"); // no disc on tag
+        var (service, defaults) = await CreateServiceWithDefaultsAsync(MatcherReturning(CreateGateCleanCandidate()));
+        var settings = defaults.Clone();
+        settings.AutoFillMissingMetadata = true;
+        settings.ScanOnlyMissingMetadata = false;
+
+        var plan = await service.BuildPlanForTrackAsync(track, settings);
+
+        Assert.Equal(EnrichmentActions.WriteDiscNumber, plan.PlannedActions & EnrichmentActions.WriteDiscNumber);
+        Assert.Equal(2, plan.ProposedUpdate?.DiscNumber);
+    }
+
+    [Fact]
+    public async Task ScanOnlyMissingMetadata_On_CompleteTracksNotRewritten_EvenUnderReplacePolicies()
+    {
+        // SLE-02: ScanOnlyMissingMetadata was computed but never read. With it ON
+        // (default), a fully-tagged track must not be rewritten even when both
+        // replacement permissions are granted.
+        string filePath = CreateTestMp3("scan_only_meta_on.mp3", "Fix You", "Coldplay", "Parachutes", 1999, 4);
+        using (var tagFile = TagLib.File.Create(filePath))
+        {
+            tagFile.Tag.Genres = new[] { "Britpop" };
+            tagFile.Save();
+        }
+        var track = new Track("t_scan_only_on", "Fix You", "a1", "Coldplay", "alb1", "Parachutes", 310.0, filePath, "Local", 4, 1999, DateTime.UtcNow, "Britpop");
+        await _dbContext.UpsertTrackAsync(track);
+
+        var (service, defaults) = await CreateServiceWithDefaultsAsync(MatcherReturning(CreateGateCleanCandidate()));
+        var settings = defaults.Clone();
+        settings.AutoFillMissingMetadata = true;
+        settings.ReplaceExistingMetadata = true;
+        settings.WritePolicy = MetadataWritePolicy.AlwaysPreferOnline;
+        Assert.True(settings.ScanOnlyMissingMetadata); // guard: default really is on
+
+        var plan = await service.BuildPlanForTrackAsync(track, settings);
+
+        Assert.Equal(EnrichmentActions.None, plan.PlannedActions & AllMetadataTagWrites);
+
+        // Turning the scan filter OFF widens consideration to complete tracks...
+        // Minimal-diff: only Britpop→Rock (genre), 1999→2005 (year) and the missing
+        // disc differ from the file; identical title/artist/album/track# are skipped.
+        settings.ScanOnlyMissingMetadata = false;
+        var widened = await service.BuildPlanForTrackAsync(track, settings);
+        Assert.Equal(EnrichmentActions.WriteYear | EnrichmentActions.WriteGenre | EnrichmentActions.WriteDiscNumber,
+            widened.PlannedActions & AllMetadataTagWrites);
+    }
+
+    [Fact]
+    public async Task ArtistGate_CompleteArtist_SkipsReenrichment_EvenWithTogglesOn()
+    {
+        // INT-03 regression: `(!IsArtistComplete || EnableArtistEnrichment)` was
+        // always-true because the toggle defaulted true — every scan re-enriched
+        // every already-complete artist.
+        string filePath = CreateTestMp3("artist_gate.mp3", "Fix You", "Coldplay", "Parachutes", 2000, 12);
+        var track = new Track("t_artist_gate", "Fix You", "art_cp_done", "Coldplay", "alb1", "Parachutes", 310.0, filePath, "Local", 12, 2000, DateTime.UtcNow);
+        await _dbContext.UpsertArtistAsync(new Artist("art_cp_done", "Coldplay", "Bio exists", "photo.jpg", true));
+        await _dbContext.UpsertTrackAsync(track);
+
+        var candidate = new TrackMatchCandidate(
+            "MusicBrainz",
+            new ExternalIds("mb_ag_1", AdditionalIds: new Dictionary<string, string> { ["MusicBrainzArtistId"] = "mb_art_cp_done" }),
+            0.95,
+            "Exact match",
+            new ExternalTrackMetadata("Fix You", "Coldplay", "Parachutes", 2000, "Rock", 12, 2, 310.0, null,
+                new ExternalIds("mb_ag_1")));
+
+        var mockArtistService = new Mock<IArtistEnrichmentService>();
+
+        var (service, defaults) = await CreateServiceWithDefaultsAsync(MatcherReturning(candidate), mockArtistService.Object);
+        var settings = defaults.Clone();
+        settings.AutoDownloadMissingArtistImages = true;   // both toggles ON:
+        settings.EnableArtistEnrichment = true;            // the old gate still fired
+
+        var plan = await service.BuildPlanForTrackAsync(track, settings);
+
+        Assert.Equal(EnrichmentTrackStatus.SafeReadyToApply, plan.Status);
+        mockArtistService.Verify(a => a.GetEnrichedArtistAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        Assert.False(plan.PlannedActions.HasFlag(EnrichmentActions.EnrichArtistBioAndPhoto));
+    }
+
+    [Fact]
+    public async Task LyricsScan_ScanOnlyMissingLyricsOn_TrackWithLyrics_SkipsOnlineFetch()
+    {
+        // SLE-02: ScanOnlyMissingLyrics was computed but never read — lyrics were
+        // re-fetched for tracks that already had them regardless of the setting.
+        string filePath = CreateTestMp3("lyrics_scan.mp3", "Fix You", "Coldplay", "Parachutes", 2000, 7);
+        using (var tagFile = TagLib.File.Create(filePath))
+        {
+            tagFile.Tag.Lyrics = "Lights will guide you home";
+            tagFile.Save();
+        }
+        var track = new Track("t_lyrics_scan", "Fix You", "a1", "Coldplay", "alb1", "Parachutes", 310.0, filePath, "Local", 7, 2000, DateTime.UtcNow);
+        await _dbContext.UpsertTrackAsync(track);
+
+        var mockLyricsOrch = new Mock<IOnlineLyricsOrchestrator>();
+        var rateRegistry = new ProviderRateLimiterRegistry();
+        var httpService = new HttpService(rateRegistry, new HttpClient(new MockHttpMessageHandler()));
+        var settingsService = new ExternalDataSettingsService(_dbContext, httpService, new TheAudioDbOptions());
+        await settingsService.LoadSettingsAsync();
+
+        var service = new SmartLibraryEnrichmentService(
+            _dbContext,
+            MatcherReturning(CreateGateCleanCandidate()),
+            new Mock<ITrackMetadataEditor>().Object,
+            new Mock<IExternalArtworkOrchestrator>().Object,
+            new Mock<IArtistEnrichmentService>().Object,
+            mockLyricsOrch.Object,
+            settingsService,
+            new Mock<ILibraryService>().Object,
+            _artworkCacheManager,
+            httpService);
+
+        var settings = settingsService.CurrentSettings.Clone();
+        settings.EnableOnlineLyrics = true;
+
+        await service.BuildPlanForTrackAsync(track, settings); // ScanOnlyMissingLyrics=true (default)
+        mockLyricsOrch.Verify(l => l.FetchLyricsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<double?>(), It.IsAny<ExternalIds>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        settings.ScanOnlyMissingLyrics = false;
+        await service.BuildPlanForTrackAsync(track, settings);
+        mockLyricsOrch.Verify(l => l.FetchLyricsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<double?>(), It.IsAny<ExternalIds>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
 }

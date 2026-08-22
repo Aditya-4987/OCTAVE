@@ -64,7 +64,9 @@ public class ExternalDataSettingsTests : IDisposable
         Assert.True(settings.CoverArtArchiveEnabled);
         Assert.True(settings.TheAudioDbEnabled);
 
-        Assert.Equal("2", settings.TheAudioDbApiKey);
+        // INT-07: shipped placeholder "2" replaced by an empty default — the key is a
+        // user credential, not a built-in.
+        Assert.Equal("", settings.TheAudioDbApiKey);
         Assert.Equal(MetadataWritePolicy.WriteOnlyWhenMissingAndHighConfidence, settings.WritePolicy);
 
         Assert.False(settings.AutoFillMissingMetadata);
@@ -221,6 +223,47 @@ public class ExternalDataSettingsTests : IDisposable
     }
 
     [Fact]
+    public async Task UpdateSettings_ClearingApiKey_AlsoClearsLiveOptionsSingleton()
+    {
+        // INT-07: SyncOptionsWithSettings used to assign only non-empty keys, so a
+        // key cleared in the UI kept working in the options singleton until restart.
+        var httpClient = new HttpClient(new MockHttpMessageHandler());
+        var httpService = new HttpService(new ProviderRateLimiterRegistry(), httpClient);
+        var tadbOptions = new TheAudioDbOptions();
+        var settingsService = new ExternalDataSettingsService(_dbContext, httpService, tadbOptions);
+        await settingsService.LoadSettingsAsync();
+
+        var withKey = settingsService.CurrentSettings;
+        withKey.TheAudioDbApiKey = "live_key_123";
+        await settingsService.UpdateSettingsAsync(withKey);
+        Assert.Equal("live_key_123", tadbOptions.ApiKey);
+
+        var cleared = settingsService.CurrentSettings;
+        cleared.TheAudioDbApiKey = "";
+        await settingsService.UpdateSettingsAsync(cleared);
+
+        Assert.Equal(string.Empty, tadbOptions.ApiKey);
+    }
+
+    [Fact]
+    public async Task LoadSettingsAsync_PersistedOfflineOnlyMode_IsRestoredWithoutOpeningSettingsPage()
+    {
+        // INT-01 acceptance (service half): whatever App.OnLaunched loads at startup
+        // must be the persisted values, not model defaults.
+        var httpClient = new HttpClient(new MockHttpMessageHandler());
+        var httpService = new HttpService(new ProviderRateLimiterRegistry(), httpClient);
+        var writer = new ExternalDataSettingsService(_dbContext, httpService, new TheAudioDbOptions());
+        var offline = new ExternalDataSettings { OfflineOnlyMode = true };
+        await writer.UpdateSettingsAsync(offline);
+
+        // A fresh service instance simulates the next process launch.
+        var reader = new ExternalDataSettingsService(_dbContext, httpService, new TheAudioDbOptions());
+        await reader.LoadSettingsAsync();
+
+        Assert.True(reader.CurrentSettings.OfflineOnlyMode);
+    }
+
+    [Fact]
     public async Task TheAudioDb_UsesConfiguredApiKeyInRequests()
     {
         string? requestedUrl = null;
@@ -268,9 +311,17 @@ public class ExternalDataSettingsTests : IDisposable
         await settingsService.LoadSettingsAsync();
 
         var provider = new TheAudioDbArtistEnrichmentProvider(httpService, settingsService: settingsService);
-        Assert.True(provider.IsEnabled);
+
+        // INT-07: the shipped "2" placeholder is gone, so an untouched install has no
+        // key at all and the provider must start disabled.
+        Assert.False(provider.IsEnabled);
 
         var settings = settingsService.CurrentSettings;
+        settings.TheAudioDbApiKey = "temp_valid_key";
+        await settingsService.UpdateSettingsAsync(settings);
+        Assert.True(provider.IsEnabled);
+
+        // A blanked/whitespace key must disable it again (never just fall through).
         settings.TheAudioDbApiKey = "   ";
         await settingsService.UpdateSettingsAsync(settings);
 

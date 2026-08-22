@@ -195,6 +195,13 @@ public partial class App : Application
             await dbContext.InitializeAsync();
             System.Diagnostics.Debug.WriteLine("[Startup Diagnostics] Database Initialization: SUCCESS");
 
+            // INT-01: load persisted external-data settings BEFORE the watcher, queue
+            // restore, and first playback. Previously LoadSettingsAsync ran only when
+            // the Settings page was opened, so OfflineOnlyMode / provider toggles were
+            // silently replaced by model defaults (online) for the whole session.
+            await Services.GetRequiredService<Octave.Core.Services.External.Settings.IExternalDataSettingsService>().LoadSettingsAsync();
+            System.Diagnostics.Debug.WriteLine("[Startup Diagnostics] External Data Settings: LOADED");
+
             _ = InitializeWatcherAsync();
         }
         catch (Exception ex)
@@ -216,8 +223,17 @@ public partial class App : Application
 
         // Restore the previous session's queue AFTER the window is shown, so the
         // resume work never delays the initial UI boot (Milestone 4 gate).
+        // INT-05: observe faults instead of letting a transient DB hiccup vanish into
+        // an unobserved task as a silent no-restore.
         var queueService = Services.GetRequiredService<IQueueService>();
-        _ = queueService.RestoreAsync();
+        try
+        {
+            await queueService.RestoreAsync();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Startup Diagnostics] Queue restore failed: {ex.Message}");
+        }
     }
 
     private static async Task InitializeWatcherAsync()

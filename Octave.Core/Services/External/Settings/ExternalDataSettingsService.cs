@@ -68,6 +68,10 @@ public class ExternalDataSettingsService : IExternalDataSettingsService
 
         try
         {
+            // INT-06: this JSON — including the TheAudioDB key — is stored as PLAINTEXT
+            // in the local settings table. DPAPI encryption needs a Windows-specific
+            // TFM (Core targets plain net10.0); until then it is stated plainly rather
+            // than implied secure. Anyone with file access to octave.db can read it.
             string json = JsonSerializer.Serialize(_currentSettings, new JsonSerializerOptions { WriteIndented = false });
             await _dbContext.SetSettingAsync(SettingKey, json).ConfigureAwait(false);
         }
@@ -125,9 +129,9 @@ public class ExternalDataSettingsService : IExternalDataSettingsService
 
     private void SyncOptionsWithSettings(ExternalDataSettings settings)
     {
-        if (!string.IsNullOrWhiteSpace(settings.TheAudioDbApiKey))
-        {
-            _theAudioDbOptions.ApiKey = settings.TheAudioDbApiKey.Trim();
-        }
+        // INT-07: always assign — an empty incoming key must CLEAR the live option.
+        // The old guard kept a cleared key working in the options singleton until
+        // restart. (Providers gate on IsEnabled, which requires a non-empty key.)
+        _theAudioDbOptions.ApiKey = settings.TheAudioDbApiKey?.Trim() ?? string.Empty;
     }
 }

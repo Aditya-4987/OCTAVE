@@ -288,6 +288,10 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
         // candidate MBID, which can never match (dead gate).
         ExternalIds localIds = tagFile != null ? ExternalTagIds.Read(tagFile.Tag) : ExternalIds.Empty;
 
+        // Track has no DiscNumber column; read it from the tag so the disc write below
+        // can tell "missing" from "already set" like every other field.
+        int localDiscNumber = tagFile != null && tagFile.Tag.Disc > 0 ? (int)tagFile.Tag.Disc : 0;
+
         var albumRecord = await _dbContext.GetAlbumByIdAsync(track.AlbumId).ConfigureAwait(false);
         var artistRecord = await _dbContext.GetArtistByIdAsync(track.ArtistId).ConfigureAwait(false);
 
@@ -296,9 +300,11 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
 
         tagFile?.Dispose();
 
-        // Check if track needs enrichment based on active settings
+        // Check if track needs enrichment based on active settings. (SLE-02: these
+        // flags used to be computed and never read — the ScanOnlyMissing* toggles were
+        // dead. needsArtwork is intentionally absent: the artwork block below already
+        // encodes the safe intersection of its settings.)
         bool needsMetadata = settings.ScanOnlyMissingMetadata ? !completeness.IsMetadataComplete : true;
-        bool needsArtwork = settings.ScanOnlyMissingArtwork ? !completeness.IsArtworkComplete : true;
         bool needsLyrics = settings.ScanOnlyMissingLyrics ? !completeness.IsLyricsComplete : true;
 
         if (completeness.IsFullyComplete && !settings.ScanEntireLibrary)
@@ -337,51 +343,75 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
         var plannedActions = EnrichmentActions.None;
         var meta = topCandidate.Metadata;
 
+        // INT-02/SLE-02: honor the write-policy settings, which were previously read
+        // by nothing — AutoFillMissingMetadata (default false) did nothing, the
+        // WritePolicy dropdown was inert, and ReplaceExistingMetadata was ignored.
+        //  - AutoFillMissingMetadata is the master switch for automatic tag-text writes.
+        //  - needsMetadata (ScanOnlyMissingMetadata) decides whether complete tracks
+        //    are considered at all.
+        //  - NeverWriteAutomatically disables every automatic metadata write.
+        // External-ids writing stays governed solely by WriteExternalIdsToTags: ids are
+        // not user-visible metadata, and writing them is what enables future exact-ID
+        // matching (MATCH-01).
+        bool considerMetadata = settings.AutoFillMissingMetadata &&
+                                settings.WritePolicy != MetadataWritePolicy.NeverWriteAutomatically &&
+                                needsMetadata;
+        // Replacing a real (non-generic) local value additionally requires the explicit
+        // replace permission AND an overwrite-capable policy. Only SafeReadyToApply
+        // plans reach this code, so every write is already high-confidence and
+        // hard-gate-clean.
+        bool mayReplaceExisting = settings.ReplaceExistingMetadata &&
+                                  settings.WritePolicy is MetadataWritePolicy.WriteOnlyHighConfidence
+                                      or MetadataWritePolicy.AlwaysPreferOnline;
+
         string? newTitle = null;
-        if (IsMissingOrGeneric(track.Title) && !string.IsNullOrWhiteSpace(meta.Title))
+        if (considerMetadata && ShouldWriteField(IsMissingOrGeneric(track.Title), mayReplaceExisting, track.Title, meta.Title) && !string.IsNullOrWhiteSpace(meta.Title))
         {
             newTitle = meta.Title;
             plannedActions |= EnrichmentActions.WriteTitle;
         }
 
         string? newArtist = null;
-        if (IsMissingOrGeneric(track.ArtistName) && !string.IsNullOrWhiteSpace(meta.ArtistName))
+        if (considerMetadata && ShouldWriteField(IsMissingOrGeneric(track.ArtistName), mayReplaceExisting, track.ArtistName, meta.ArtistName) && !string.IsNullOrWhiteSpace(meta.ArtistName))
         {
             newArtist = meta.ArtistName;
             plannedActions |= EnrichmentActions.WriteArtist;
         }
 
         string? newAlbum = null;
-        if (IsMissingOrGeneric(track.AlbumTitle) && !string.IsNullOrWhiteSpace(meta.AlbumTitle))
+        if (considerMetadata && ShouldWriteField(IsMissingOrGeneric(track.AlbumTitle), mayReplaceExisting, track.AlbumTitle, meta.AlbumTitle) && !string.IsNullOrWhiteSpace(meta.AlbumTitle))
         {
             newAlbum = meta.AlbumTitle;
             plannedActions |= EnrichmentActions.WriteAlbum;
         }
 
         string? newGenre = null;
-        if (string.IsNullOrWhiteSpace(track.Genre) && !string.IsNullOrWhiteSpace(meta.Genre))
+        if (considerMetadata && ShouldWriteField(string.IsNullOrWhiteSpace(track.Genre), mayReplaceExisting, track.Genre, meta.Genre) && !string.IsNullOrWhiteSpace(meta.Genre))
         {
             newGenre = meta.Genre;
             plannedActions |= EnrichmentActions.WriteGenre;
         }
 
         int? newYear = null;
-        if (track.Year <= 0 && meta.Year.HasValue && meta.Year.Value > 0)
+        if (considerMetadata && ShouldWriteField(track.Year <= 0, mayReplaceExisting, track.Year, meta.Year.GetValueOrDefault()) && meta.Year.HasValue && meta.Year.Value > 0)
         {
             newYear = meta.Year.Value;
             plannedActions |= EnrichmentActions.WriteYear;
         }
 
         int? newTrackNum = null;
-        if (track.TrackNumber <= 0 && meta.TrackNumber.HasValue && meta.TrackNumber.Value > 0)
+        if (considerMetadata && ShouldWriteField(track.TrackNumber <= 0, mayReplaceExisting, track.TrackNumber, meta.TrackNumber.GetValueOrDefault()) && meta.TrackNumber.HasValue && meta.TrackNumber.Value > 0)
         {
             newTrackNum = meta.TrackNumber.Value;
             plannedActions |= EnrichmentActions.WriteTrackNumber;
         }
 
         int? newDiscNum = null;
-        if (meta.DiscNumber.HasValue && meta.DiscNumber.Value > 0)
+        if (considerMetadata && ShouldWriteField(localDiscNumber <= 0, mayReplaceExisting, localDiscNumber, meta.DiscNumber.GetValueOrDefault()) && meta.DiscNumber.HasValue && meta.DiscNumber.Value > 0)
         {
+            // Previously wrote whenever the candidate carried a disc number, with no
+            // local-value check at all (Track has no DiscNumber column) — every scan
+            // restamped existing disc numbers. Now compares against the tag value.
             newDiscNum = meta.DiscNumber.Value;
             plannedActions |= EnrichmentActions.WriteDiscNumber;
         }
@@ -394,6 +424,10 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
         }
 
         // Artwork Deduplication & Fetch
+        // SLE-02 note: deliberately NOT needs-flag gated. `!IsArtworkComplete ||
+        // ReplaceExistingArtwork` is the safe intersection of the artwork settings —
+        // with ScanOnlyMissingArtwork=false ("scan all") a needs-flag would fetch art
+        // for complete albums and overwrite artwork the user never permitted replacing.
         byte[]? artworkBytes = null;
         string? artworkMime = null;
         if ((!completeness.IsArtworkComplete || settings.ReplaceExistingArtwork) && settings.AutoDownloadMissingArtwork)
@@ -425,7 +459,10 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
         }
 
         // Artist Bio & Photo Deduplication
-        if ((!completeness.IsArtistComplete || settings.EnableArtistEnrichment) && settings.AutoDownloadMissingArtistImages)
+        // INT-03: was `(!IsArtistComplete || EnableArtistEnrichment)` — the right
+        // operand defaulted true, making the gate always-true so every scan re-enriched
+        // every artist. Intended logic: only incomplete artists, both toggles required.
+        if (!completeness.IsArtistComplete && settings.EnableArtistEnrichment && settings.AutoDownloadMissingArtistImages)
         {
             string? artistMbid = topCandidate.ExternalIds?.AdditionalIds != null && topCandidate.ExternalIds.AdditionalIds.TryGetValue("MusicBrainzArtistId", out var aid) ? aid : null;
             string artistKey = !string.IsNullOrWhiteSpace(artistMbid)
@@ -443,8 +480,9 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
         }
 
         // Lyrics Retrieval
+        // SLE-02: honor ScanOnlyMissingLyrics (needsLyrics was computed but never read).
         string? newLyrics = null;
-        if (!completeness.IsLyricsComplete && settings.EnableOnlineLyrics)
+        if (needsLyrics && settings.EnableOnlineLyrics)
         {
             try
             {
@@ -717,6 +755,18 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
         string t = text.Trim().ToLowerInvariant();
         return t == "unknown artist" || t == "unknown" || t == "track" || t.StartsWith("track ");
     }
+
+    // INT-02: a missing/generic local value is filled under every active policy;
+    // overwriting a real value additionally requires ReplaceExistingMetadata plus an
+    // overwrite-capable WritePolicy (see mayReplaceExisting at the call sites).
+    // Minimal-diff plans: even with replace permission, a candidate whose value
+    // already matches what the file stores must not be flagged as a write.
+    private static bool ShouldWriteField(bool localValueMissingOrGeneric, bool mayReplaceExisting, string? localValue, string? candidateValue) =>
+        (localValueMissingOrGeneric || mayReplaceExisting) &&
+        !string.Equals(localValue?.Trim(), candidateValue?.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    private static bool ShouldWriteField(bool localValueMissingOrGeneric, bool mayReplaceExisting, int localValue, int candidateValue) =>
+        (localValueMissingOrGeneric || mayReplaceExisting) && localValue != candidateValue;
 
     private static bool IsExactIdMatch(string? localId, string? candidateId) =>
         !string.IsNullOrWhiteSpace(localId) &&

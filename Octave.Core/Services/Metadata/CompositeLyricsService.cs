@@ -40,12 +40,16 @@ public class CompositeLyricsService : ILyricsService
         }
 
         // 2. Query online providers through orchestrator if local is unavailable
+        // ORC-02: pass the track's real identifiers instead of null — an MBID/ISRC
+        // from the file tags is the strongest match signal available here.
+        ExternalIds? trackIds = ExternalTagIds.TryReadFromFile(track.SourceUri);
+
         var onlineResult = await _onlineOrchestrator.FetchLyricsAsync(
             track.Title,
             track.ArtistName,
             track.AlbumTitle,
             track.DurationSeconds,
-            null,
+            trackIds,
             cancellationToken).ConfigureAwait(false);
 
         if (onlineResult.State == LyricsState.Synced || onlineResult.State == LyricsState.Unsynced)

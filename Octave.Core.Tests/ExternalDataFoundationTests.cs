@@ -210,6 +210,47 @@ public class ExternalDataFoundationTests : IDisposable
         Assert.Equal(LyricsState.Synced, cached.State);
     }
 
+    [Fact]
+    public async Task CompositeLyricsService_PassesTrackExternalIdsToOnlineOrchestrator()
+    {
+        // ORC-02 regression: the composite service always passed null externalIds,
+        // discarding the file's MBID/ISRC — the strongest match signal available.
+        byte[] minimalMp3 =
+        {
+            0x49, 0x44, 0x33, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0xFF, 0xFB, 0x90, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+        };
+        string audioFile = Path.Combine(_tempDir, "orc02_tagged.mp3");
+        File.WriteAllBytes(audioFile, minimalMp3);
+        using (var tagFile = TagLib.File.Create(audioFile))
+        {
+            tagFile.Tag.MusicBrainzTrackId = "mb-orc02-1";
+            tagFile.Save();
+        }
+
+        var mockProvider = new Mock<IExternalLyricsProvider>();
+        mockProvider.Setup(p => p.ProviderName).Returns("MockLrcLib");
+        mockProvider.Setup(p => p.IsEnabled).Returns(true);
+        mockProvider.Setup(p => p.Priority).Returns(1);
+        mockProvider.Setup(p => p.FetchLyricsAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<double?>(), It.IsAny<ExternalIds>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExternalLyricsResult("tr_orc02", LyricsState.Unsynced, null, "plain text", "MockLrcLib"));
+
+        var orchestrator = new OnlineLyricsOrchestrator(new[] { mockProvider.Object }, new TwoTierExternalDataCache(_dbContext));
+        var compositeService = new CompositeLyricsService(new LyricsService(), orchestrator);
+
+        var track = new Track("tr_orc02", "Some Song", "ar1", "Artist", "al1", "Album", 200, audioFile, "Local", 1, 2020, DateTime.UtcNow);
+        var result = await compositeService.GetLyricsAsync(track);
+
+        Assert.Equal(LyricsState.Unsynced, result.State);
+        mockProvider.Verify(p => p.FetchLyricsAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<double?>(),
+            It.Is<ExternalIds>(ids => ids != null && ids.MusicBrainzId == "mb-orc02-1"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     // =================================================================
     // 4. METADATA CANDIDATE SEARCH & RANKING TESTS
     // =================================================================
