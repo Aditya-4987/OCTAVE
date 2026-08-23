@@ -15,6 +15,11 @@ public partial class ExternalDataSettingsViewModel : ObservableObject
     private readonly Microsoft.UI.Dispatching.DispatcherQueue _dispatcher;
     private CancellationTokenSource? _testCts;
 
+    // VM-01: the handler is kept in a field so Cleanup() can detach it - the
+    // old inline lambda made unsubscribing impossible, leaking one VM (and its
+    // dispatcher closure) per visit to the Settings page.
+    private readonly EventHandler<ExternalDataSettings> _settingsChangedHandler;
+
     // Master & Feature Toggles
     [ObservableProperty]
     public partial bool EnableOnlineMetadata { get; set; } = true;
@@ -123,10 +128,23 @@ public partial class ExternalDataSettingsViewModel : ObservableObject
         _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
 
         LoadFromSettings(_settingsService.CurrentSettings);
-        _settingsService.SettingsChanged += (s, settings) =>
+        _settingsChangedHandler = (s, settings) =>
         {
             _dispatcher.TryEnqueue(() => LoadFromSettings(settings));
         };
+        _settingsService.SettingsChanged += _settingsChangedHandler;
+    }
+
+    // VM-01: invoked from SettingsPage.Unloaded - detaches the singleton's
+    // event and disposes any in-flight connection test so the transient VM can
+    // actually be collected on navigation away.
+    public void Cleanup()
+    {
+        _settingsService.SettingsChanged -= _settingsChangedHandler;
+
+        _testCts?.Cancel();
+        _testCts?.Dispose();
+        _testCts = null;
     }
 
     public async Task InitializeAsync()
@@ -253,7 +271,9 @@ public partial class ExternalDataSettingsViewModel : ObservableObject
     [RelayCommand]
     public async Task TestTheAudioDbConnectionAsync()
     {
+        // VM-09: dispose the replaced source, not just cancel it.
         _testCts?.Cancel();
+        _testCts?.Dispose();
         _testCts = new CancellationTokenSource();
         var ct = _testCts.Token;
 

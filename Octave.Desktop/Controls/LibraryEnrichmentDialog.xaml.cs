@@ -12,6 +12,10 @@ public sealed partial class LibraryEnrichmentDialog : ContentDialog
     {
         ViewModel = viewModel ?? throw new System.ArgumentNullException(nameof(viewModel));
         InitializeComponent();
+
+        // VM-02: the dialog owns the transient VM's lifetime - detach its
+        // singleton-service subscriptions when the dialog closes.
+        Closed += (s, e) => ViewModel.Cleanup();
     }
 
     public Visibility BoolToVisibility(bool value) => value ? Visibility.Visible : Visibility.Collapsed;

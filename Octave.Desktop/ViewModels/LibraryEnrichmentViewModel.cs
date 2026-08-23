@@ -106,6 +106,12 @@ public partial class ReviewItemViewModel : ObservableObject
             IsResolved = true;
             StatusText = "Skipped";
         }
+        catch (Exception ex)
+        {
+            // VM-07: symmetric with ApplyCandidateAsync - an unhandled throw here
+            // crashed the dialog's fire-and-forget command pipeline.
+            StatusText = $"Error: {ex.Message}";
+        }
         finally
         {
             IsProcessing = false;
@@ -122,6 +128,11 @@ public partial class ReviewItemViewModel : ObservableObject
             IsResolved = true;
             StatusText = "Excluded (Never Ask Again)";
         }
+        catch (Exception ex)
+        {
+            // VM-07: symmetric with ApplyCandidateAsync.
+            StatusText = $"Error: {ex.Message}";
+        }
         finally
         {
             IsProcessing = false;
@@ -133,6 +144,11 @@ public partial class LibraryEnrichmentViewModel : ObservableObject
 {
     private readonly ISmartLibraryEnrichmentService _enrichmentService;
     private readonly Microsoft.UI.Dispatching.DispatcherQueue _dispatcher;
+
+    // VM-02: field-stored so Cleanup() can detach them - the singleton
+    // enrichment service kept every dialog VM alive forever otherwise.
+    private readonly EventHandler<LibraryEnrichmentProgress> _progressHandler;
+    private readonly EventHandler<LibraryEnrichmentSummary> _scanCompletedHandler;
 
     [ObservableProperty]
     public partial bool IsScanning { get; set; }
@@ -202,8 +218,18 @@ public partial class LibraryEnrichmentViewModel : ObservableObject
         _enrichmentService = enrichmentService ?? throw new ArgumentNullException(nameof(enrichmentService));
         _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
 
-        _enrichmentService.ProgressChanged += OnProgressChanged;
-        _enrichmentService.ScanCompleted += OnScanCompleted;
+        _progressHandler = OnProgressChanged;
+        _scanCompletedHandler = OnScanCompleted;
+        _enrichmentService.ProgressChanged += _progressHandler;
+        _enrichmentService.ScanCompleted += _scanCompletedHandler;
+    }
+
+    // VM-02: invoked from LibraryEnrichmentDialog.Closed - detaches the
+    // singleton service's events so the dialog-scoped VM can be collected.
+    public void Cleanup()
+    {
+        _enrichmentService.ProgressChanged -= _progressHandler;
+        _enrichmentService.ScanCompleted -= _scanCompletedHandler;
     }
 
     [RelayCommand]
@@ -214,7 +240,21 @@ public partial class LibraryEnrichmentViewModel : ObservableObject
         IsCompleted = false;
         ReviewQueue.Clear();
 
-        await _enrichmentService.RunEnrichmentScanAsync(dryRun: true);
+        try
+        {
+            await _enrichmentService.RunEnrichmentScanAsync(dryRun: true);
+        }
+        catch (Exception ex)
+        {
+            // VM-07: if the service throws before ScanCompleted fires, the busy
+            // state used to stick forever with no user-visible explanation.
+            CurrentOperation = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            // VM-07: IsScanning must reset even when ScanCompleted never arrives.
+            IsScanning = false;
+        }
     }
 
     [RelayCommand]
@@ -224,7 +264,20 @@ public partial class LibraryEnrichmentViewModel : ObservableObject
         IsScanning = true;
         IsCompleted = false;
 
-        await _enrichmentService.RunEnrichmentScanAsync(dryRun: false);
+        try
+        {
+            await _enrichmentService.RunEnrichmentScanAsync(dryRun: false);
+        }
+        catch (Exception ex)
+        {
+            // VM-07: same failure mode as the dry run above.
+            CurrentOperation = $"Apply failed: {ex.Message}";
+        }
+        finally
+        {
+            // VM-07: IsScanning must reset even when ScanCompleted never arrives.
+            IsScanning = false;
+        }
     }
 
     [RelayCommand]
@@ -239,12 +292,18 @@ public partial class LibraryEnrichmentViewModel : ObservableObject
     public async Task LoadReviewQueueAsync()
     {
         var plans = await _enrichmentService.GetReviewQueueAsync();
-        ReviewQueue.Clear();
-        foreach (var p in plans)
+
+        // VM-08: the rebuild used to mutate the collection on whatever thread
+        // GetReviewQueueAsync resumed on - marshal it onto the UI thread.
+        _dispatcher.TryEnqueue(() =>
         {
-            ReviewQueue.Add(new ReviewItemViewModel(p, _enrichmentService));
-        }
-        HasReviewItems = ReviewQueue.Count > 0;
+            ReviewQueue.Clear();
+            foreach (var p in plans)
+            {
+                ReviewQueue.Add(new ReviewItemViewModel(p, _enrichmentService));
+            }
+            HasReviewItems = ReviewQueue.Count > 0;
+        });
     }
 
     private void OnProgressChanged(object? sender, LibraryEnrichmentProgress e)

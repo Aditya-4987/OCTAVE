@@ -53,6 +53,12 @@ public partial class EntityDetailViewModel : ObservableObject
     private readonly EventHandler<PlaybackState> _playbackStateChangedHandler;
     private EntityNavigationParameter? _currentParam;
 
+    // VM-04: incremented per LoadEntityAsync request; completions from an older
+    // generation are dropped so a refresh triggered mid-load (e.g. the
+    // re-entrant LibraryUpdated fired by EnrichEntityAsync) can't interleave
+    // with or overwrite the newer run.
+    private int _loadGeneration;
+
     public EntityDetailViewModel(
         ILibraryService libraryService,
         IQueueService queueService,
@@ -105,55 +111,84 @@ public partial class EntityDetailViewModel : ObservableObject
         if (param == null) return;
         _currentParam = param;
 
-        if (param.Type == EntityType.Album)
+        int generation = ++_loadGeneration;
+
+        try
         {
-            var album = await _libraryService.GetAlbumByIdAsync(param.Id);
-            if (album == null) return;
-
-            var title = album.Title;
-            var subtitle = $"{album.ArtistName} • {album.Year}";
-            var artworkUrl = album.ArtworkUrl;
-            var tracks = await _libraryService.GetTracksByAlbumAsync(param.Id);
-
-            _dispatcher.TryEnqueue(() =>
+            if (param.Type == EntityType.Album)
             {
-                Title = title;
-                Subtitle = subtitle;
-                ArtworkUrl = artworkUrl;
-                Description = null;
+                var album = await _libraryService.GetAlbumByIdAsync(param.Id);
+                if (album == null || generation != _loadGeneration) return;
 
-                Tracks.Clear();
-                foreach (var track in tracks)
+                var title = album.Title;
+                var subtitle = $"{album.ArtistName} • {album.Year}";
+                var artworkUrl = album.ArtworkUrl;
+                var tracks = await _libraryService.GetTracksByAlbumAsync(param.Id);
+
+                if (generation != _loadGeneration) return;
+
+                _dispatcher.TryEnqueue(() =>
                 {
-                    Tracks.Add(track);
-                }
-                TrackCount = Tracks.Count;
-            });
+                    // VM-04: a newer load superseded this one meanwhile.
+                    if (generation != _loadGeneration) return;
+
+                    Title = title;
+                    Subtitle = subtitle;
+                    ArtworkUrl = artworkUrl;
+                    Description = null;
+
+                    // VM-10: skip the rebuild when the sequence didn't change.
+                    if (!Helpers.CollectionDiff.SameIdSequence(Tracks, tracks, t => t.Id))
+                    {
+                        Tracks.Clear();
+                        foreach (var track in tracks)
+                        {
+                            Tracks.Add(track);
+                        }
+                    }
+                    TrackCount = Tracks.Count;
+                });
+            }
+            else if (param.Type == EntityType.Artist)
+            {
+                var artist = await _libraryService.GetArtistByIdAsync(param.Id);
+                if (artist == null || generation != _loadGeneration) return;
+
+                var title = artist.Name;
+                var artworkUrl = artist.ArtworkUrl;
+                var description = artist.Bio;
+                var tracks = await _libraryService.GetTracksByArtistAsync(param.Id);
+
+                if (generation != _loadGeneration) return;
+
+                _dispatcher.TryEnqueue(() =>
+                {
+                    // VM-04: a newer load superseded this one meanwhile.
+                    if (generation != _loadGeneration) return;
+
+                    Title = title;
+                    ArtworkUrl = artworkUrl;
+                    Description = description;
+
+                    // VM-10: skip the rebuild when the sequence didn't change.
+                    if (!Helpers.CollectionDiff.SameIdSequence(Tracks, tracks, t => t.Id))
+                    {
+                        Tracks.Clear();
+                        foreach (var track in tracks)
+                        {
+                            Tracks.Add(track);
+                        }
+                    }
+                    Subtitle = $"{Tracks.Count} Tracks";
+                    TrackCount = Tracks.Count;
+                });
+            }
         }
-        else if (param.Type == EntityType.Artist)
+        catch (Exception ex)
         {
-            var artist = await _libraryService.GetArtistByIdAsync(param.Id);
-            if (artist == null) return;
-
-            var title = artist.Name;
-            var artworkUrl = artist.ArtworkUrl;
-            var description = artist.Bio;
-            var tracks = await _libraryService.GetTracksByArtistAsync(param.Id);
-
-            _dispatcher.TryEnqueue(() =>
-            {
-                Title = title;
-                ArtworkUrl = artworkUrl;
-                Description = description;
-
-                Tracks.Clear();
-                foreach (var track in tracks)
-                {
-                    Tracks.Add(track);
-                }
-                Subtitle = $"{Tracks.Count} Tracks";
-                TrackCount = Tracks.Count;
-            });
+            // VM-04: fire-and-forget callers previously surfaced nothing when
+            // the load threw - at least leave a debug trace.
+            System.Diagnostics.Debug.WriteLine($"[EntityDetailViewModel] LoadEntityAsync failed: {ex.Message}");
         }
     }
 

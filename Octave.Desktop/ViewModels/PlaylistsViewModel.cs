@@ -33,29 +33,56 @@ public partial class PlaylistsViewModel : ObservableObject
 
     public async Task LoadAsync()
     {
-        var playlists = await _playlistService.GetPlaylistsAsync();
-        _dispatcher.TryEnqueue(() =>
+        try
         {
-            if (Items.Count == playlists.Count && System.Linq.Enumerable.SequenceEqual(Items, playlists))
+            var playlists = await _playlistService.GetPlaylistsAsync();
+            _dispatcher.TryEnqueue(() =>
             {
-                return;
-            }
+                if (Items.Count == playlists.Count && System.Linq.Enumerable.SequenceEqual(Items, playlists))
+                {
+                    return;
+                }
 
-            Items.Clear();
-            foreach (var p in playlists) Items.Add(p);
-        });
+                Items.Clear();
+                foreach (var p in playlists) Items.Add(p);
+            });
+        }
+        catch (Exception ex)
+        {
+            // VM-06: fire-and-forget off LibraryUpdated - don't let a failed
+            // DB read vanish silently.
+            System.Diagnostics.Debug.WriteLine($"[PlaylistsViewModel] LoadAsync failed: {ex.Message}");
+        }
     }
 
     public async Task CreateAsync(string title)
     {
         if (string.IsNullOrWhiteSpace(title)) return;
-        await _playlistService.CreatePlaylistAsync(title.Trim());
+        try
+        {
+            await _playlistService.CreatePlaylistAsync(title.Trim());
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[PlaylistsViewModel] CreateAsync failed: {ex.Message}");
+        }
     }
 
     [RelayCommand]
     private async Task DeletePlaylist(Playlist? playlist)
     {
         if (playlist == null) return;
-        await _playlistService.DeletePlaylistAsync(playlist.Id);
+        try
+        {
+            await _playlistService.DeletePlaylistAsync(playlist.Id);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            // VM-06 (NF): a failed delete used to leave the stale playlist in
+            // the list with no refresh attempt and no trace of the error.
+            System.Diagnostics.Debug.WriteLine($"[PlaylistsViewModel] DeletePlaylist failed: {ex.Message}");
+        }
     }
 }

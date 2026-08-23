@@ -76,32 +76,47 @@ public partial class SearchViewModel : ObservableObject
 
         var results = await _libraryService.SearchLibraryAsync(query);
 
+        // VM-10: each section is only rebuilt when its id sequence actually
+        // changed - re-typing the same query used to clear-and-refill all four
+        // collections, resetting scroll and selection.
         _dispatcher.TryEnqueue(() =>
         {
-            Tracks.Clear();
-            foreach (var track in results.Tracks)
+            if (!Helpers.CollectionDiff.SameIdSequence(Tracks, results.Tracks, t => t.Id))
             {
-                Tracks.Add(track);
-            }
-
-            Albums.Clear();
-            foreach (var album in results.Albums)
-            {
-                Albums.Add(album);
-            }
-
-            Artists.Clear();
-            foreach (var artist in results.Artists)
-            {
-                Artists.Add(artist);
-            }
-
-            Playlists.Clear();
-            if (results.Playlists != null)
-            {
-                foreach (var playlist in results.Playlists)
+                Tracks.Clear();
+                foreach (var track in results.Tracks)
                 {
-                    Playlists.Add(playlist);
+                    Tracks.Add(track);
+                }
+            }
+
+            if (!Helpers.CollectionDiff.SameIdSequence(Albums, results.Albums, a => a.Id))
+            {
+                Albums.Clear();
+                foreach (var album in results.Albums)
+                {
+                    Albums.Add(album);
+                }
+            }
+
+            if (!Helpers.CollectionDiff.SameIdSequence(Artists, results.Artists, a => a.Id))
+            {
+                Artists.Clear();
+                foreach (var artist in results.Artists)
+                {
+                    Artists.Add(artist);
+                }
+            }
+
+            if (!Helpers.CollectionDiff.SameIdSequence(Playlists, results.Playlists ?? [], p => p.Id))
+            {
+                Playlists.Clear();
+                if (results.Playlists != null)
+                {
+                    foreach (var playlist in results.Playlists)
+                    {
+                        Playlists.Add(playlist);
+                    }
                 }
             }
         });

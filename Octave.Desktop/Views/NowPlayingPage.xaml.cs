@@ -14,6 +14,14 @@ public sealed partial class NowPlayingPage : Page
     private Storyboard? _currentLyricsAnimation;
     private Storyboard? _currentQueueAnimation;
 
+    // SH-11: Loaded/Unloaded can fire more than once for the same page instance
+    // (re-parenting, popup hosting) without a clean pair - guard the handler so
+    // PropertyChanged subscriptions can't stack. The broader fragility here (a
+    // transient VM with singleton deps kept alive by an Unloaded->Dispose
+    // convention) is accepted: every other page follows this same pattern, and
+    // replacing it needs a navigation-scoped lifetime design (see SH-11 note).
+    private bool _vmPropertyChangedHooked;
+
     public NowPlayingPage()
     {
         InitializeComponent();
@@ -30,14 +38,22 @@ public sealed partial class NowPlayingPage : Page
         // service; re-subscribing here made every event fire twice.
         ViewModel.RefreshState();
 
-        ViewModel.PropertyChanged += ViewModel_PropertyChanged;
+        if (!_vmPropertyChangedHooked)
+        {
+            ViewModel.PropertyChanged += ViewModel_PropertyChanged;
+            _vmPropertyChangedHooked = true;
+        }
         AnimateLyricsTransition(ViewModel.IsLyricsPanelVisible, immediate: true);
         AnimateQueueTransition(ViewModel.IsQueuePanelVisible, immediate: true);
     }
 
     private void NowPlayingPage_Unloaded(object sender, RoutedEventArgs e)
     {
-        ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+        if (_vmPropertyChangedHooked)
+        {
+            ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+            _vmPropertyChangedHooked = false;
+        }
         _currentLyricsAnimation?.Stop();
         _currentQueueAnimation?.Stop();
         ViewModel.Dispose();

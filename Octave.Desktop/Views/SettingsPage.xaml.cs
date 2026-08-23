@@ -22,6 +22,11 @@ public sealed partial class SettingsPage : Page
         ViewModel = App.Services.GetRequiredService<ShellViewModel>();
         ExternalSettings = App.Services.GetRequiredService<ExternalDataSettingsViewModel>();
         InitializeComponent();
+
+        // VM-01: the transient ExternalDataSettingsViewModel subscribes to the
+        // singleton settings service in its constructor - without this detach it
+        // (and its dispatcher closure) leaked on every navigation away.
+        Unloaded += (s, e) => ExternalSettings.Cleanup();
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)

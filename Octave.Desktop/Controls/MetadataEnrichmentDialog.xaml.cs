@@ -20,6 +20,11 @@ public sealed partial class MetadataEnrichmentDialog : ContentDialog
     {
         ViewModel = App.Services.GetRequiredService<MetadataEnrichmentViewModel>();
         this.InitializeComponent();
+
+        // VM-05: the dialog owns the transient VM's lifetime - tear its CTSs
+        // down when the dialog closes so nothing outlives it.
+        Closed += (s, e) => ViewModel.Cleanup();
+
         _ = ViewModel.InitializeAsync(track);
     }
 

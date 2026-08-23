@@ -198,10 +198,16 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
         if (trackChanged)
         {
             long genToken = ++_generationToken;
+
+            // CRIT-02: cancel AND dispose the old sources - they were cancelled
+            // but never disposed, leaking a native wait handle on every track
+            // change. Dispose() at the bottom of this class already did both.
             _lyricsCts?.Cancel();
+            _lyricsCts?.Dispose();
             _lyricsCts = new CancellationTokenSource();
 
             _creditsCts?.Cancel();
+            _creditsCts?.Dispose();
             _creditsCts = new CancellationTokenSource();
 
             if (state.CurrentTrack != null)
@@ -237,29 +243,40 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
             return;
         }
 
-        LyricsState = data.State;
+        // VM-08: these property writes used to land on whichever thread the
+        // lyrics await resumed on - apply them through the dispatcher like every
+        // other mutation in this VM.
+        _dispatcher.TryEnqueue(() =>
+        {
+            LyricsState = data.State;
 
-        if (data.State == LyricsState.Synced)
+            if (data.State == LyricsState.Synced)
+            {
+                SyncedLines = data.SyncedLines;
+                IsLyricsPanelVisible = true;
+                UpdateLyricPosition(PositionSeconds);
+            }
+            else if (data.State == LyricsState.Unsynced)
+            {
+                UnsyncedText = data.PlainText;
+                IsLyricsPanelVisible = true;
+            }
+            else
+            {
+                // Lyrics unavailable: keep visible for 2 seconds, then slide out
+                // (the delayed hide below).
+                IsLyricsPanelVisible = true;
+            }
+        });
+
+        if (data.State != LyricsState.Synced && data.State != LyricsState.Unsynced)
         {
-            SyncedLines = data.SyncedLines;
-            IsLyricsPanelVisible = true;
-            UpdateLyricPosition(PositionSeconds);
-        }
-        else if (data.State == LyricsState.Unsynced)
-        {
-            UnsyncedText = data.PlainText;
-            IsLyricsPanelVisible = true;
-        }
-        else
-        {
-            // Lyrics unavailable: keep visible for 2 seconds, then slide out
-            IsLyricsPanelVisible = true;
             try
             {
                 await Task.Delay(2000, ct);
                 if (!ct.IsCancellationRequested && genToken == _generationToken && track.Id == CurrentTrack?.Id)
                 {
-                    IsLyricsPanelVisible = false;
+                    _dispatcher.TryEnqueue(() => IsLyricsPanelVisible = false);
                 }
             }
             catch (OperationCanceledException) { }
@@ -292,14 +309,6 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
             return;
         }
 
-        CurrentArtist = artist;
-        CurrentAlbum = album;
-        CurrentArtworkUrl = album?.ArtworkUrl;
-        OnPropertyChanged(nameof(ArtistArtworkUrl));
-        OnPropertyChanged(nameof(AlbumArtworkUrl));
-        OnPropertyChanged(nameof(AlbumYear));
-
-        ArtistsList.Clear();
         string rawArtistNames = !string.IsNullOrWhiteSpace(track.ArtistName) ? track.ArtistName : (artist?.Name ?? "Unknown Artist");
 
         // NP-08: compare with collapsed whitespace + case-folding — a DB name like
@@ -312,37 +321,51 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
         bool isFullMatch = artist != null &&
             NormalizeArtistKey(artist.Name).Equals(NormalizeArtistKey(rawArtistNames), StringComparison.Ordinal);
 
-        if (!isFullMatch)
+        // VM-08: the credit writes and the ArtistsList rebuild used to run on the
+        // DB await's resume thread - marshal them onto the UI thread.
+        _dispatcher.TryEnqueue(() =>
         {
-            // Split only on comma, semicolon, or spaced feature/collaboration tokens
-            string[] nameParts = System.Text.RegularExpressions.Regex.Split(
-                rawArtistNames,
-                @"\s*[,;]\s*|\s+(?:feat\.?|ft\.?)\s+|\s+&\s+|\s+/\s+",
-                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            CurrentArtist = artist;
+            CurrentAlbum = album;
+            CurrentArtworkUrl = album?.ArtworkUrl;
+            OnPropertyChanged(nameof(ArtistArtworkUrl));
+            OnPropertyChanged(nameof(AlbumArtworkUrl));
+            OnPropertyChanged(nameof(AlbumYear));
 
-            var validParts = System.Linq.Enumerable.ToArray(
-                System.Linq.Enumerable.Select(
-                    System.Linq.Enumerable.Where(nameParts, n => !string.IsNullOrWhiteSpace(n)),
-                    n => n.Trim()));
+            ArtistsList.Clear();
 
-            if (validParts.Length > 1)
+            if (!isFullMatch)
             {
-                foreach (string name in validParts)
+                // Split only on comma, semicolon, or spaced feature/collaboration tokens
+                string[] nameParts = System.Text.RegularExpressions.Regex.Split(
+                    rawArtistNames,
+                    @"\s*[,;]\s*|\s+(?:feat\.?|ft\.?)\s+|\s+&\s+|\s+/\s+",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+                var validParts = System.Linq.Enumerable.ToArray(
+                    System.Linq.Enumerable.Select(
+                        System.Linq.Enumerable.Where(nameParts, n => !string.IsNullOrWhiteSpace(n)),
+                        n => n.Trim()));
+
+                if (validParts.Length > 1)
                 {
-                    string? artUrl = (artist != null && name.Equals(artist.Name, StringComparison.OrdinalIgnoreCase)) ? artist.ArtworkUrl : null;
-                    string? artistId = (artist != null && name.Equals(artist.Name, StringComparison.OrdinalIgnoreCase)) ? artist.Id : null;
-                    ArtistsList.Add(new ArtistDisplayItem(artistId, name, artUrl));
+                    foreach (string name in validParts)
+                    {
+                        string? artUrl = (artist != null && name.Equals(artist.Name, StringComparison.OrdinalIgnoreCase)) ? artist.ArtworkUrl : null;
+                        string? artistId = (artist != null && name.Equals(artist.Name, StringComparison.OrdinalIgnoreCase)) ? artist.Id : null;
+                        ArtistsList.Add(new ArtistDisplayItem(artistId, name, artUrl));
+                    }
+                }
+                else
+                {
+                    ArtistsList.Add(new ArtistDisplayItem(artist?.Id ?? track.ArtistId, rawArtistNames, artist?.ArtworkUrl));
                 }
             }
             else
             {
-                ArtistsList.Add(new ArtistDisplayItem(artist?.Id ?? track.ArtistId, rawArtistNames, artist?.ArtworkUrl));
+                ArtistsList.Add(new ArtistDisplayItem(artist?.Id ?? track.ArtistId, artist?.Name ?? rawArtistNames, artist?.ArtworkUrl));
             }
-        }
-        else
-        {
-            ArtistsList.Add(new ArtistDisplayItem(artist?.Id ?? track.ArtistId, artist?.Name ?? rawArtistNames, artist?.ArtworkUrl));
-        }
+        });
     }
 
     public string? ArtistArtworkUrl => CurrentArtist?.ArtworkUrl;

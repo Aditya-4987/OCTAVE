@@ -38,19 +38,28 @@ public partial class AlbumsViewModel : ObservableObject
 
     public async Task LoadAsync()
     {
-        var albums = await _libraryService.GetAllAlbumsAsync();
-        _dispatcher.TryEnqueue(() =>
+        try
         {
-            if (Items.Count == albums.Count && System.Linq.Enumerable.SequenceEqual(Items, albums))
+            var albums = await _libraryService.GetAllAlbumsAsync();
+            _dispatcher.TryEnqueue(() =>
             {
-                return;
-            }
+                if (Items.Count == albums.Count && System.Linq.Enumerable.SequenceEqual(Items, albums))
+                {
+                    return;
+                }
 
-            Items.Clear();
-            foreach (var album in albums)
-            {
-                Items.Add(album);
-            }
-        });
+                Items.Clear();
+                foreach (var album in albums)
+                {
+                    Items.Add(album);
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            // VM-06: fire-and-forget off LibraryUpdated - don't let a failed
+            // DB read vanish silently.
+            System.Diagnostics.Debug.WriteLine($"[AlbumsViewModel] LoadAsync failed: {ex.Message}");
+        }
     }
 }

@@ -6,6 +6,7 @@ using System;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Octave_Desktop.ViewModels;
@@ -37,6 +38,11 @@ public partial class PlaylistDetailViewModel : ObservableObject
     private bool _isRefreshing;
     private readonly EventHandler<PlaybackState> _playbackStateChangedHandler;
 
+    // VM-11: one debounced persist after a reorder settles instead of one
+    // fire-and-forget write per CollectionChanged event.
+    private const int ReorderPersistDelayMs = 400;
+    private CancellationTokenSource? _reorderPersistCts;
+
     public PlaylistDetailViewModel(IPlaylistService playlistService, IQueueService queueService)
     {
         _playlistService = playlistService ?? throw new ArgumentNullException(nameof(playlistService));
@@ -64,6 +70,13 @@ public partial class PlaylistDetailViewModel : ObservableObject
     public void Cleanup()
     {
         _queueService.PlaybackStateChanged -= _playbackStateChangedHandler;
+
+        // VM-11: cancel any pending debounced persist. Trade-off: a reorder in
+        // the last ~400ms before leaving the page may not reach the database -
+        // preferred over leaking the CTS or blocking the UI thread to flush.
+        _reorderPersistCts?.Cancel();
+        _reorderPersistCts?.Dispose();
+        _reorderPersistCts = null;
     }
 
     public void PausePlayback() => _queueService.Pause();
@@ -83,8 +96,12 @@ public partial class PlaylistDetailViewModel : ObservableObject
             _isRefreshing = true;
             try
             {
-                Tracks.Clear();
-                foreach (var t in tracks) Tracks.Add(t);
+                // VM-10: skip the rebuild when the sequence didn't change.
+                if (!Helpers.CollectionDiff.SameIdSequence(Tracks, tracks, t => t.Id))
+                {
+                    Tracks.Clear();
+                    foreach (var t in tracks) Tracks.Add(t);
+                }
             }
             finally
             {
@@ -98,10 +115,58 @@ public partial class PlaylistDetailViewModel : ObservableObject
     private void OnTracksChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
         if (_isRefreshing || _playlistId == null) return;
-        if (e.Action == NotifyCollectionChangedAction.Move)
+
+        // VM-11: a ListView drag-reorder can surface as Move OR as a Remove+Add
+        // pair depending on how the drop lands - persist for ANY structural
+        // mutation caused by user interaction, not just Move (Remove+Add-style
+        // reorders used to be silently unpersisted).
+        switch (e.Action)
         {
-            var orderedIds = Tracks.Select(t => t.Id).ToList();
-            _ = _playlistService.SetOrderAsync(_playlistId, orderedIds);
+            case NotifyCollectionChangedAction.Move:
+            case NotifyCollectionChangedAction.Remove:
+            case NotifyCollectionChangedAction.Add:
+            case NotifyCollectionChangedAction.Replace:
+                ScheduleOrderPersist();
+                break;
+        }
+    }
+
+    private void ScheduleOrderPersist()
+    {
+        // VM-11: cancel the previous pending write and start the settle window
+        // over - rapid drag sequences collapse into one SetOrderAsync.
+        _reorderPersistCts?.Cancel();
+        _reorderPersistCts?.Dispose();
+        _reorderPersistCts = new CancellationTokenSource();
+
+        var playlistId = _playlistId!;
+        var cts = _reorderPersistCts;
+        _ = PersistOrderAfterSettleAsync(playlistId, cts.Token);
+    }
+
+    private async Task PersistOrderAfterSettleAsync(string playlistId, CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(ReorderPersistDelayMs, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            return; // superseded by a newer edit
+        }
+
+        // Resumed on the UI thread (raised from CollectionChanged there): read
+        // the settled order before going async again.
+        var orderedIds = Tracks.Select(t => t.Id).ToList();
+
+        try
+        {
+            await _playlistService.SetOrderAsync(playlistId, orderedIds);
+        }
+        catch (Exception ex)
+        {
+            // VM-11: the old fire-and-forget write had no error handling at all.
+            System.Diagnostics.Debug.WriteLine($"[PlaylistDetailViewModel] Order persist failed: {ex.Message}");
         }
     }
 
@@ -133,7 +198,9 @@ public partial class PlaylistDetailViewModel : ObservableObject
     private async Task RemoveTrack(Track? track)
     {
         if (track == null || _playlistId == null) return;
-        Tracks.Remove(track); // local Remove (ignored by the Move-only reorder handler)
+        // Local remove; also feeds OnTracksChanged, which schedules a debounced
+        // order persist so the remaining sequence stays consistent on disk.
+        Tracks.Remove(track);
         TrackCount = Tracks.Count;
         Subtitle = $"{Tracks.Count} Tracks";
         await _playlistService.RemoveTrackAsync(_playlistId, track.Id);

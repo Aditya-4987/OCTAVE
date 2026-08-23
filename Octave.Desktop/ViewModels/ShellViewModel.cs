@@ -173,12 +173,18 @@ public partial class ShellViewModel : ObservableObject
             });
         };
 
-        // Build the equalizer bands from the engine's frequency table.
+        // Build the equalizer bands from the engine's frequency table. VM-12:
+        // construction no longer touches the engine - each band's restored gain
+        // is pushed explicitly once the list is complete.
         var freqs = _audioPlayer.EqFrequencies;
         var gains = _audioPlayer.GetEqGains();
         for (int i = 0; i < freqs.Count; i++)
         {
             EqBands.Add(new EqBandViewModel(i, freqs[i], gains[i], (idx, g) => _audioPlayer.SetEqBand(idx, g)));
+        }
+        foreach (var band in EqBands)
+        {
+            band.PushInitialGainToEngine();
         }
 
         // Translate a user drag-reorder in the queue list into a queue operation.

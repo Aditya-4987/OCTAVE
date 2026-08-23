@@ -75,13 +75,23 @@ public partial class LibraryViewModel : ObservableObject
     public async Task LoadAsync()
     {
         _dispatcher.TryEnqueue(() => IsLoading = Items.Count == 0);
-        var tracks = await _libraryService.GetAllTracksAsync();
-        _dispatcher.TryEnqueue(() =>
+        try
         {
-            _allTracks = tracks;
-            ApplySort();
-            IsLoading = false;
-        });
+            var tracks = await _libraryService.GetAllTracksAsync();
+            _dispatcher.TryEnqueue(() =>
+            {
+                _allTracks = tracks;
+                ApplySort();
+                IsLoading = false;
+            });
+        }
+        catch (Exception ex)
+        {
+            // VM-06: reset the spinner even when the DB read fails - IsLoading
+            // used to stay true forever on a failed load.
+            _dispatcher.TryEnqueue(() => IsLoading = false);
+            System.Diagnostics.Debug.WriteLine($"[LibraryViewModel] LoadAsync failed: {ex.Message}");
+        }
     }
 
     partial void OnSortIndexChanged(int value) => ApplySort();

@@ -144,7 +144,10 @@ public partial class MetadataEnrichmentViewModel : ObservableObject
     {
         if (_track == null) return;
 
+        // VM-05: cancel AND dispose the previous source - cancelling alone
+        // leaked its wait handle on every re-search.
         _searchCts?.Cancel();
+        _searchCts?.Dispose();
         _searchCts = new CancellationTokenSource();
         var ct = _searchCts.Token;
 
@@ -244,8 +247,15 @@ public partial class MetadataEnrichmentViewModel : ObservableObject
     {
         if (_track == null || SelectedCandidate == null) return false;
 
-        _applyCts = new CancellationTokenSource();
-        var ct = _applyCts.Token;
+        // ME-06/VM-05: the previous source was neither cancelled nor disposed on
+        // re-entry, so rapid re-clicks stacked concurrent ApplyEnrichmentAsync
+        // runs writing the SAME audio file. Cancelling first serializes applies;
+        // disposing releases the old handle.
+        _applyCts?.Cancel();
+        _applyCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _applyCts = cts;
+        var ct = cts.Token;
 
         IsApplying = true;
         IsStatusVisible = true;
@@ -289,31 +299,69 @@ public partial class MetadataEnrichmentViewModel : ObservableObject
 
             var result = await Task.Run(() => _workflow.ApplyEnrichmentAsync(req, ct), ct);
 
-            if (result.Success)
-            {
-                StatusSeverity = InfoBarSeverity.Success;
-                StatusMessage = $"Metadata updated successfully! Applied: {string.Join(", ", result.AppliedFields)}";
-                IsApplying = false;
+            // VM-13: a newer apply owns the dialog state now - this stale run
+            // must not write anything.
+            if (!ReferenceEquals(cts, _applyCts)) return false;
 
+            bool success = result.Success;
+            string message = success
+                ? $"Metadata updated successfully! Applied: {string.Join(", ", result.AppliedFields)}"
+                : result.ErrorMessage ?? result.EditResult.SummaryMessage ?? "Metadata edit failed.";
+
+            // VM-13: mutate observables on the UI thread like RunSearchAsync does.
+            _dispatcher.TryEnqueue(() =>
+            {
+                IsApplying = false;
+                IsStatusVisible = true;
+                StatusSeverity = success ? InfoBarSeverity.Success : InfoBarSeverity.Error;
+                StatusMessage = message;
+            });
+
+            if (success)
+            {
                 // Notify library of changes to update all open views
                 _libraryService.NotifyLibraryUpdated();
-                return true;
             }
-            else
+            return success;
+        }
+        catch (OperationCanceledException)
+        {
+            // VM-13: a cancelled apply is superseded work - never write success
+            // or failure state over whatever the newer run is showing.
+            if (ReferenceEquals(cts, _applyCts))
             {
-                StatusSeverity = InfoBarSeverity.Error;
-                StatusMessage = result.ErrorMessage ?? result.EditResult.SummaryMessage ?? "Metadata edit failed.";
-                IsApplying = false;
-                return false;
+                _dispatcher.TryEnqueue(() => IsApplying = false);
             }
+            return false;
         }
         catch (Exception ex)
         {
-            StatusSeverity = InfoBarSeverity.Error;
-            StatusMessage = $"Application failed: {ex.Message}";
-            IsApplying = false;
+            if (ReferenceEquals(cts, _applyCts))
+            {
+                _dispatcher.TryEnqueue(() =>
+                {
+                    IsApplying = false;
+                    IsStatusVisible = true;
+                    StatusSeverity = InfoBarSeverity.Error;
+                    StatusMessage = $"Application failed: {ex.Message}";
+                });
+            }
             return false;
         }
+    }
+
+    // VM-05: invoked when the enrichment dialog closes. Cancels any in-flight
+    // search/apply and disposes both sources so nothing outlives the dialog -
+    // previously the CTSs leaked and an apply could keep writing after close.
+    public void Cleanup()
+    {
+        _searchCts?.Cancel();
+        _searchCts?.Dispose();
+        _searchCts = null;
+
+        _applyCts?.Cancel();
+        _applyCts?.Dispose();
+        _applyCts = null;
     }
 
     public void SetCustomArtwork(string filePath, byte[] bytes)
