@@ -251,7 +251,13 @@
                             <TextBlock Text="{x:Bind ViewModel.ArtistName, Mode=OneWay}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" MaxWidth="220" />
                             <Border Margin="0,4,0,0" HorizontalAlignment="Left" CornerRadius="4" Padding="6,2" Background="{ThemeResource LayerFillColorDefaultBrush}" ToolTipService.Placement="Top">
                                 <ToolTipService.ToolTip>
-                                    <ToolTip Background="{ThemeResource SolidBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="10" Padding="14" MaxWidth="450">
+                                    <!-- Hotfix: was {ThemeResource
+                                         SolidBackgroundFillColorDefaultBrush},
+                                         which is NOT a WinUI theme-dictionary
+                                         key and crashed at window load; the
+                                         tertiary solid fill is the existing
+                                         equivalent of the old #18181A surface. -->
+                                    <ToolTip Background="{ThemeResource SolidBackgroundFillColorTertiaryBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="10" Padding="14" MaxWidth="450">
                                         <StackPanel Spacing="8">
                                             <!-- Header -->
                                             <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
