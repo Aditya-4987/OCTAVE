@@ -32,12 +32,53 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
     // UI thread, the position timer runs on a thread-pool thread, and the End
     // sync fires on BASS's own unmanaged thread - without this lock those races
     // can call into a freed handle.
+    // LOAD-BEARING INVARIANT (see CODEBASE_AUDIT §12.4): no event
+    // (PositionChanged/TrackStarted/TrackEnded) may be raised while this lock is
+    // held - QueueService mutates under its own lock and then calls back into
+    // this service; raising under _streamLock deadlocks the pair.
     private readonly object _streamLock = new();
     private readonly HashSet<int> _fadingStreams = new();
 
+    // AUDIO-01: Play must not hold _streamLock across Bass.CreateStream (a
+    // blocking network connect for HTTP sources). _playGate serializes
+    // concurrent Play calls against each other instead; _streamLock is then
+    // taken/released around each short handle mutation. Nothing acquires
+    // _streamLock and then _playGate, so the ordering cannot deadlock.
+    private readonly object _playGate = new();
+
+    // Bumped on every Stop so an in-flight Play (whose stream is being created
+    // outside the lock) can notice the user changed their mind and quietly
+    // abandon the freshly-created stream instead of starting playback after
+    // an explicit stop.
+    private int _stopGeneration = 0;
+
+    // AUDIO-07: per-stream End-sync identity. The sync callback used to read the
+    // GLOBAL current session/uri, so a superseded/crossfaded stream's natural end
+    // reported the incoming track's identity and advanced the queue past it.
+    // Each stream's (sync handle, session id, uri) is registered here at
+    // create-time and resolved from the callback's own `channel` argument.
+    private readonly Dictionary<int, EndSyncIdentity> _endSyncs = new();
+
+    private readonly struct EndSyncIdentity
+    {
+        public EndSyncIdentity(int syncHandle, long sessionId, string uri)
+        {
+            SyncHandle = syncHandle;
+            SessionId = sessionId;
+            Uri = uri;
+        }
+
+        public int SyncHandle { get; }
+        public long SessionId { get; }
+        public string Uri { get; }
+    }
+
     private long _sessionIdCounter = 0;
-    private long _currentSessionId = 0;
-    private string _currentSourceUri = string.Empty;
+
+    // AUDIO-02: true when no real output device could be initialized and BASS
+    // fell back to the "No Sound" device - playback then runs silently. Play
+    // retries the default device once per call until it succeeds.
+    public bool IsSilentFallback { get; private set; }
 
     public event EventHandler<string>? TrackStarted;
     public event EventHandler<TrackEndedEventArgs>? TrackEnded;
@@ -76,6 +117,7 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         Bass.Configure(Configuration.DevNonStop, true);
 
         // Attempt 1: Init with Default Windows Audio Device (-1), 44.1kHz
+        IsSilentFallback = false;
         _isInitialized = Bass.Init(-1, 44100, DeviceInitFlags.Default, IntPtr.Zero);
 
         if (!_isInitialized)
@@ -83,6 +125,14 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
             Debug.WriteLine($"[OCTAVE ENGINE] BASS Init (-1) Failed (Error: {Bass.LastError}). Falling back to No Sound device (0)...");
             // Attempt 2: Fallback to No Sound device (0) so engine calls remain safe
             _isInitialized = Bass.Init(0, 44100, DeviceInitFlags.Default, IntPtr.Zero);
+            // AUDIO-02: the fallback keeps every engine call safe but produces NO
+            // audio. Record the state instead of pretending init succeeded; Play
+            // retries the real device on each call until one is available.
+            IsSilentFallback = _isInitialized;
+            if (IsSilentFallback)
+            {
+                Debug.WriteLine("[OCTAVE ENGINE] WARNING: no real output device available - running on the No Sound device; playback will be SILENT until a device appears.");
+            }
         }
 
         if (!_isInitialized)
@@ -133,46 +183,80 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         }
     }
 
+    private const int MaxCrossfadeDurationMs = 10000; // AUDIO-06: bound absurd fades
+
     private int _crossfadeDurationMs = 1000; // Default 1000ms (1 second) smooth crossfade
     public int CrossfadeDurationMs
     {
         get => _crossfadeDurationMs;
-        set => _crossfadeDurationMs = Math.Max(0, value);
+        set => _crossfadeDurationMs = Math.Clamp(value, 0, MaxCrossfadeDurationMs);
+    }
+
+    // AUDIO-02: called from Play while running on the No Sound device. A fresh
+    // BASS.Init becomes the calling thread's current device, and CreateStream in
+    // this same Play call runs on that same thread - so a successful recovery
+    // deterministically lands the new stream on real output.
+    private void TryRecoverRealDevice()
+    {
+        if (!IsSilentFallback) return;
+        if (Bass.Init(-1, 44100, DeviceInitFlags.Default, IntPtr.Zero))
+        {
+            IsSilentFallback = false;
+            _isInitialized = true;
+            Debug.WriteLine("[OCTAVE ENGINE] Output device recovered - leaving the No Sound fallback.");
+        }
     }
 
     public long Play(string urlOrPath, double replayGain = 0.0)
     {
-        if (!_isInitialized) Init();
-
-        long sessionId = Interlocked.Increment(ref _sessionIdCounter);
-        bool started = false;
-        lock (_streamLock)
+        // AUDIO-03: lazy Init used to run outside any lock - two concurrent Plays
+        // could both enter Bass.Init (not thread-safe). Plays are serialized by
+        // _playGate instead.
+        lock (_playGate)
         {
-            int oldStream = _currentStream;
-            int fadeMs = _crossfadeDurationMs;
-            bool isOldPlaying = oldStream != 0 && Bass.ChannelIsActive(oldStream) == ManagedBass.PlaybackState.Playing;
+            if (!_isInitialized) Init();
+            else TryRecoverRealDevice(); // no-op unless we're on the silent fallback
 
-            if (oldStream != 0)
+            long sessionId = Interlocked.Increment(ref _sessionIdCounter);
+
+            // ---- Phase 1: retire the previous stream under _streamLock ----
+            // Only quick native handle calls happen here; the potentially slow
+            // CreateStream is deliberately NOT in this lock (AUDIO-01).
+            int fadeMs;
+            bool crossfadeOutOld;
+            int stopGeneration;
+            lock (_streamLock)
             {
-                RemoveEqUnlocked(); // Detach EQ handles from old stream so new stream can claim FX
+                fadeMs = _crossfadeDurationMs;
+                stopGeneration = _stopGeneration;
 
-                if (fadeMs > 0 && isOldPlaying)
+                int oldStream = _currentStream;
+                bool isOldPlaying = oldStream != 0 && Bass.ChannelIsActive(oldStream) == ManagedBass.PlaybackState.Playing;
+                crossfadeOutOld = fadeMs > 0 && isOldPlaying;
+
+                if (oldStream != 0)
                 {
-                    FadeAndFreeStream(oldStream, fadeMs);
+                    DetachEndSyncUnlocked(oldStream); // AUDIO-07: a fading/stopped stream must never raise TrackEnded
+                    RemoveEqUnlocked(); // Detach EQ handles from old stream so new stream can claim FX
+
+                    if (crossfadeOutOld)
+                    {
+                        FadeAndFreeStreamUnlocked(oldStream, fadeMs);
+                    }
+                    else
+                    {
+                        Bass.ChannelStop(oldStream);
+                        Bass.StreamFree(oldStream);
+                        _endSyncs.Remove(oldStream); // callback may not have consumed it
+                    }
+                    _currentStream = 0;
                 }
-                else
-                {
-                    Bass.ChannelStop(oldStream);
-                    Bass.StreamFree(oldStream);
-                }
-                _currentStream = 0;
             }
 
-            _currentSessionId = sessionId;
-            _currentSourceUri = urlOrPath;
-
+            // ---- Phase 2: create the new stream WITHOUT holding _streamLock ----
+            // For HTTP sources this blocks on a network connect; holding the lock
+            // here froze the position timer, FFT reads and Status/Position polls.
             int stream;
-            // Check if we were handed an HTTP web stream or a local hard drive path
             if (urlOrPath.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
                 urlOrPath.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
             {
@@ -183,79 +267,91 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
                 stream = Bass.CreateStream(urlOrPath, 0, 0, BassFlags.Default);
             }
 
+            // ---- Phase 3: install the new stream under _streamLock ----
+            bool started = false;
             if (stream != 0)
             {
-                _currentStream = stream;
-
-                // Register end sync procedure
-                Bass.ChannelSetSync(stream, SyncFlags.End | SyncFlags.Mixtime, 0, _endSyncCallback, IntPtr.Zero);
-
-                // Convert ReplayGain (dB) to a linear scalar (10^(dB/20)).
-                float targetGain = (float)Math.Pow(10, replayGain / 20.0);
-                _currentReplayGainScale = Math.Clamp(targetGain, 0.1f, 2.0f);
-
-                float preampScale = (float)Math.Pow(10, _preampGainDb / 20.0);
-                float finalTargetVolume = Math.Clamp((_isMuted ? 0f : _volume) * _currentReplayGainScale * preampScale, 0f, 2.0f);
-
-                if (fadeMs > 0 && isOldPlaying)
+                lock (_streamLock)
                 {
-                    // Start new stream at 0 volume and slide up smoothly to finalTargetVolume
-                    Bass.ChannelSetAttribute(stream, ChannelAttribute.Volume, 0f);
-                    Bass.ChannelPlay(stream);
-                    Bass.ChannelSlideAttribute(stream, ChannelAttribute.Volume, finalTargetVolume, fadeMs);
-                }
-                else
-                {
-                    UpdateStreamVolumeUnlocked();
-                    Bass.ChannelPlay(stream);
-                }
+                    if (_stopGeneration != stopGeneration)
+                    {
+                        // Stop() ran while we were opening the stream - honor it:
+                        // free quietly, start nothing, raise nothing.
+                        Bass.StreamFree(stream);
+                        return sessionId;
+                    }
 
-                // Re-attach the EQ to the new stream if it's enabled.
-                _eqFxHandle = 0;
-                _limiterFxHandle = 0;
-                if (_eqEnabled) SetupEqUnlocked();
-                
-                // Read streaming quality (e.g. 16-bit 44.1kHz)
-                if (Bass.ChannelGetInfo(stream, out var info))
-                {
-                    int bits = (info.OriginalResolution > 0) ? info.OriginalResolution : 16;
-                    double khz = info.Frequency / 1000.0;
-                    StreamingQuality = $"{bits}-bit {khz:0.0}kHz";
-                }
-                else
-                {
-                    StreamingQuality = "Unknown";
-                }
+                    _currentStream = stream;
 
-                started = true;
-                Debug.WriteLine($"[OCTAVE ENGINE] Playing stream ID: {stream}, Session ID: {sessionId} (Crossfade: {fadeMs}ms)");
+                    // AUDIO-07: per-stream End-sync identity (see _endSyncs).
+                    RegisterEndSyncUnlocked(stream, sessionId, urlOrPath);
+
+                    // Convert ReplayGain (dB) to a linear scalar (10^(dB/20)).
+                    float targetGain = (float)Math.Pow(10, replayGain / 20.0);
+                    _currentReplayGainScale = Math.Clamp(targetGain, 0.1f, 2.0f);
+
+                    float preampScale = (float)Math.Pow(10, _preampGainDb / 20.0);
+                    float finalTargetVolume = Math.Clamp((_isMuted ? 0f : _volume) * _currentReplayGainScale * preampScale, 0f, 2.0f);
+
+                    if (crossfadeOutOld)
+                    {
+                        // Start new stream at 0 volume and slide up smoothly to finalTargetVolume
+                        Bass.ChannelSetAttribute(stream, ChannelAttribute.Volume, 0f);
+                        Bass.ChannelPlay(stream);
+                        Bass.ChannelSlideAttribute(stream, ChannelAttribute.Volume, finalTargetVolume, fadeMs);
+                    }
+                    else
+                    {
+                        UpdateStreamVolumeUnlocked();
+                        Bass.ChannelPlay(stream);
+                    }
+
+                    // Re-attach the EQ to the new stream if it's enabled.
+                    _eqFxHandle = 0;
+                    _limiterFxHandle = 0;
+                    if (_eqEnabled) SetupEqUnlocked();
+
+                    // Read streaming quality (e.g. 16-bit 44.1kHz)
+                    if (Bass.ChannelGetInfo(stream, out var info))
+                    {
+                        int bits = (info.OriginalResolution > 0) ? info.OriginalResolution : 16;
+                        double khz = info.Frequency / 1000.0;
+                        StreamingQuality = $"{bits}-bit {khz:0.0}kHz";
+                    }
+                    else
+                    {
+                        StreamingQuality = "Unknown";
+                    }
+
+                    started = true;
+                    Debug.WriteLine($"[OCTAVE ENGINE] Playing stream ID: {stream}, Session ID: {sessionId} (Crossfade: {fadeMs}ms)");
+                }
             }
             else
             {
                 Debug.WriteLine($"[OCTAVE ENGINE] Stream creation failed! Path: {urlOrPath}, BASS Error: {Bass.LastError}");
-                _currentStream = 0;
             }
-        }
 
-        if (started)
-        {
-            // Start periodic position reporting and notify listeners outside the lock
-            StartPositionTimer();
-            TrackStarted?.Invoke(this, urlOrPath);
-        }
-        else
-        {
-            // On stream load failure (corrupted file, unsupported format), auto-advance queue off-thread with SessionId
-            var handler = TrackEnded;
-            if (handler != null)
+            if (started)
             {
-                long endedSession = sessionId;
-                string endedUri = urlOrPath;
-                ThreadPool.QueueUserWorkItem(_ => handler.Invoke(this, new TrackEndedEventArgs(endedSession, endedUri)));
+                // Start periodic position reporting and notify listeners OUTSIDE
+                // _streamLock (load-bearing invariant - see _streamLock comment).
+                StartPositionTimer();
+                TrackStarted?.Invoke(this, urlOrPath);
             }
-        }
+            else if (stream == 0)
+            {
+                // On stream load failure (corrupted file, unsupported format),
+                // auto-advance queue off-thread with THIS call's session identity.
+                var handler = TrackEnded;
+                if (handler != null)
+                {
+                    ThreadPool.QueueUserWorkItem(_ => handler.Invoke(this, new TrackEndedEventArgs(sessionId, urlOrPath)));
+                }
+            }
 
-        return sessionId;
+            return sessionId;
+        }
     }
 
     public void Pause()
@@ -284,14 +380,14 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         if (resumed) StartPositionTimer();
     }
 
-    private void FadeAndFreeStream(int streamToFree, int fadeMs)
+    // Slides a superseded stream to silence and frees it after the fade. The
+    // caller MUST hold _streamLock (Play/Stop call this from inside their lock
+    // section); only the deferred free re-acquires it on a pool thread.
+    private void FadeAndFreeStreamUnlocked(int streamToFree, int fadeMs)
     {
         if (streamToFree == 0) return;
 
-        lock (_streamLock)
-        {
-            _fadingStreams.Add(streamToFree);
-        }
+        _fadingStreams.Add(streamToFree);
 
         Bass.ChannelSlideAttribute(streamToFree, ChannelAttribute.Volume, 0f, fadeMs);
         Task.Run(async () =>
@@ -303,6 +399,7 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
                 {
                     Bass.ChannelStop(streamToFree);
                     Bass.StreamFree(streamToFree);
+                    _endSyncs.Remove(streamToFree);
                 }
             }
         });
@@ -313,35 +410,29 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         StopPositionTimer();
         lock (_streamLock)
         {
+            // Abort any in-flight Play whose stream is still being created
+            // outside the lock: it will see the new generation and free quietly.
+            _stopGeneration++;
+
             if (_currentStream != 0)
             {
                 int streamToStop = _currentStream;
                 _currentStream = 0;
+                DetachEndSyncUnlocked(streamToStop); // AUDIO-07: a fading/stopped stream must never raise TrackEnded
                 RemoveEqUnlocked();
 
                 if (_crossfadeDurationMs > 0 && Bass.ChannelIsActive(streamToStop) == ManagedBass.PlaybackState.Playing)
                 {
                     int fadeMs = Math.Min(_crossfadeDurationMs, 500); // 500ms quick fade out on explicit stop
-                    FadeAndFreeStream(streamToStop, fadeMs);
+                    FadeAndFreeStreamUnlocked(streamToStop, fadeMs);
                 }
                 else
                 {
                     Bass.ChannelStop(streamToStop);
                     Bass.StreamFree(streamToStop);
+                    _endSyncs.Remove(streamToStop);
                 }
             }
-        }
-    }
-
-    // Frees the active stream. Caller MUST hold _streamLock.
-    private void FreeStreamInternal()
-    {
-        if (_currentStream != 0)
-        {
-            RemoveEqUnlocked(); // Explicitly detach active FX handles before freeing stream
-            Bass.ChannelStop(_currentStream);
-            Bass.StreamFree(_currentStream);
-            _currentStream = 0;
         }
     }
 
@@ -395,11 +486,15 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         if (_currentStream == 0) return;
         try
         {
+            // AUDIO-05: BASS applies higher-priority FX FIRST. The EQ must run
+            // before the limiter so the limiter sits last in the chain and can
+            // catch clipping from up-to-+15 dB EQ boosts (the old order had the
+            // compressor ahead of the EQ, where it couldn't).
             if (_eqFxHandle == 0)
-                _eqFxHandle = Bass.ChannelSetFX(_currentStream, EffectType.PeakEQ, 0);
+                _eqFxHandle = Bass.ChannelSetFX(_currentStream, EffectType.PeakEQ, 1);
 
             if (_limiterFxHandle == 0)
-                _limiterFxHandle = Bass.ChannelSetFX(_currentStream, EffectType.Compressor, 1);
+                _limiterFxHandle = Bass.ChannelSetFX(_currentStream, EffectType.Compressor, 0);
 
             if (_eqFxHandle == 0)
             {
@@ -420,7 +515,9 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
     {
         var p = new PeakEQParameters
         {
-            fBandwidth = 2.5f,
+            // AUDIO-06: the ISO center frequencies are 1-octave apart; a 2.5-octave
+            // bandwidth made adjacent bands overlap heavily. Match the spacing.
+            fBandwidth = 1.0f,
             fCenter = EqFreqs[index],
             fGain = _eqGains[index],
             lBand = index
@@ -691,13 +788,16 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
     {
         if (binCount <= 0) binCount = 36;
         var result = new float[binCount];
-        if (_lastFftPeaks == null || _lastFftPeaks.Length != binCount)
-        {
-            _lastFftPeaks = new float[binCount];
-        }
 
         lock (_streamLock)
         {
+            // AUDIO-06: resize the peak buffer under the lock (it used to be
+            // swapped in before taking it - benign today, wrong in principle).
+            if (_lastFftPeaks == null || _lastFftPeaks.Length != binCount)
+            {
+                _lastFftPeaks = new float[binCount];
+            }
+
             if (_currentStream == 0 || Bass.ChannelIsActive(_currentStream) != ManagedBass.PlaybackState.Playing)
             {
                 for (int i = 0; i < binCount; i++)
@@ -761,6 +861,33 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         }
     }
 
+    // Caller MUST hold _streamLock. Registers the natural-end sync together with
+    // THIS stream's identity; the callback resolves identity from its own
+    // `channel` argument instead of reading global state (AUDIO-07).
+    private void RegisterEndSyncUnlocked(int stream, long sessionId, string uri)
+    {
+        int syncHandle = Bass.ChannelSetSync(stream, SyncFlags.End | SyncFlags.Mixtime, 0, _endSyncCallback, IntPtr.Zero);
+        if (syncHandle != 0)
+        {
+            _endSyncs[stream] = new EndSyncIdentity(syncHandle, sessionId, uri);
+        }
+        else
+        {
+            // Without the sync a natural end cannot auto-advance the queue.
+            Debug.WriteLine($"[OCTAVE ENGINE] Failed to register End sync for stream {stream}! Error: {Bass.LastError}");
+        }
+    }
+
+    // Caller MUST hold _streamLock. Removes a stream's End-sync so a superseded /
+    // crossfaded-out stream can never raise TrackEnded at all (AUDIO-07).
+    private void DetachEndSyncUnlocked(int stream)
+    {
+        if (_endSyncs.Remove(stream, out var identity))
+        {
+            Bass.ChannelRemoveSync(stream, identity.SyncHandle);
+        }
+    }
+
     private void OnTrackEndedCallback(int handle, int channel, int data, IntPtr user)
     {
         // This executes on BASS's unmanaged sync thread. Freeing the stream or
@@ -769,16 +896,27 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         // TrackEnded notification onto a thread-pool thread so the callback can
         // return immediately and the queue advances on a clean managed thread.
         StopPositionTimer();
+
+        EndSyncIdentity identity;
+        lock (_streamLock)
+        {
+            // AUDIO-07: resolve identity from the channel that ACTUALLY ended,
+            // not from the globals. A stream whose sync we already detached
+            // (manual skip / crossfade / stop) has no entry here - its late end
+            // is dropped instead of masquerading as the incoming track's end.
+            if (!_endSyncs.Remove(channel, out identity))
+            {
+                return;
+            }
+        }
+
         var handler = TrackEnded;
         if (handler != null)
         {
-            long endedSession;
-            string endedUri;
-            lock (_streamLock)
-            {
-                endedSession = _currentSessionId;
-                endedUri = _currentSourceUri;
-            }
+            // Copy before leaving the callback scope; raise OUTSIDE _streamLock
+            // (load-bearing invariant - see _streamLock comment).
+            long endedSession = identity.SessionId;
+            string endedUri = identity.Uri;
             ThreadPool.QueueUserWorkItem(_ => handler.Invoke(this, new TrackEndedEventArgs(endedSession, endedUri)));
         }
     }
@@ -815,51 +953,42 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
 
     public void Dispose()
     {
-        Dispose(true);
-        GC.SuppressFinalize(this);
-    }
-
-    protected virtual void Dispose(bool disposing)
-    {
-        if (!_disposed)
+        StopPositionTimer();
+        lock (_streamLock)
         {
-            if (disposing)
-            {
-                StopPositionTimer();
-            }
-
-            lock (_streamLock)
-            {
-                foreach (var fading in _fadingStreams)
-                {
-                    Bass.ChannelStop(fading);
-                    Bass.StreamFree(fading);
-                }
-                _fadingStreams.Clear();
-
-                // Free BASS stream if open
-                if (_currentStream != 0)
-                {
-                    RemoveEqUnlocked();
-                    Bass.ChannelStop(_currentStream);
-                    Bass.StreamFree(_currentStream);
-                    _currentStream = 0;
-                }
-
-                // Free BASS device context
-                if (_isInitialized)
-                {
-                    Bass.Free();
-                    _isInitialized = false;
-                }
-            }
-
+            if (_disposed) return;
             _disposed = true;
-        }
-    }
 
-    ~ManagedBassAudioService()
-    {
-        Dispose(false);
+            foreach (var fading in _fadingStreams)
+            {
+                Bass.ChannelStop(fading);
+                Bass.StreamFree(fading);
+            }
+            _fadingStreams.Clear();
+            _endSyncs.Clear();
+
+            // Free BASS stream if open
+            if (_currentStream != 0)
+            {
+                RemoveEqUnlocked();
+                Bass.ChannelStop(_currentStream);
+                Bass.StreamFree(_currentStream);
+                _currentStream = 0;
+            }
+
+            // Free BASS device context
+            if (_isInitialized)
+            {
+                Bass.Free();
+                _isInitialized = false;
+            }
+        }
+
+        // AUDIO-04: the finalizer is gone. Native teardown used to also run from
+        // the finalizer thread - taking _streamLock there and calling into BASS
+        // from a finalizer risks native re-entry, and Bass.Free() from an
+        // undisposed instance could tear down the shared engine under unrelated
+        // work (TEST-17 pairs with this; B15 adds the explicit-dispose test sweep).
+        // This service is an app-lifetime singleton: teardown is deterministic only.
     }
 }

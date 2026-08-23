@@ -1257,6 +1257,32 @@ None of these break behavior or lose data; they are intentionally **not** assign
 
 *(Appended at the end of the document per the user's instruction: every resolved issue is recorded here as it lands. Newest session first. Format: batch → commit → per-ID status → acceptance evidence → notes/behavior changes. IDs marked ✅ should be treated as fixed; later batches must not re-fix them.)*
 
+### Session 2026-08-23 — Batch 5 — Audio engine safety *(commit: this session)*
+
+**Files opened**: `ManagedBassAudioService.cs` (the one the batch names) + new `ManagedBassAudioServiceTests.cs` + `Octave.Core.Tests.csproj` (two `<None>` items so the test host can load the native `bass.dll`/`bass_fx.dll` — the real-engine tests need them). The load-bearing §12.4 invariant is preserved and now documented as a comment on `_streamLock`: **no event is raised while `_streamLock` is held**.
+
+| ID | Status | Evidence |
+|----|--------|----------|
+| AUDIO-01 | ✅ Fixed | `Play` restructured into three phases: (1) retire the previous stream under `_streamLock` (quick native handle calls only), (2) `Bass.CreateStream` — including blocking HTTP connects — runs **outside** any lock, (3) install/attach under `_streamLock`. Concurrent Plays are serialized by a separate `_playGate` so phase interleaving can't leak streams; nothing acquires `_streamLock` then `_playGate`, so no ordering deadlock. Position timer, FFT reads, and `Status`/`PositionSeconds` polls no longer block behind network I/O. |
+| AUDIO-02 | ✅ Fixed | The No-Sound fallback now records state instead of pretending success: `IsSilentFallback` (public on the concrete class) is set when device `-1` fails and device `0` succeeds, with a prominent warning log. Every subsequent `Play` calls `TryRecoverRealDevice()`, which retries `Bass.Init(-1)`; a successful re-init becomes the calling thread's current device, and the stream created later in that same Play call deterministically lands on real output. |
+| AUDIO-03 | ✅ Fixed | Lazy `Init()` moved inside `_playGate` — concurrent Plays can no longer both enter `Bass.Init`. |
+| AUDIO-04 | ✅ Fixed | Finalizer and `Dispose(bool)` removed entirely; native teardown (`fading streams → current stream → Bass.Free()`) happens only in deterministic `Dispose()` under `_streamLock`, which is now idempotent (re-checks `_disposed` under the lock). No more finalizer-thread lock acquisition / native re-entry risk, and an undisposed instance can no longer tear down the shared BASS engine from a finalizer (TEST-17's root cause; B15 adds the dispose-sweep). |
+| AUDIO-05 | ✅ Fixed | Priorities swapped per BASS semantics (higher priority applies FIRST): PeakEQ now priority 1, Compressor/limiter priority 0 — the limiter sits last in the chain where it can actually catch clipping from up-to-+15 dB EQ boosts (previously it ran ahead of the EQ and couldn't). |
+| AUDIO-06 | ✅ Fixed *(present parts)* | `CrossfadeDurationMs` clamped to `[0, 10000]`; PeakEQ bandwidth 2.5 → 1.0 octaves to match the 1-octave ISO band spacing; `_lastFftPeaks` resize moved inside `_streamLock`. The "benign aligned-float reads" sub-item was left as-is — the audit itself grades it benign, and locking those reads would add contention on every volume/preamp access for no correctness gain. |
+| AUDIO-07 | ✅ Fixed | Per-stream End-sync identity: `RegisterEndSyncUnlocked` stores `(syncHandle, sessionId, uri)` keyed by stream handle at create-time; the callback resolves identity from its own `channel` argument — global `_currentSessionId`/`_currentSourceUri` are **deleted**. `DetachEndSyncUnlocked` (`ChannelRemoveSync` + registry remove) runs on every teardown path: Play's fade branch, Play's stop/free branch, Stop's fade branch, Stop's stop/free branch, and Dispose clears the registry. A late/superseded end finds no entry and is dropped. Failure-path `TrackEnded` keeps its local per-call identity (the one case where that is correct). Regression test drives the REAL engine: skip track A via crossfade inside its final stretch → exactly two deliveries, `(sessionA, fileA)` then `(sessionB, fileB)` — under the old code the first delivery reported B's identity (the queue-skip bug); a third delivery would mean a lingering sync survived the detach. |
+
+#### Notes & deliberate trade-offs
+
+- **New guard — stop-vs-inflight-play**: because stream creation now happens outside the lock, a `Stop()` during a slow HTTP connect would otherwise install the stream after Stop returned. `Stop` bumps `_stopGeneration`; Play captures it before creating and, if it changed, frees the freshly-created stream quietly (no events) — honoring the user's explicit stop.
+- **Transient zeros during transitions**: with the lock released during connect, `PositionSeconds`/`Status` read `_currentStream == 0` for the connect duration and briefly report 0 / Stopped. That beats a multi-second UI freeze (the bug being fixed); queue-side state (what the UI actually binds to) is unaffected.
+- **AUDIO-02 surface**: `IsSilentFallback` lives on the concrete class only (batch scope forbids touching `IAudioPlayerService`). UI surfacing of the silent-state warning is deferred until some batch opens that interface; today the warning is logged prominently and recovery is automatic.
+- **Test infrastructure**: `Octave.Core.Tests.csproj` now copies `bass.dll` + `bass_fx.dll` from the Desktop project into the test output — the first tests to drive real playback. WAV fixtures are generated in-code (16-bit mono PCM, core-decodable, no plugin needed).
+- Dead code removed while in the file: `FreeStreamInternal` had zero call sites (its body was inlined in `Dispose` all along).
+
+**Acceptance verified** (§15 Batch 5): no lock held across I/O (three-phase structure; `_streamLock` sections contain only quick native handle calls) · dispose deterministic + idempotent (test) · crossfade-skip regression passes against the real engine (test).
+
+**Final state**: `dotnet build Octave.Desktop` = 0 warnings / 0 errors · `dotnet test Octave.Core.Tests` = **174/174** (170 prior + 4 new audio-safety tests).
+
 ### Session 2026-08-23 — Batch 4 — Playback event storms & queue integrity *(commit: this session)*
 
 **Files opened**: `QueueService.cs`, `NowPlayingViewModel.cs`, `NowPlayingPage.xaml.cs` (the three the batch names) + `IQueueService.cs` (one added member for NP-10) + `QueueServiceTests.cs`. The service was rewritten around one discipline: **mutate under `_queueLock` → snapshot via `CaptureStateUnlocked()` → raise events only after the lock is released** (`RaisePlaybackEvents`).

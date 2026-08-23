@@ -22,4 +22,13 @@
     <ProjectReference Include="..\Octave.Core\Octave.Core.csproj" />
   </ItemGroup>
 
+  <!-- Batch 5 (§15): the ManagedBassAudioService tests drive the REAL engine,
+       so the native BASS binaries must sit next to the test host. Only the
+       core + FX dlls are needed (WAV decode is core; EQ/FX wrapper probes
+       bass_fx.dll); the full plugin set stays Desktop-only. -->
+  <ItemGroup>
+    <None Include="..\Octave.Desktop\bass.dll" Link="bass.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\Octave.Desktop\BassPlugins\bass_fx.dll" Link="bass_fx.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
