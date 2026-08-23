@@ -243,11 +243,12 @@ public partial class App : Application
             var db = Services.GetRequiredService<SqliteDbContext>();
             var watcher = Services.GetRequiredService<ILibraryWatcherService>();
             var folders = await db.GetMonitoredFoldersAsync();
+            // INT-04: first run no longer silently claims the user's Music library.
+            // Monitoring starts only from folders the user explicitly added; the
+            // library empty-state offers the "Add your music folder" entry point.
             if (folders.Count == 0)
             {
-                string myMusic = System.Environment.GetFolderPath(System.Environment.SpecialFolder.MyMusic);
-                await db.AddMonitoredFolderAsync(myMusic);
-                folders = new System.Collections.Generic.List<string> { myMusic };
+                System.Diagnostics.Debug.WriteLine("[Startup Diagnostics] No monitored folders configured; library watching idle until the user adds one.");
             }
             foreach (var folder in folders)
             {

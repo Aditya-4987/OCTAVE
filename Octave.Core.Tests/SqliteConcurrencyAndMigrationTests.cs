@@ -285,4 +285,48 @@ public class SqliteConcurrencyAndMigrationTests : IDisposable
         // Writes must stay non-fatal too.
         await coldCache.SetAsync("key2", new[] { "c" });
     }
+
+    // =================================================================
+    // Batch 9 (§15): SCAN-11 — the Tracks.Disc column exists via the
+    // lightweight migration, backfills 1 for legacy rows, and persists the
+    // scanner's real disc number.
+    // =================================================================
+
+    [Fact]
+    public async Task Tracks_DiscColumn_MigratedWithDefaultOne_AndPersistsRealValue()
+    {
+        // The column must exist after InitializeAsync (fresh or migrated alike).
+        using (var raw = new SqliteConnection($"Data Source={_dbPath}"))
+        {
+            await raw.OpenAsync();
+            using var check = raw.CreateCommand();
+            check.CommandText = "SELECT COUNT(*) FROM pragma_table_info('Tracks') WHERE name = 'Disc';";
+            Assert.Equal(1L, Convert.ToInt64(await check.ExecuteScalarAsync()));
+        }
+
+        // A legacy row written WITHOUT the Disc column (pre-SCAN-11 schema shape)
+        // reads back as disc 1.
+        using (var raw = new SqliteConnection($"Data Source={_dbPath}"))
+        {
+            await raw.OpenAsync();
+            using var cmd = raw.CreateCommand();
+            cmd.CommandText = @"
+                INSERT OR IGNORE INTO Artists (Id, Name, IsLocal) VALUES ('ar_l', 'Artist L', 1);
+                INSERT OR IGNORE INTO Albums (Id, Title, ArtistId, ArtistName, Year, Provider) VALUES ('al_l', 'Album L', 'ar_l', 'Artist L', 1999, 'Local');
+                INSERT INTO Tracks (Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded, Genre, ReplayGain)
+                VALUES ('tr_legacy', 'Legacy Song', 'ar_l', 'Artist L', 'al_l', 'Album L', 100.0, 'C:\\music\\legacy.mp3', 'Local', 3, 1999, 0, '', 0.0);";
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var modern = MakeTrack("tr_disc2", "Disc Two Song") with { DiscNumber = 2 };
+        await _dbContext.UpsertTrackAsync(modern);
+
+        var legacy = await _dbContext.GetTrackByIdAsync("tr_legacy");
+        Assert.NotNull(legacy);
+        Assert.Equal(1, legacy!.DiscNumber);
+
+        var readBack = await _dbContext.GetTrackByIdAsync("tr_disc2");
+        Assert.NotNull(readBack);
+        Assert.Equal(2, readBack!.DiscNumber);
+    }
 }

@@ -1,10 +1,16 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+
+  <!-- Batch 9 (§15): deterministic tests for the watcher's debounce state
+       machine (WATCH-03/04/09) drive the internal enqueue/callback surface. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Octave.Core.Tests" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="ManagedBass" Version="4.0.2" />

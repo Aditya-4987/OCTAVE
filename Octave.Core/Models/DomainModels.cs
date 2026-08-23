@@ -40,7 +40,8 @@ public record Track(
     int Year,
     DateTime DateAdded,
     string Genre = "",      // Trailing default so existing constructors are unaffected
-    float ReplayGain = 0.0f // Applied in playback to normalize loudness
+    float ReplayGain = 0.0f, // Applied in playback to normalize loudness
+    int DiscNumber = 1      // SCAN-11: multi-disc albums order by (Disc, Track); 1 when the tag is absent
 );
 
 public record Playlist(
