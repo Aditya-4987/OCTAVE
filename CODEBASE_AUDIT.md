@@ -959,9 +959,9 @@ Several §12 criticals are **the same root cause** surfacing in multiple files �
 ### ⏳ Still open (re-confirmed this pass — do not assume fixed)
 | ID | Evidence it is still present |
 |----|------------------------------|
-| **NP-19** | `QueuePanel.xaml:82` still binds the thumbnail via `Source="{x:Bind Track.SourceUri, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=40}"` — wrong converter input for a queue row thumb. |
-| **UI-PL-01** | `PlaylistDetailPage.xaml.cs:138-140` `DeletePlaylist_Click` calls `ViewModel.DeleteSelfCommand.Execute(null)` **directly, with no confirmation dialog** (contrast the now-fixed duplicate-delete). |
-| **SYS-02 / SH-10** | `App.xaml.cs:53-57` still sets `e.Handled = true` **unconditionally** in `UnhandledException`; the DB-init `throw` at :203 is swallowed → invisible zombie process on init failure. |
+| ~~**NP-19**~~ ✅ **FIXED — Batch 13** (`2df5d5e`) | Queue rows now bind the VM-hydrated `QueueItem.ArtworkUrl` token; see §18 Batch 13. |
+| ~~**UI-PL-01**~~ ✅ **FIXED — Batch 14** (`b57fabd`) | `DeletePlaylist_Click` confirms via ContentDialog before executing; see §18 Batch 14. |
+| **SYS-02 / SH-10** | ✅ **FIXED — Batch 12** (`86bc36e`) — native fatal-error dialog + exit; only `OperationCanceledException` is marked handled. See §18 Batch 12. |
 | **PH-01 / PH-02** | `bin/`, `obj/`, and `.vs/` artifacts are still **tracked** (git status shows dozens of `Octave.Core.Tests/bin,obj/**`, `.vs/OCTAVE.slnx/**`). |
 | **PH-03** | `.gitignore` line 5 is `/claude` (typo) instead of `.claude/`. |
 | **PH-05 / PH-06 / PH-07** | `build.log`, `temp`, and `test_fx/` still present at repo root; `CODEBASE_AUDIT.md` itself is untracked. |
@@ -1256,6 +1256,103 @@ None of these break behavior or lose data; they are intentionally **not** assign
 ## 18. Resolution Log — fixes applied by the coding agent
 
 *(Appended at the end of the document per the user's instruction: every resolved issue is recorded here as it lands. Newest session first. Format: batch → commit → per-ID status → acceptance evidence → notes/behavior changes. IDs marked ✅ should be treated as fixed; later batches must not re-fix them.)*
+
+### Session 2026-08-23 — Batch 14 — Theme sweep & UX safeguards *(commit `b57fabd`)*
+
+**Files opened**: worked strictly **page-by-page** as the batch letter prescribes — `MainWindow.xaml`(.cs) → `HomePage.xaml`(.cs) → `AlbumsPage.xaml`(.cs) → `ArtistsPage.xaml`(.cs) → `EntityDetailPage.xaml` → `PlaylistDetailPage.xaml`(.cs) → `PlaylistsPage.xaml`(.cs) → `MiniPlayerWindow.xaml`(.cs) → `SettingsPage.xaml` — plus `App.xaml`, whose shared card style turned out to be the root cause feeding three of this batch's named surfaces (NF-14; drift justified in notes).
+
+| ID | Status | Evidence |
+|----|--------|----------|
+| MC-04 | ✅ Already resolved *(Batch 13)* | CreditsPanel sweep landed there. Ledger row so B14's ID range is fully accounted for. |
+| MC-05 | ✅ Already resolved *(Batch 13)* | QueuePanel header sweep landed there. |
+| MC-06 | ✅ Already resolved *(Batch 13)* | QueuePanel title/artist sweep landed there. |
+| NP-14 | ✅ Already resolved *(Batch 13)* | LyricsPanel resolves accent/default brushes per call from `Application.Current.Resources`; the queue-row converter keys its tint off the accent color so a change rebuilds it. No cached-across-themes brush remains in either panel. |
+| NP-17 | ✅ Fixed *(via UI-MW-04)* | Its scope is exactly the MainWindow hardcoded-text family (`#888888`/`#CCCCCC`/`White`) — covered by the UI-MW-04 sweep below. |
+| UI-MW-04 | ✅ Fixed | Every hardcoded color in `MainWindow.xaml` swept: all `White`/`#CCCCCC`/`#AAAAAA`/`#888888`/`#E0E0E0` text → Text Fill Primary/Secondary/Tertiary; `#2A2A2A` pane borders → CardStrokeColorDefault; `#333338`/`#26262B` separators → DividerStrokeColorDefault; tooltip `#18181A`/`#333338` → SolidBackgroundFillColorDefault/CardStrokeColorDefault; quality-pill `#1FFFFFFF` → LayerFillColorDefault. The four code-behind brush helpers (shuffle/active/favorite/repeat) now go through a `ThemedBrush(key, fallback)` helper resolving resources PER CALL — a theme switch restyles the transport icons immediately instead of leaving stale brushes. Semantic status colors kept (#00E676 quality / #FFD54F resampling). |
+| UI-HP-04 | ✅ Fixed | HomePage surfaces themed per the row's own prescription: quick-play tile `#1E1E1E` → CardBackgroundFillColorDefault; art placeholders `#2A2A2A`/`#222222`/hero `#2A2A2A` → LayerFillColorDefault; track-card `#222222` → LayerFillColorDefault; empty state `#1E1E24` → CardBackgroundFillColorDefault + `#2A2A36` circle → LayerFillColorDefault; all `White`/`#AAAAAA`/`#888888` text → themed fills. The hero spotlight's dark-only gradient (#252535→#121218) was replaced with the themed card surface (trade-off in notes). |
+| UI-HP-05 | ✅ Fixed | `Card_PointerEntered`/`Card_PointerExited` deleted from code-behind (with their two now-unused usings); hover feedback is a `PointerOver` VisualState inside each data template animating `BorderBrush` → SystemControlHighlightAccentBrush, returning to Normal automatically on exit. The quick-play tile gained `BorderThickness="1"` + themed idle stroke — the old code-behind set `BorderBrush` on a zero-thickness Grid, so quick-tile hover had never rendered at all. |
+| UI-AP-04 | ✅ Fixed | AlbumsPage header/template colors (`White`, `#222222`, `#AAAAAA`) → ThemeResources; same PointerOver hover treatment as HomePage (the page carried the identical code-behind injection, removed with its handlers). |
+| UI-AP-01 | ✅ Fixed | Empty-state container added (accent icon circle + "No albums in your library" + guidance), visibility bound via a new `EmptyStateVisibility(int)` x:Bind function to `ViewModel.Items.Count`. |
+| UI-AR-01 | ✅ Fixed | Same pattern on ArtistsPage: icon circle + "No artists found" + guidance, bound to `ViewModel.Items.Count`; template colors themed; identical code-behind hover injection removed. |
+| UI-ED-04 | ✅ Fixed | Banner text/icon colors (`#AAAAAA`×4, `#CCCCCC`, `White`×3) → Secondary/Primary fills; row-list `#888888` metadata → Tertiary. The banner background was `{StaticResource CardHoverBrush}` (#282828, dark-locked — and dangling after NF-14 removed the resource) → `{ThemeResource LayerFillColorDefaultBrush}`. |
+| UI-MP-03 | ✅ Fixed | Mini player `Background="#1C1C1C"` → `{ThemeResource SolidBackgroundFillColorBaseBrush}` (base fill chosen over Layer because the grid is the window root, not an overlay); remaining `White`/`#888888` swept. Because ThemeResources follow whatever theme the WINDOW carries, the ctor now also applies `RootGrid.RequestedTheme = ThemeHelper.GetSavedTheme()` — previously the mini window silently used the OS theme while the main window used the saved one. |
+| UI-PL-01 | ✅ Fixed | `DeletePlaylist_Click` is now async and shows a ContentDialog ("Delete playlist?" naming the playlist, Delete/Cancel with **Close as default**) before `DeleteSelfCommand.Execute` + GoBack; cancel leaves everything untouched. The PlaylistsPage right-tap "Delete playlist" context-menu item had the same one-click-destroys shape — routed through the identical guard. |
+| UI-PL-02 | ✅ Fixed | New-playlist dialog starts with `IsPrimaryButtonEnabled = false` and a `TextChanged` handler re-enables Create only when `!string.IsNullOrWhiteSpace(input.Text)`. |
+| UI-ST-01 / SH-05 | ✅ Fixed | Verified the audit's claimed dialogs exist and behave: per-file `DeleteDuplicate_Click` (:170) and bulk `DeleteAllDuplicates_Click` (:213, counts files/groups and states the primary-copy-retention rule before confirming). The missing half of SH-05 was the **explanatory label**: the Duplicate Tracks section now states up front that deletions go to the Recycle Bin, keep the highest-quality copy per group, and that "Manage" reviews individual copies. |
+| UI-ST-02 | ✅ Fixed | The neon-green `#00FF66`-on-black "Ignite Main Engines (Run Static Fire)" button — which also floated OUTSIDE the 600 px settings column — is now "Run Engine Diagnostics (Static Fire)", styled as a normal action, placed inside the settings stack as a proper section, and given a caption explaining what it runs and that no library files are modified. The console keeps its deliberate terminal look (#111111 background, green Consolas text). |
+
+#### New findings discovered & fixed on the go *(this session)*
+
+| # | Severity | Location | Finding & Fix |
+|---|----------|----------|---------------|
+| NF-14 | ⚠️ Theme bug (app-wide) | `App.xaml` + consumers | The three "global brushes" hardcoded dark-theme colors — `CardBackgroundBrush` #181818, `CardHoverBrush` #282828, `PageBackgroundBrush` #121212 — plus `StandardCardStyle`'s literal `#2A2A2A` border. Consumers grep-verified: the shared card style (HomePage/Albums/Artists/SearchResults grids), MainWindow's player bar, and BOTH detail-page banners. This was the root cause underneath UI-ED-04/UI-HP-04-class symptoms far beyond HomePage. Brushes deleted; `StandardCardStyle` setters resolve CardBackgroundFillColorDefault/CardStrokeColorDefault directly; player bar → SolidBackgroundFillColorBase; banners → LayerFillColorDefault. |
+| NF-15 | ⚠️ Layout bug | `AlbumsPage.xaml` | The albums GridView never declared `Grid.Row`, so it shared row 0 with the header TextBlock and rendered underneath its text (both children default to row 0; row 1 was empty). Pinned to `Grid.Row="1"`. ArtistsPage had it right — the defect was Albums-only. |
+
+#### Notes & deliberate trade-offs
+
+- **Behavior-preserving today, debt paid anyway**: `ThemeHelper` currently pins the app to `ElementTheme.Dark` (`SaveTheme` is a no-op), so every ThemeResource resolves to its dark value and nothing visibly changes after this batch. The point is that the dark-locked styling debt — the exact thing that made light theme unreadable — no longer exists when theming unlocks.
+- **Hero gradient → solid card surface**: `GradientStop.Color` does not reliably re-resolve on live theme switches the way FrameworkElement properties do, so the two-stop dark gradient was swapped for the themed card fill. The spotlight keeps its elevation via corner radius/padding; if a themed two-tone is wanted later it needs a ThemeDictionary-based brush resource, not inline stops.
+- **Hover VisualState mechanics**: animations without `Storyboard.TargetName` target the element carrying the `VisualStateGroups`, so the templates animate their own root Grid. WinUI styles cannot host visual states, hence the per-template blocks rather than extending `StandardCardStyle`.
+- **Accent-filled buttons keep white foreground**: `PrimaryPlayButtonStyle`/small variants intentionally retain `Foreground="White"` over SystemControlHighlightAccent backgrounds — correct contrast in both themes; not part of any sweep.
+- **UI-MP-03 brush choice**: the audit suggested `LayerFillColorDefaultBrush`, but the mini player root is the window ground, not content layered over something — `SolidBackgroundFillColorBaseBrush` is the faithful themed equivalent of `#1C1C1C`.
+- **Diagnostics section relocation** (part of UI-ST-02): moving it inside the capped stack also fixes the inconsistent-width layout where the harness/console rendered full-window-width below a 600 px settings column.
+- **App.xaml drift justified**: the batch says "page-by-page", but EntityDetail's banner referenced the NF-14 resource being deleted — leaving it would have been a runtime `StaticResource` failure. Fixing the shared source once also kept SearchResultsPage's cards consistent without touching that file.
+
+**Acceptance verified** (§15 Batch 14): no hardcoded hex/`White` remains on any batch page (theme IDs resolve per-theme/per-call) · Albums and Artists show guided empty states bound to collection counts · **every destructive action confirms first** (playlist delete ×2 paths, duplicate single, duplicate bulk with pre-deletion count) · a whitespace-only playlist name cannot be created · the debug button explains itself · §17.3 polish items untouched as prescribed.
+
+**Final state**: `dotnet build Octave.Desktop` = 0 warnings / 0 errors · `dotnet test Octave.Core.Tests` = **265/265** (no Core changes this batch).
+
+---
+
+### Session 2026-08-23 — Batch 13 — Now Playing panels & lyrics UI *(commit `2df5d5e`)*
+
+**Files opened**: exactly the six the batch names — `NowPlayingPage.xaml`(.cs), `LyricsPanel.xaml`(.cs), `QueuePanel.xaml`(.cs), `CreditsPanel.xaml`, `AlbumArtPanel.xaml`(.cs), `SpectrumVisualizerControl.xaml.cs` — plus the wiring sites the fixes imply (`Octave.Core/Models/DomainModels.cs` for QueueItem, `Interfaces/IQueueService.cs` + `Services/Playback/QueueService.cs` for id-based removal, NEW `Converters/QueuePlayStateConverters.cs`, and NEW `Octave.Core.Tests/QueueItemTests.cs`; drift all justified in notes).
+
+| ID | Status | Evidence |
+|----|--------|----------|
+| CRIT-05 | ✅ Fixed | Took the audit's own alternative: the synced-lyrics virtualizing ListView is now a non-virtualized `ItemsControl` inside a `ScrollViewer` (lyric lists are <200 lines). Containers are never recycled, so the `_lineElements` list collected via each line's `Loaded` event can never point at a dead/recycled element; it is cleared and rebuilt whenever `SyncedLines` changes, `_lastHighlightedIndex` resets, and highlighting touches ONLY the outgoing + incoming elements (NP-15) instead of sweeping the whole list. |
+| NP-01 | ✅ Fixed | Dead `WideLayout`/`NarrowLayout` AdaptiveLayoutGroup visual-state block (states with no setters) deleted from NowPlayingPage.xaml; the responsive behavior actually lives in the immediate/collapsed branch logic. |
+| NP-02 | ✅ Fixed | Empty `TopStageGrid_SizeChanged` handler unbound in XAML and the method deleted from code-behind. |
+| NP-05 | ✅ Fixed | `AlbumPanelControl_SizeChanged` sets ONLY `MaxHeight` — it no longer also pins `Height`, which fought the panel's own content sizing. |
+| NP-06 | ✅ Fixed | Both credits click handlers bail with `if (Frame == null) return;` before starting the async DB lookups — no more work fired from a detaching page. |
+| NP-07 | ✅ Fixed | The `AlbumPanelTransform` TranslateTransform block is gone entirely (XAML + the `AlbumPanelTransform.X = 0` reset in code); the slide-out storyboard's `Completed` callback keeps only the genuine post-animation work (hide + collapse). |
+| NP-12 | ✅ Fixed | AlbumArtPanel builds its hover Storyboard ONCE per direction (`_hoverInStoryboard ??= BuildHoverStoryboard(1.0)` / `_hoverOutStoryboard ??= …(0.0)`), `Stop()`+`Begin()` per transition — no new Storyboard allocation per mouse enter/exit. |
+| NP-15 | ✅ Fixed | `UpdateLyricHighlighting` demotes only the previous index and promotes only the current one — the old full-list restyle per lyric tick is gone (paired with CRIT-05's rewrite). |
+| NP-16 | ✅ Fixed | Single scroll driver: `StartBringIntoView(new BringIntoViewOptions { AnimationDesired = true, VerticalAlignmentRatio = 0.4 })` on the incoming element; `ScrollIntoView` removed, so nothing competes for the scroll position anymore (closes UI-NP-03 too). |
+| NP-19 | ✅ Fixed *(was flagged still-open in §14)* | Queue rows bind `QueueItem.ArtworkUrl` — an artwork TOKEN resolved by the view model — never `Track.SourceUri` (the audio file path). Because `Track` carries no artwork field, the VM hydrates tokens lazily after each visible-window rebuild (see notes). |
+| NP-20 | ✅ Fixed | The playing queue row gets a translucent accent tint via `QueuePlayStateBrushConverter` bound to `IsPlaying`; `QueueItem` now implements `INotifyPropertyChanged` (raising on real changes only) so rows update LIVE even though the rebuild guard skips the ListView — see notes for why INPC went on the model. |
+| NP-21 | ✅ Fixed | The playing row's play button flips to a pause glyph via the same converter pair (`ConditionalValueConverter`, E769/E768) with matching accent foreground. |
+| UI-NP-01 | ✅ Fixed | Same defect as NP-19 (file URI bound as artwork): closed by the ArtworkUrl binding + VM hydration. Placeholder shows only for albums genuinely without art. |
+| UI-NP-02 | ✅ Fixed | Playing row is visually distinct (NP-20's tint + glyph), AND each row gained a per-item remove button (X glyph, GhostIconButtonStyle) raising `RemoveItemRequested` → `ViewModel.RemoveQueueItemCommand` → new `IQueueService.RemoveById(itemId)` — index math explained in notes. |
+| UI-NP-03 | ✅ Fixed | Double-scroll eliminated — same fix as NP-16 (one animated BringIntoView at ratio 0.4). |
+| UI-NP-04 | ✅ Fixed | CreditsPanel + QueuePanel hardcoded `White`/`#888888`/`#CCCCCC` swept to Text Fill Primary/Secondary/Tertiary (also closes the MC-04/05/06 trio early — ledger rows recorded under Batch 14). |
+| UI-NP-05 | ✅ Fixed | `RefreshUpNextQueue` compares the candidate visible window against the current one (count + ordinal Id-sequence) and returns early when identical — playback-state pulses no longer destroy and rebuild the entire ListView visual tree (the NP-09 guard this page lacked). |
+| UI-NP-06 | ✅ Fixed | Lyrics toolbar added (collapsed until lyrics exist): offset label + −/+ buttons stepping ±500 ms and a copy-to-clipboard button. Offset lives in `NowPlayingViewModel.LyricsOffsetMs` (clamped ±5000 ms, RESET to 0 on every track change since drift is per-file), applied in `UpdateLyricPosition` as `currentSeconds − offset/1000`, with immediate highlight re-evaluation after adjustment; copy joins synced lines (or unsynced raw text) into a `DataPackage`. |
+| HLP-01 | ✅ Fixed | `SpectrumVisualizerControl` captures its `DispatcherQueue` in the constructor; `UpdateSpectrum` self-marshals — direct `RenderSpectrum` call when `HasThreadAccess`, otherwise `TryEnqueue`. Cross-thread FFT frames can no longer throw regardless of caller thread. |
+
+#### New findings discovered & fixed on the go *(this session)*
+
+| # | Severity | Location | Finding & Fix |
+|---|----------|----------|---------------|
+| NF-12 | 🔴 Build-system trap | WinUI markup compiler (WinAppSDK 2.2.1) | UNQUALIFIED instance-method `{x:Bind Function(...)}` bindings INSIDE a DataTemplate kill the XAML compiler: PageCodeGen dies with internal error WMC9999, and the real message is masked by a culture-dependent resource failure ("Could not find any resources… ErrorMessages.resources"). Diagnosed via `-v diag` "perfXC_PageCodeGenStart" markers pinpointing QueuePanel. Workaround shipped: classic `{Binding}` + `IValueConverter`s for in-template visuals (`QueuePlayStateConverters.cs`). Static xmlns-qualified functions DO compile inside templates (`MainWindow.GetSuggestionGlyph` proves it) and instance methods work fine OUTSIDE templates — only the unqualified-instance-method-in-template combination NREs the compiler. |
+| NF-13 | ⚠️ Theme bug | Cached-brush pattern | Brushes cached via `??=` keep the OLD theme's color after a light/dark switch forever. LyricsPanel now resolves `SystemControlHighlightAccentBrush`/`TextFillColorPrimaryBrush` via `TryGetValue` PER CALL (hardcoded fallbacks preserved), and the queue tint converter rebuilds itself when the accent color changes — establishing "never cache a themed brush across themes" as the local convention. |
+
+#### Notes & deliberate trade-offs
+
+- **Converters instead of x:Bind functions in templates** (forced by NF-12): the queue-row visuals run through `QueuePlayStateBrushConverter` (parameter selects Background vs Foreground mode) and `ConditionalValueConverter` (bool→glyph). Slightly more moving parts than a function binding, but it compiles, and the converter doubles as the NF-13-correct place to resolve themed brushes.
+- **INPC on `QueueItem` (a model)**: with UI-NP-05's rebuild guard in place, `IsPlaying` flips no longer coincide with a ListView rebuild — the row visuals would freeze. Making the model raise `PropertyChanged` (only on real value changes; `ArtworkUrl` also raises on the null→"" hydration transition but suppresses identical repeats) lets OneWay bindings update the playing row in place. `Track` records stay immutable; only the queue wrapper got the treatment.
+- **Id-based removal (`RemoveById`)**: the Up Next panel shows a WINDOW of the queue starting at the playing item, so the panel's row index ≠ the service's full-queue index — a plain `RemoveAt(visibleIndex)` could delete the wrong entry. `RemoveById` resolves the index under `_queueLock` via `FindIndex(i => i.Id == itemId)`; both `RemoveAt` and `RemoveById` share one private `RemoveAtUnlocked` (capture state inside the lock, raise events outside) so the current-track/stop semantics stay identical across both paths.
+- **Artwork hydration design**: pending pairs are collected synchronously (items with `ArtworkUrl == null` and a non-empty AlbumId), one DB lookup fires per DISTINCT album, results apply through `TryEnqueue` with a disposed-check, and EMPTY-STRING tokens are cached too ("album has no art") so state pulses don't re-query the same artless album forever. Fire-and-forget with try/catch logging — artwork must never break queue updates.
+- **Non-virtualized ItemsControl trade-off (CRIT-05)**: accepted by the audit's own reasoning — lyric lists are bounded (<200 lines) so container recycling buys nothing, while correctness (stable element references) buys back the entire CRIT-05 class. If lyrics ever become unbounded, revisit with virtualization + `ContainerFromIndex`.
+- **Offset semantics**: ±500 ms steps, ±5000 ms clamp, per-track reset. The reset is deliberate — LRC drift is a property of the FILE's timestamping, so carrying an adjustment across tracks misapplies it elsewhere.
+- **Self-marshaling contract (HLP-01)**: the control owns its threading (capture-in-ctor, branch-per-call) so callers like MainWindow's `CompositionTarget.Rendering` tick and any future engine callback need zero dispatcher knowledge.
+- **Testability**: `QueueService` is constructible in `Octave.Core.Tests` (mocked audio player + temp-file DbContext), so `RemoveById` got 3 facts (preserves current track / removing current stops playback / unknown-or-empty id is a no-op) plus 3 `QueueItem` INPC facts — 6 new tests, 259 → 265.
+
+**Acceptance verified** (§15 Batch 13): queue-row thumbnails render from real album tokens · the playing queue row is tinted and glyph-swapped live · lyrics auto-scroll ONCE with the highlight tracking the correct line (no recycling staleness possible) · spectrum updates never throw cross-thread · per-row remove deletes the right queue entry · build 0 warnings / 0 errors.
+
+**Final state**: `dotnet build Octave.Desktop` = 0 warnings / 0 errors · `dotnet test Octave.Core.Tests` = **265/265** (259 prior + 6 new).
+
+---
 
 ### Session 2026-08-23 — Batch 12 — System integration & shell *(commit `86bc36e`)*
 
