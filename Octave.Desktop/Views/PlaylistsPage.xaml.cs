@@ -46,6 +46,8 @@ public sealed partial class PlaylistsPage : Page
             if (this.XamlRoot is null) return;
 
             var input = new TextBox { PlaceholderText = "Playlist name" };
+            // UI-PL-02: Create stays disabled until the name contains at least
+            // one non-whitespace character.
             var dialog = new ContentDialog
             {
                 Title = "New Playlist",
@@ -53,8 +55,11 @@ public sealed partial class PlaylistsPage : Page
                 PrimaryButtonText = "Create",
                 CloseButtonText = "Cancel",
                 DefaultButton = ContentDialogButton.Primary,
+                IsPrimaryButtonEnabled = false,
                 XamlRoot = this.XamlRoot
             };
+            input.TextChanged += (s, args) =>
+                dialog.IsPrimaryButtonEnabled = !string.IsNullOrWhiteSpace(input.Text);
 
             var result = await dialog.ShowAsync();
             if (result == ContentDialogResult.Primary)
@@ -74,9 +79,38 @@ public sealed partial class PlaylistsPage : Page
         {
             var flyout = new MenuFlyout();
             var delete = new MenuFlyoutItem { Text = "Delete playlist" };
-            delete.Click += (s, a) => ViewModel.DeletePlaylistCommand.Execute(playlist);
+            delete.Click += (s, a) => _ = ConfirmDeleteAsync(playlist);
             flyout.Items.Add(delete);
             flyout.ShowAt(fe, e.GetPosition(fe));
+        }
+    }
+
+    // Same destructive-action guard as the detail page's delete button
+    // (UI-PL-01 family): the context menu used to delete with no confirmation.
+    private async System.Threading.Tasks.Task ConfirmDeleteAsync(Playlist playlist)
+    {
+        try
+        {
+            if (this.XamlRoot is null) return;
+
+            var dialog = new ContentDialog
+            {
+                Title = "Delete playlist?",
+                Content = $"\"{playlist.Title}\" will be permanently deleted. The tracks themselves stay in your library.",
+                PrimaryButtonText = "Delete",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = this.XamlRoot
+            };
+
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            {
+                ViewModel.DeletePlaylistCommand.Execute(playlist);
+            }
+        }
+        catch (System.Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Playlists] Delete dialog failed: {ex}");
         }
     }
 }

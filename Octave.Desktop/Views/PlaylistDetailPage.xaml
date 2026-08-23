@@ -15,33 +15,36 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- Upper Banner Section -->
-        <Grid Grid.Row="0" Margin="-24,-24,-24,24" Padding="32,64,32,32" Background="{StaticResource CardHoverBrush}">
+        <!-- Upper Banner Section.
+             Hardcoded #222222 / #555555 / #AAAAAA / White replaced with theme
+             resources; the banner background was {StaticResource CardHoverBrush}
+             (#282828, dark-locked) and now resolves the themed layer fill. -->
+        <Grid Grid.Row="0" Margin="-24,-24,-24,24" Padding="32,64,32,32" Background="{ThemeResource LayerFillColorDefaultBrush}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
             <!-- Playlist Icon -->
-            <Grid Grid.Column="0" Width="232" Height="232" Background="#222222" CornerRadius="8" Margin="0,0,32,0">
-                <FontIcon Glyph="&#xE142;" FontFamily="Segoe MDL2 Assets" FontSize="96" Foreground="#555555" />
+            <Grid Grid.Column="0" Width="232" Height="232" Background="{ThemeResource LayerFillColorDefaultBrush}" CornerRadius="8" Margin="0,0,32,0">
+                <FontIcon Glyph="&#xE142;" FontFamily="Segoe MDL2 Assets" FontSize="96" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
             </Grid>
 
             <!-- Text details -->
             <StackPanel Grid.Column="1" VerticalAlignment="Bottom">
-                <TextBlock Text="PLAYLIST" FontSize="12" FontWeight="Bold" Foreground="#AAAAAA" />
-                <TextBlock Text="{x:Bind ViewModel.Title, Mode=OneWay}" FontSize="64" FontWeight="Bold" Foreground="White" TextWrapping="Wrap" Margin="0,8,0,8" />
-                <TextBlock Text="{x:Bind ViewModel.Subtitle, Mode=OneWay}" FontSize="16" Foreground="#AAAAAA" Margin="0,0,0,24" />
+                <TextBlock Text="PLAYLIST" FontSize="12" FontWeight="Bold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Text="{x:Bind ViewModel.Title, Mode=OneWay}" FontSize="64" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextWrapping="Wrap" Margin="0,8,0,8" />
+                <TextBlock Text="{x:Bind ViewModel.Subtitle, Mode=OneWay}" FontSize="16" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Margin="0,0,0,24" />
 
                 <StackPanel Orientation="Horizontal" Spacing="24" VerticalAlignment="Center">
                     <Button Command="{x:Bind ViewModel.PlayAllCommand}" Style="{StaticResource PrimaryPlayButtonStyle}">
                         <FontIcon Glyph="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="24" />
                     </Button>
                     <Button Click="DeletePlaylist_Click" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Delete Playlist">
-                        <FontIcon Glyph="&#xE74D;" FontFamily="Segoe MDL2 Assets" Foreground="#AAAAAA" FontSize="20" />
+                        <FontIcon Glyph="&#xE74D;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="20" />
                     </Button>
                     <Button Click="BackButton_Click" Style="{StaticResource GhostIconButtonStyle}">
-                        <FontIcon Glyph="&#xE72B;" FontFamily="Segoe MDL2 Assets" Foreground="#AAAAAA" FontSize="20" />
+                        <FontIcon Glyph="&#xE72B;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="20" />
                     </Button>
                 </StackPanel>
             </StackPanel>
@@ -73,17 +76,17 @@
                                 DataContextChanged="PlayButton_DataContextChanged"
                                 Background="Transparent" BorderBrush="Transparent" Padding="4"
                                 HorizontalAlignment="Center" VerticalAlignment="Center">
-                            <FontIcon Glyph="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="White" />
+                            <FontIcon Glyph="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
                         </Button>
 
-                        <TextBlock Grid.Column="1" Text="{x:Bind Title}" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="White" TextTrimming="CharacterEllipsis" Margin="8,0,0,0" />
+                        <TextBlock Grid.Column="1" Text="{x:Bind Title}" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" Margin="8,0,0,0" />
 
                         <FontIcon Grid.Column="2" Glyph="{x:Bind local:PlaylistDetailPage.GetProviderGlyph(Provider)}"
-                                  FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#888888" Margin="12,0" VerticalAlignment="Center" />
+                                  FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="{ThemeResource TextFillColorTertiaryBrush}" Margin="12,0" VerticalAlignment="Center" />
 
-                        <TextBlock Grid.Column="3" Text="{x:Bind ArtistName}" VerticalAlignment="Center" Foreground="#888888" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Grid.Column="3" Text="{x:Bind ArtistName}" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextTrimming="CharacterEllipsis" />
 
-                        <TextBlock Grid.Column="4" Text="{x:Bind local:PlaylistDetailPage.FormatDuration(DurationSeconds)}" VerticalAlignment="Center" Foreground="#888888" HorizontalAlignment="Right" Margin="0,0,8,0" />
+                        <TextBlock Grid.Column="4" Text="{x:Bind local:PlaylistDetailPage.FormatDuration(DurationSeconds)}" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Right" Margin="0,0,8,0" />
 
                         <!-- More Menu -->
                         <Button Grid.Column="5" 
@@ -93,7 +96,7 @@
                                 Click="MoreMenuButton_Click"
                                 HorizontalAlignment="Center" 
                                 VerticalAlignment="Center">
-                            <FontIcon Glyph="&#xE712;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#888888"/>
+                            <FontIcon Glyph="&#xE712;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
                         </Button>
                     </Grid>
                 </DataTemplate>

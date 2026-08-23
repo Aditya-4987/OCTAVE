@@ -10,18 +10,21 @@
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
             </ResourceDictionary.MergedDictionaries>
 
-            <!-- Global Brushes -->
-            <SolidColorBrush x:Key="CardBackgroundBrush" Color="#181818" />
-            <SolidColorBrush x:Key="CardHoverBrush" Color="#282828" />
-            <SolidColorBrush x:Key="PageBackgroundBrush" Color="#121212" />
+            <!-- NF-14: three "global brushes" hardcoded dark-theme colors
+                 (#181818 / #282828 / #121212), so every surface referencing them -
+                 the shared card style, the player bar, the detail-page banners -
+                 stayed dark after a light-theme switch. They are deleted; consumers
+                 now resolve theme resources directly. -->
 
             <ThemeShadow x:Key="SharedShadow" />
 
             <Style x:Key="StandardCardStyle" TargetType="Grid">
-                <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
+                <!-- UI-HP-04/NF-14: themed card surface + stroke instead of the
+                     hardcoded #181818 background and #2A2A2A border. -->
+                <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
                 <Setter Property="CornerRadius" Value="8" />
                 <Setter Property="Padding" Value="12" />
-                <Setter Property="BorderBrush" Value="#2A2A2A" />
+                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
                 <Setter Property="BorderThickness" Value="1" />
                 <!-- Add a transition for smooth scale/color changes -->
                 <Setter Property="Transitions">

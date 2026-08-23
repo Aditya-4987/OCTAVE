@@ -13,42 +13,75 @@
     <Page.Resources>
         <converters:ArtworkPathConverter x:Key="ArtworkPathConverter" />
 
-        <!-- Quick Play Tile Template -->
+        <!-- Quick Play Tile Template.
+             UI-HP-04: hardcoded #1E1E1E / #2A2A2A / White / #AAAAAA replaced with
+             theme resources. UI-HP-05: pointer hover is expressed as a PointerOver
+             visual state (accent border) instead of code-behind brush injection;
+             the root Grid gains the BorderThickness that hover stroke always
+             needed in order to actually render. -->
         <DataTemplate x:Key="QuickPlayTileTemplate" x:DataType="vm:TrackDisplayItem">
-            <Grid Width="260" Height="64" Background="#1E1E1E" CornerRadius="6"
-                  PointerEntered="Card_PointerEntered" PointerExited="Card_PointerExited"
+            <Grid Width="260" Height="64"
+                  Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                  BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                  CornerRadius="6"
                   RightTapped="TrackCard_RightTapped" Padding="0">
+                <VisualStateManager.VisualStateGroups>
+                    <VisualStateGroup x:Name="CommonStates">
+                        <VisualState x:Name="Normal" />
+                        <VisualState x:Name="PointerOver">
+                            <Storyboard>
+                                <ObjectAnimationUsingKeyFrames Storyboard.TargetProperty="BorderBrush">
+                                    <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource SystemControlHighlightAccentBrush}" />
+                                </ObjectAnimationUsingKeyFrames>
+                            </Storyboard>
+                        </VisualState>
+                    </VisualStateGroup>
+                </VisualStateManager.VisualStateGroups>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="64" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <Border Grid.Column="0" CornerRadius="6,0,0,6" Background="#2A2A2A">
+                <Border Grid.Column="0" CornerRadius="6,0,0,6" Background="{ThemeResource LayerFillColorDefaultBrush}">
                     <Image Source="{x:Bind ArtworkUrl, Mode=OneTime, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Small}" Stretch="UniformToFill" UseLayoutRounding="True" />
                 </Border>
                 <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="12,0,12,0">
-                    <TextBlock Text="{x:Bind Title, Mode=OneTime}" FontWeight="Bold" FontSize="13" Foreground="White" TextTrimming="CharacterEllipsis" />
-                    <TextBlock Text="{x:Bind ArtistName, Mode=OneTime}" FontSize="11" Foreground="#AAAAAA" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
+                    <TextBlock Text="{x:Bind Title, Mode=OneTime}" FontWeight="Bold" FontSize="13" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Text="{x:Bind ArtistName, Mode=OneTime}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
                 </StackPanel>
             </Grid>
         </DataTemplate>
 
-        <!-- Standard Track Card Template -->
+        <!-- Standard Track Card Template.
+             UI-HP-05: hover accent via a PointerOver visual state; the idle look
+             comes from the (now theme-aware) StandardCardStyle. -->
         <DataTemplate x:Key="TrackCardTemplate" x:DataType="vm:TrackDisplayItem">
-            <Grid Width="160" Height="220" RightTapped="TrackCard_RightTapped" 
-                  PointerEntered="Card_PointerEntered" PointerExited="Card_PointerExited"
+            <Grid Width="160" Height="220" RightTapped="TrackCard_RightTapped"
                   Style="{StaticResource StandardCardStyle}">
+                <VisualStateManager.VisualStateGroups>
+                    <VisualStateGroup x:Name="CommonStates">
+                        <VisualState x:Name="Normal" />
+                        <VisualState x:Name="PointerOver">
+                            <Storyboard>
+                                <ObjectAnimationUsingKeyFrames Storyboard.TargetProperty="BorderBrush">
+                                    <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource SystemControlHighlightAccentBrush}" />
+                                </ObjectAnimationUsingKeyFrames>
+                            </Storyboard>
+                        </VisualState>
+                    </VisualStateGroup>
+                </VisualStateManager.VisualStateGroups>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
+                <!-- UI-HP-04: was hardcoded #222222 -->
                 <Grid Grid.Row="0" Width="136" Height="136" Margin="0,0,0,12">
-                    <Border CornerRadius="6" Background="#222222">
+                    <Border CornerRadius="6" Background="{ThemeResource LayerFillColorDefaultBrush}">
                         <Image Source="{x:Bind ArtworkUrl, Mode=OneTime, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Card}" Stretch="UniformToFill" UseLayoutRounding="True" />
                     </Border>
                 </Grid>
-                <TextBlock Grid.Row="1" Text="{x:Bind Title, Mode=OneTime}" FontSize="14" FontWeight="Bold" Foreground="White" TextTrimming="CharacterEllipsis" />
-                <TextBlock Grid.Row="2" Text="{x:Bind ArtistName, Mode=OneTime}" FontSize="12" Foreground="#AAAAAA" TextTrimming="CharacterEllipsis" Margin="0,4,0,0" />
+                <TextBlock Grid.Row="1" Text="{x:Bind Title, Mode=OneTime}" FontSize="14" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" />
+                <TextBlock Grid.Row="2" Text="{x:Bind ArtistName, Mode=OneTime}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" Margin="0,4,0,0" />
             </Grid>
         </DataTemplate>
     </Page.Resources>
@@ -58,30 +91,28 @@
             
             <!-- Greeting & Hero Spotlight Section -->
             <StackPanel Spacing="16">
-                <TextBlock Text="{x:Bind ViewModel.Greeting, Mode=OneWay}" FontSize="36" FontWeight="Bold" Foreground="White" />
+                <TextBlock Text="{x:Bind ViewModel.Greeting, Mode=OneWay}" FontSize="36" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
                 
-                <!-- Hero Spotlight Card (Visible when HeroTrack is present) -->
+                <!-- Hero Spotlight Card (Visible when HeroTrack is present).
+                     UI-HP-04: the #252535 -> #121218 gradient only read correctly
+                     in dark theme; swapped for the themed card surface. -->
                 <Grid CornerRadius="12" Padding="24" Margin="0,8,0,0"
+                      Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                       Visibility="{x:Bind SectionVisibility(ViewModel.RecentlyPlayed.Count), Mode=OneWay}">
-                    <Grid.Background>
-                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                            <GradientStop Color="#252535" Offset="0.0" />
-                            <GradientStop Color="#121218" Offset="1.0" />
-                        </LinearGradientBrush>
-                    </Grid.Background>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
 
-                    <Border Grid.Column="0" Width="140" Height="140" CornerRadius="8" Background="#2A2A2A" Margin="0,0,24,0">
+                    <!-- UI-HP-04: was hardcoded #2A2A2A -->
+                    <Border Grid.Column="0" Width="140" Height="140" CornerRadius="8" Background="{ThemeResource LayerFillColorDefaultBrush}" Margin="0,0,24,0">
                         <Image Source="{x:Bind ViewModel.HeroArtworkUrl, Mode=OneWay, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Card}" Stretch="UniformToFill" />
                     </Border>
 
                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="6">
                         <TextBlock Text="SPOTLIGHT" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" CharacterSpacing="100" />
-                        <TextBlock Text="{x:Bind ViewModel.HeroTitle, Mode=OneWay}" FontSize="24" FontWeight="Bold" Foreground="White" TextTrimming="CharacterEllipsis" MaxWidth="500" HorizontalAlignment="Left" />
-                        <TextBlock Text="{x:Bind ViewModel.HeroArtistName, Mode=OneWay}" FontSize="14" Foreground="#AAAAAA" TextTrimming="CharacterEllipsis" Margin="0,0,0,12" />
+                        <TextBlock Text="{x:Bind ViewModel.HeroTitle, Mode=OneWay}" FontSize="24" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" MaxWidth="500" HorizontalAlignment="Left" />
+                        <TextBlock Text="{x:Bind ViewModel.HeroArtistName, Mode=OneWay}" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" Margin="0,0,0,12" />
                         
                         <Button Click="HeroPlay_Click" Style="{StaticResource PrimaryPlayButtonStyle}" HorizontalAlignment="Left">
                             <StackPanel Orientation="Horizontal" Spacing="8">
@@ -94,7 +125,7 @@
 
             <!-- Quick Play Dashboard Grid -->
             <StackPanel Spacing="16" Visibility="{x:Bind SectionVisibility(ViewModel.QuickPlayItems.Count), Mode=OneWay}">
-                <TextBlock Text="Quick Play" FontSize="20" FontWeight="Bold" Foreground="White" />
+                <TextBlock Text="Quick Play" FontSize="20" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
                 <GridView ItemsSource="{x:Bind ViewModel.QuickPlayItems, Mode=OneWay}"
                           ItemTemplate="{StaticResource QuickPlayTileTemplate}"
                           SelectionMode="None" IsItemClickEnabled="True" ItemClick="QuickPlay_ItemClick"
@@ -104,7 +135,7 @@
 
             <!-- Recently Played Section -->
             <StackPanel Spacing="16" Visibility="{x:Bind SectionVisibility(ViewModel.RecentlyPlayed.Count), Mode=OneWay}">
-                <TextBlock Text="Recently Played" FontSize="20" FontWeight="Bold" Foreground="White" />
+                <TextBlock Text="Recently Played" FontSize="20" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
                 <GridView ItemsSource="{x:Bind ViewModel.RecentlyPlayed, Mode=OneWay}"
                           ItemTemplate="{StaticResource TrackCardTemplate}"
                           SelectionMode="None" IsItemClickEnabled="True" ItemClick="Recently_ItemClick"
@@ -114,7 +145,7 @@
 
             <!-- Most Played Section -->
             <StackPanel Spacing="16" Visibility="{x:Bind SectionVisibility(ViewModel.MostPlayed.Count), Mode=OneWay}">
-                <TextBlock Text="Most Played" FontSize="20" FontWeight="Bold" Foreground="White" />
+                <TextBlock Text="Most Played" FontSize="20" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
                 <GridView ItemsSource="{x:Bind ViewModel.MostPlayed, Mode=OneWay}"
                           ItemTemplate="{StaticResource TrackCardTemplate}"
                           SelectionMode="None" IsItemClickEnabled="True" ItemClick="Most_ItemClick"
@@ -124,7 +155,7 @@
 
             <!-- Last Added Section -->
             <StackPanel Spacing="16" Visibility="{x:Bind SectionVisibility(ViewModel.LastAdded.Count), Mode=OneWay}">
-                <TextBlock Text="Last Added" FontSize="20" FontWeight="Bold" Foreground="White" />
+                <TextBlock Text="Last Added" FontSize="20" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
                 <GridView ItemsSource="{x:Bind ViewModel.LastAdded, Mode=OneWay}"
                           ItemTemplate="{StaticResource TrackCardTemplate}"
                           SelectionMode="None" IsItemClickEnabled="True" ItemClick="LastAdded_ItemClick"
@@ -134,7 +165,7 @@
 
             <!-- Favorites Section -->
             <StackPanel Spacing="16" Visibility="{x:Bind SectionVisibility(ViewModel.Favorites.Count), Mode=OneWay}">
-                <TextBlock Text="Favorites" FontSize="20" FontWeight="Bold" Foreground="White" />
+                <TextBlock Text="Favorites" FontSize="20" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
                 <GridView ItemsSource="{x:Bind ViewModel.Favorites, Mode=OneWay}"
                           ItemTemplate="{StaticResource TrackCardTemplate}"
                           SelectionMode="None" IsItemClickEnabled="True" ItemClick="Favorites_ItemClick"
@@ -142,15 +173,17 @@
                           ItemContainerStyle="{StaticResource CleanGridViewItemStyle}" />
             </StackPanel>
 
-            <!-- Empty State Container -->
-            <Grid Background="#1E1E24" CornerRadius="12" Padding="48" Margin="0,32,0,0" HorizontalAlignment="Center" MaxWidth="500"
+            <!-- Empty State Container.
+                 UI-HP-04: hardcoded #1E1E24 / #2A2A36 / White / #888888 replaced
+                 with theme resources so the panel survives a light-theme switch. -->
+            <Grid Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="12" Padding="48" Margin="0,32,0,0" HorizontalAlignment="Center" MaxWidth="500"
                   Visibility="{x:Bind AllEmptyVisibility(ViewModel.RecentlyPlayed.Count, ViewModel.MostPlayed.Count, ViewModel.LastAdded.Count, ViewModel.Favorites.Count), Mode=OneWay}">
                 <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16">
-                    <Border Width="64" Height="64" CornerRadius="32" Background="#2A2A36" HorizontalAlignment="Center">
+                    <Border Width="64" Height="64" CornerRadius="32" Background="{ThemeResource LayerFillColorDefaultBrush}" HorizontalAlignment="Center">
                         <FontIcon Glyph="&#xE8D6;" FontFamily="Segoe MDL2 Assets" FontSize="28" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" VerticalAlignment="Center" HorizontalAlignment="Center" />
                     </Border>
-                    <TextBlock Text="Your Library is Empty" FontSize="22" FontWeight="Bold" Foreground="White" HorizontalAlignment="Center" />
-                    <TextBlock Text="Add your local music folder to build your library and start listening." Foreground="#888888" TextWrapping="Wrap" TextAlignment="Center" FontSize="14" />
+                    <TextBlock Text="Your Library is Empty" FontSize="22" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" HorizontalAlignment="Center" />
+                    <TextBlock Text="Add your local music folder to build your library and start listening." Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" TextAlignment="Center" FontSize="14" />
                     <Button Click="ScanFolder_Click" Style="{StaticResource PrimaryPlayButtonStyle}" HorizontalAlignment="Center" Margin="0,8,0,0">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <TextBlock Text="Scan" FontWeight="SemiBold" FontSize="14" VerticalAlignment="Center" />

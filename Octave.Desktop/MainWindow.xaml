@@ -73,9 +73,9 @@
                                         <FontIcon Glyph="{x:Bind local:MainWindow.GetSuggestionGlyph(Type)}" 
                                                   FontFamily="Segoe MDL2 Assets" 
                                                   FontSize="16" 
-                                                  Foreground="#888888" 
+                                                  Foreground="{ThemeResource TextFillColorTertiaryBrush}" 
                                                   VerticalAlignment="Center"/>
-                                        <TextBlock Text="{x:Bind Title}" VerticalAlignment="Center" Foreground="White" />
+                                        <TextBlock Text="{x:Bind Title}" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
                                     </StackPanel>
                                 </DataTemplate>
                             </AutoSuggestBox.ItemTemplate>
@@ -116,7 +116,7 @@
             </SplitView.Content>
             
             <SplitView.Pane>
-                <Grid Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}" BorderBrush="#2A2A2A" BorderThickness="1,0,0,0">
+                <Grid Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1,0,0,0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
@@ -124,7 +124,7 @@
 
                     <Button Grid.Row="0" HorizontalAlignment="Right" Margin="16,16,16,0" Command="{x:Bind ViewModel.ToggleNowPlayingCommand}"
                             Background="Transparent" BorderBrush="Transparent" Padding="6" ToolTipService.ToolTip="Close">
-                        <FontIcon Glyph="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#888888" />
+                        <FontIcon Glyph="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                     </Button>
 
                     <Pivot Grid.Row="1" x:Name="SidebarPivot">
@@ -147,13 +147,13 @@
 
                                     <StackPanel Grid.Row="1" Spacing="16">
                                         <StackPanel Spacing="4">
-                                            <TextBlock Text="{x:Bind ViewModel.TrackTitle, Mode=OneWay}" FontSize="20" FontWeight="Bold" Foreground="White" TextWrapping="Wrap" />
-                                            <TextBlock Text="{x:Bind ViewModel.ArtistName, Mode=OneWay}" FontSize="15" Foreground="#AAAAAA" TextWrapping="Wrap" />
-                                            <TextBlock Text="{x:Bind ViewModel.AlbumName, Mode=OneWay}" FontSize="13" Foreground="#888888" TextWrapping="Wrap" />
+                                            <TextBlock Text="{x:Bind ViewModel.TrackTitle, Mode=OneWay}" FontSize="20" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextWrapping="Wrap" />
+                                            <TextBlock Text="{x:Bind ViewModel.ArtistName, Mode=OneWay}" FontSize="15" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                                            <TextBlock Text="{x:Bind ViewModel.AlbumName, Mode=OneWay}" FontSize="13" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
                                         </StackPanel>
                                         
                                         <StackPanel Spacing="8">
-                                            <TextBlock Text="File Properties" FontSize="14" FontWeight="SemiBold" Foreground="White" />
+                                            <TextBlock Text="File Properties" FontSize="14" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
                                             <Grid ColumnSpacing="12" RowSpacing="6">
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="Auto" />
@@ -167,20 +167,20 @@
                                                     <RowDefinition Height="Auto" />
                                                 </Grid.RowDefinitions>
                                                 
-                                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Bitrate" FontSize="12" Foreground="#888888" />
-                                                <TextBlock Grid.Row="0" Grid.Column="1" Text="{x:Bind ViewModel.InfoBitrate, Mode=OneWay}" FontSize="12" Foreground="#CCCCCC" />
+                                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Bitrate" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                <TextBlock Grid.Row="0" Grid.Column="1" Text="{x:Bind ViewModel.InfoBitrate, Mode=OneWay}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                 
-                                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Sample Rate" FontSize="12" Foreground="#888888" />
-                                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{x:Bind ViewModel.InfoSampleRate, Mode=OneWay}" FontSize="12" Foreground="#CCCCCC" />
+                                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Sample Rate" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{x:Bind ViewModel.InfoSampleRate, Mode=OneWay}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
 
-                                                <TextBlock Grid.Row="2" Grid.Column="0" Text="File Size" FontSize="12" Foreground="#888888" />
-                                                <TextBlock Grid.Row="2" Grid.Column="1" Text="{x:Bind ViewModel.InfoFileSize, Mode=OneWay}" FontSize="12" Foreground="#CCCCCC" />
+                                                <TextBlock Grid.Row="2" Grid.Column="0" Text="File Size" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                <TextBlock Grid.Row="2" Grid.Column="1" Text="{x:Bind ViewModel.InfoFileSize, Mode=OneWay}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
 
-                                                <TextBlock Grid.Row="3" Grid.Column="0" Text="Format" FontSize="12" Foreground="#888888" />
-                                                <TextBlock Grid.Row="3" Grid.Column="1" Text="{x:Bind ViewModel.InfoFormat, Mode=OneWay}" FontSize="12" Foreground="#CCCCCC" />
+                                                <TextBlock Grid.Row="3" Grid.Column="0" Text="Format" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                <TextBlock Grid.Row="3" Grid.Column="1" Text="{x:Bind ViewModel.InfoFormat, Mode=OneWay}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                 
-                                                <TextBlock Grid.Row="4" Grid.Column="0" Text="Location" FontSize="12" Foreground="#888888" />
-                                                <TextBlock Grid.Row="4" Grid.Column="1" Text="{x:Bind ViewModel.InfoLocation, Mode=OneWay}" FontSize="12" Foreground="#CCCCCC" TextWrapping="Wrap" />
+                                                <TextBlock Grid.Row="4" Grid.Column="0" Text="Location" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                <TextBlock Grid.Row="4" Grid.Column="1" Text="{x:Bind ViewModel.InfoLocation, Mode=OneWay}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                                             </Grid>
                                         </StackPanel>
                                     </StackPanel>
@@ -208,7 +208,7 @@
                                                     <TextBlock Text="{x:Bind Track.ArtistName}" TextTrimming="CharacterEllipsis" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                 </StackPanel>
                                                 <Button Grid.Column="1" Click="QueueRemove_Click" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Remove from queue">
-                                                    <FontIcon Glyph="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#888888" />
+                                                    <FontIcon Glyph="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                                                 </Button>
                                             </Grid>
                                         </DataTemplate>
@@ -222,7 +222,8 @@
         </SplitView>
 
         <!-- Bottom Playback Dashboard Bar -->
-        <Grid Grid.Row="2" Background="{StaticResource PageBackgroundBrush}" Padding="16,12,16,8" BorderBrush="#2A2A2A" BorderThickness="0,1,0,0">
+        <!-- NF-14: was {StaticResource PageBackgroundBrush} (#121212, dark-locked) -->
+        <Grid Grid.Row="2" Background="{ThemeResource SolidBackgroundFillColorBaseBrush}" Padding="16,12,16,8" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="2.5*" MaxWidth="350" x:Name="TrackDetailsColumn" />
                 <ColumnDefinition Width="5*" />
@@ -246,19 +247,19 @@
                             </Border>
                         </Grid>
                         <StackPanel VerticalAlignment="Center">
-                            <TextBlock Text="{x:Bind ViewModel.TrackTitle, Mode=OneWay}" FontWeight="SemiBold" FontSize="14" Foreground="White" TextTrimming="CharacterEllipsis" MaxWidth="220" />
-                            <TextBlock Text="{x:Bind ViewModel.ArtistName, Mode=OneWay}" FontSize="12" Foreground="#AAAAAA" TextTrimming="CharacterEllipsis" MaxWidth="220" />
-                            <Border Margin="0,4,0,0" HorizontalAlignment="Left" CornerRadius="4" Padding="6,2" Background="#1FFFFFFF" ToolTipService.Placement="Top">
+                            <TextBlock Text="{x:Bind ViewModel.TrackTitle, Mode=OneWay}" FontWeight="SemiBold" FontSize="14" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" MaxWidth="220" />
+                            <TextBlock Text="{x:Bind ViewModel.ArtistName, Mode=OneWay}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" MaxWidth="220" />
+                            <Border Margin="0,4,0,0" HorizontalAlignment="Left" CornerRadius="4" Padding="6,2" Background="{ThemeResource LayerFillColorDefaultBrush}" ToolTipService.Placement="Top">
                                 <ToolTipService.ToolTip>
-                                    <ToolTip Background="#18181A" BorderBrush="#333338" BorderThickness="1" CornerRadius="10" Padding="14" MaxWidth="450">
+                                    <ToolTip Background="{ThemeResource SolidBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="10" Padding="14" MaxWidth="450">
                                         <StackPanel Spacing="8">
                                             <!-- Header -->
                                             <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                                                 <FontIcon Glyph="&#xE93E;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#00E676" />
-                                                <TextBlock Text="AUDIO PIPELINE &amp; STREAM QUALITY" FontSize="10" FontWeight="Bold" Foreground="#888888" CharacterSpacing="50" />
+                                                <TextBlock Text="AUDIO PIPELINE &amp; STREAM QUALITY" FontSize="10" FontWeight="Bold" Foreground="{ThemeResource TextFillColorTertiaryBrush}" CharacterSpacing="50" />
                                             </StackPanel>
 
-                                            <MenuFlyoutSeparator Margin="0,0,0,2" Background="#333338" />
+                                            <MenuFlyoutSeparator Margin="0,0,0,2" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
 
                                             <Grid ColumnSpacing="12" RowSpacing="5">
                                                 <Grid.ColumnDefinitions>
@@ -276,48 +277,48 @@
                                                 </Grid.RowDefinitions>
 
                                                 <!-- Stream Format -->
-                                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Stream (Source):" FontSize="11" Foreground="#888888" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Stream (Source):" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
                                                 <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                                                     <TextBlock Text="{x:Bind ViewModel.AudioQualityInfo.StreamQuality, Mode=OneWay}" FontSize="11" FontWeight="SemiBold" Foreground="#00E676" />
-                                                    <TextBlock Text="{x:Bind ViewModel.AudioQualityInfo.ChannelsText, Mode=OneWay}" FontSize="10" Foreground="#888888" VerticalAlignment="Center" />
+                                                    <TextBlock Text="{x:Bind ViewModel.AudioQualityInfo.ChannelsText, Mode=OneWay}" FontSize="10" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
                                                 </StackPanel>
 
                                                 <!-- Codec / Container -->
-                                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Codec / Format:" FontSize="11" Foreground="#888888" VerticalAlignment="Center" />
-                                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{x:Bind ViewModel.AudioQualityInfo.CodecFormat, Mode=OneWay}" FontSize="11" Foreground="#CCCCCC" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Codec / Format:" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{x:Bind ViewModel.AudioQualityInfo.CodecFormat, Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
 
                                                 <!-- Decoder Engine -->
-                                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Decoder Engine:" FontSize="11" Foreground="#888888" VerticalAlignment="Center" />
-                                                <TextBlock Grid.Row="2" Grid.Column="1" Text="{x:Bind ViewModel.AudioQualityInfo.DecoderEngine, Mode=OneWay}" FontSize="11" Foreground="#AAAAAA" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Decoder Engine:" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Row="2" Grid.Column="1" Text="{x:Bind ViewModel.AudioQualityInfo.DecoderEngine, Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
 
-                                                <MenuFlyoutSeparator Grid.Row="3" Grid.ColumnSpan="2" Margin="0,2" Background="#26262B" />
+                                                <MenuFlyoutSeparator Grid.Row="3" Grid.ColumnSpan="2" Margin="0,2" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
 
                                                 <!-- Output Device Format -->
-                                                <TextBlock Grid.Row="4" Grid.Column="0" Text="Hardware Output:" FontSize="11" Foreground="#888888" VerticalAlignment="Center" />
-                                                <TextBlock Grid.Row="4" Grid.Column="1" Text="{x:Bind ViewModel.AudioQualityInfo.OutputDeviceQuality, Mode=OneWay}" FontSize="11" FontWeight="SemiBold" Foreground="#FFFFFF" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Row="4" Grid.Column="0" Text="Hardware Output:" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Row="4" Grid.Column="1" Text="{x:Bind ViewModel.AudioQualityInfo.OutputDeviceQuality, Mode=OneWay}" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" VerticalAlignment="Center" />
 
                                                 <!-- Resampling State -->
-                                                <TextBlock Grid.Row="5" Grid.Column="0" Text="Resampling State:" FontSize="11" Foreground="#888888" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Row="5" Grid.Column="0" Text="Resampling State:" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
                                                 <TextBlock Grid.Row="5" Grid.Column="1" Text="{x:Bind ViewModel.AudioQualityInfo.ResamplingStatus, Mode=OneWay}" FontSize="11" Foreground="#FFD54F" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
 
                                                 <!-- Output Device Name -->
-                                                <TextBlock Grid.Row="6" Grid.Column="0" Text="Active Output:" FontSize="11" Foreground="#888888" VerticalAlignment="Center" />
-                                                <TextBlock Grid.Row="6" Grid.Column="1" Text="{x:Bind ViewModel.AudioQualityInfo.OutputDeviceName, Mode=OneWay}" FontSize="11" Foreground="#AAAAAA" TextTrimming="CharacterEllipsis" MaxWidth="170" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Row="6" Grid.Column="0" Text="Active Output:" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Row="6" Grid.Column="1" Text="{x:Bind ViewModel.AudioQualityInfo.OutputDeviceName, Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" MaxWidth="170" VerticalAlignment="Center" />
                                             </Grid>
 
-                                            <MenuFlyoutSeparator Margin="0,2,0,0" Background="#26262B" />
+                                            <MenuFlyoutSeparator Margin="0,2,0,0" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
                                             
                                             <!-- DSP / EQ Processing -->
                                             <StackPanel Orientation="Horizontal" Spacing="4">
-                                                <FontIcon Glyph="&#xE9D9;" FontFamily="Segoe MDL2 Assets" FontSize="10" Foreground="#888888" VerticalAlignment="Center" />
-                                                <TextBlock Text="{x:Bind ViewModel.AudioQualityInfo.DspStatus, Mode=OneWay}" FontSize="10" Foreground="#888888" VerticalAlignment="Center" />
+                                                <FontIcon Glyph="&#xE9D9;" FontFamily="Segoe MDL2 Assets" FontSize="10" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
+                                                <TextBlock Text="{x:Bind ViewModel.AudioQualityInfo.DspStatus, Mode=OneWay}" FontSize="10" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
                                             </StackPanel>
                                         </StackPanel>
                                     </ToolTip>
                                 </ToolTipService.ToolTip>
                                 <StackPanel Orientation="Horizontal" Spacing="5">
                                     <FontIcon Glyph="&#xE93E;" FontFamily="Segoe MDL2 Assets" FontSize="10" Foreground="#00E676" VerticalAlignment="Center" />
-                                    <TextBlock Text="{x:Bind ViewModel.StreamingQuality, Mode=OneWay}" FontSize="10" FontWeight="Medium" Foreground="#E0E0E0" VerticalAlignment="Center" />
+                                    <TextBlock Text="{x:Bind ViewModel.StreamingQuality, Mode=OneWay}" FontSize="10" FontWeight="Medium" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -346,7 +347,7 @@
                     
                     <!-- Previous -->
                     <Button Command="{x:Bind ViewModel.PreviousCommand}" Style="{StaticResource GhostIconButtonStyle}">
-                        <FontIcon Glyph="&#xE892;" FontFamily="Segoe MDL2 Assets" Foreground="White" FontSize="18" />
+                        <FontIcon Glyph="&#xE892;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="18" />
                     </Button>
                     
                     <!-- Play / Pause (Circular) -->
@@ -361,7 +362,7 @@
 
                     <!-- Next -->
                     <Button Command="{x:Bind ViewModel.NextCommand}" Style="{StaticResource GhostIconButtonStyle}">
-                        <FontIcon Glyph="&#xE893;" FontFamily="Segoe MDL2 Assets" Foreground="White" FontSize="18" />
+                        <FontIcon Glyph="&#xE893;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="18" />
                     </Button>
 
                     <!-- Repeat -->
@@ -377,12 +378,12 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="{x:Bind FormatSeconds(ViewModel.PositionSeconds), Mode=OneWay}" FontSize="11" Foreground="#AAAAAA" VerticalAlignment="Center" Width="40" TextAlignment="Right" Margin="0,0,8,0"/>
+                    <TextBlock Grid.Column="0" Text="{x:Bind FormatSeconds(ViewModel.PositionSeconds), Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Width="40" TextAlignment="Right" Margin="0,0,8,0"/>
                     <Grid Grid.Column="1" VerticalAlignment="Center">
                         <controls:SpectrumVisualizerControl x:Name="ProgressBarVisualizer" Visibility="{x:Bind BoolToVisibility(ViewModel.IsVisualizerEnabled), Mode=OneWay}" Margin="8,0,8,8" VerticalAlignment="Center" Height="25" />
                         <Slider x:Name="PlaybackSlider" Minimum="0" Maximum="{x:Bind ViewModel.DurationSeconds, Mode=OneWay}" Value="{x:Bind ViewModel.PositionSeconds, Mode=OneWay}" IsThumbToolTipEnabled="False" VerticalAlignment="Center" Margin="0,-8,0,-8" ValueChanged="PlaybackSlider_ValueChanged" PointerPressed="PlaybackSlider_PointerPressed" PointerReleased="PlaybackSlider_PointerReleased" PointerCaptureLost="PlaybackSlider_PointerCaptureLost" PointerCanceled="PlaybackSlider_PointerCanceled" ManipulationStarted="PlaybackSlider_ManipulationStarted" ManipulationCompleted="PlaybackSlider_ManipulationCompleted"/>
                     </Grid>
-                    <TextBlock Grid.Column="2" Text="{x:Bind FormatSeconds(ViewModel.DurationSeconds), Mode=OneWay}" FontSize="11" Foreground="#AAAAAA" VerticalAlignment="Center" Width="40" TextAlignment="Left" Margin="8,0,0,0"/>
+                    <TextBlock Grid.Column="2" Text="{x:Bind FormatSeconds(ViewModel.DurationSeconds), Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Width="40" TextAlignment="Left" Margin="8,0,0,0"/>
                 </Grid>
             </Grid>
 
@@ -395,12 +396,12 @@
 
                 <!-- Mini Player -->
                 <Button Click="MiniPlayer_Click" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Mini player">
-                    <FontIcon Glyph="&#xE944;" FontFamily="Segoe MDL2 Assets" Foreground="White" FontSize="16" />
+                    <FontIcon Glyph="&#xE944;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="16" />
                 </Button>
 
                 <!-- Mute -->
                 <Button Command="{x:Bind ViewModel.ToggleMuteCommand}" Style="{StaticResource GhostIconButtonStyle}">
-                    <FontIcon Glyph="{x:Bind GetMuteGlyph(ViewModel.IsMuted, ViewModel.Volume), Mode=OneWay}" FontFamily="Segoe MDL2 Assets" Foreground="White" FontSize="16" />
+                    <FontIcon Glyph="{x:Bind GetMuteGlyph(ViewModel.IsMuted, ViewModel.Volume), Mode=OneWay}" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="16" />
                 </Button>
 
                 <!-- Volume Slider -->
@@ -420,7 +421,7 @@
                             </Button>
                             <Button Click="MiniPlayer_Click" Style="{StaticResource GhostIconButtonStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
                                 <StackPanel Orientation="Horizontal" Spacing="12">
-                                    <FontIcon Glyph="&#xE944;" FontFamily="Segoe MDL2 Assets" Foreground="White" FontSize="16" />
+                                    <FontIcon Glyph="&#xE944;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="16" />
                                     <TextBlock Text="Mini Player" />
                                 </StackPanel>
                             </Button>
@@ -430,14 +431,14 @@
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
                                 <Button Grid.Column="0" Command="{x:Bind ViewModel.ToggleMuteCommand}" Style="{StaticResource GhostIconButtonStyle}">
-                                    <FontIcon Glyph="{x:Bind GetMuteGlyph(ViewModel.IsMuted, ViewModel.Volume), Mode=OneWay}" FontFamily="Segoe MDL2 Assets" Foreground="White" FontSize="16" />
+                                    <FontIcon Glyph="{x:Bind GetMuteGlyph(ViewModel.IsMuted, ViewModel.Volume), Mode=OneWay}" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="16" />
                                 </Button>
                                 <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{x:Bind ViewModel.Volume, Mode=TwoWay}" VerticalAlignment="Center" Margin="8,0,0,0" PointerWheelChanged="VolumeSlider_PointerWheelChanged"/>
                             </Grid>
                         </StackPanel>
                     </Flyout>
                 </Button.Flyout>
-                <FontIcon Glyph="&#xE712;" FontFamily="Segoe MDL2 Assets" Foreground="White" FontSize="16" />
+                <FontIcon Glyph="&#xE712;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="16" />
             </Button>
         </Grid>
     </Grid>

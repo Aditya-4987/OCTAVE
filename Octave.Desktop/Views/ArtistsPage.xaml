@@ -19,7 +19,8 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <TextBlock Text="Artists" FontSize="36" FontWeight="Bold" Margin="0,0,0,16" Padding="32,48,32,0" Foreground="White" />
+        <!-- UI-AR-01 family: was hardcoded White -->
+        <TextBlock Text="Artists" FontSize="36" FontWeight="Bold" Margin="0,0,0,16" Padding="32,48,32,0" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
 
         <GridView Grid.Row="1"
                   ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}"
@@ -30,23 +31,51 @@
                   ItemContainerStyle="{StaticResource CleanGridViewItemStyle}">
             <GridView.ItemTemplate>
                 <DataTemplate x:DataType="models:Artist">
-                    <Grid Width="160" Height="210" Style="{StaticResource StandardCardStyle}"
-                          PointerEntered="Card_PointerEntered" PointerExited="Card_PointerExited">
+                    <!-- Hardcoded #222222 / White replaced with theme resources.
+                         Hover accent moved into a PointerOver visual state
+                         (same treatment as HomePage, UI-HP-05). -->
+                    <Grid Width="160" Height="210" Style="{StaticResource StandardCardStyle}">
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualState x:Name="Normal" />
+                                <VisualState x:Name="PointerOver">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetProperty="BorderBrush">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource SystemControlHighlightAccentBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
 
                         <!-- Circular Artwork Placeholder -->
-                        <Border Grid.Row="0" Width="120" Height="120" CornerRadius="60" HorizontalAlignment="Center" Background="#222222" Margin="0,0,0,12">
+                        <Border Grid.Row="0" Width="120" Height="120" CornerRadius="60" HorizontalAlignment="Center" Background="{ThemeResource LayerFillColorDefaultBrush}" Margin="0,0,0,12">
                             <Image Source="{x:Bind ArtworkUrl, Mode=OneTime, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Artist}" Stretch="UniformToFill"/>
                         </Border>
 
                         <!-- Name -->
-                        <TextBlock Grid.Row="1" Text="{x:Bind Name}" FontWeight="Bold" FontSize="14" Foreground="White" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" />
+                        <TextBlock Grid.Row="1" Text="{x:Bind Name}" FontWeight="Bold" FontSize="14" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" />
                     </Grid>
                 </DataTemplate>
             </GridView.ItemTemplate>
         </GridView>
+
+        <!-- UI-AR-01: empty state, mirroring HomePage's pattern. -->
+        <Grid Grid.Row="1"
+              Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+              CornerRadius="12" Padding="48" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="500"
+              Visibility="{x:Bind EmptyStateVisibility(ViewModel.Items.Count), Mode=OneWay}">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16">
+                <Border Width="64" Height="64" CornerRadius="32" Background="{ThemeResource LayerFillColorDefaultBrush}" HorizontalAlignment="Center">
+                    <FontIcon Glyph="&#xE77B;" FontFamily="Segoe MDL2 Assets" FontSize="28" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" VerticalAlignment="Center" HorizontalAlignment="Center" />
+                </Border>
+                <TextBlock Text="No artists found" FontSize="22" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" HorizontalAlignment="Center" />
+                <TextBlock Text="Scan a folder from Settings and your artists will show up here." Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" TextAlignment="Center" FontSize="14" />
+            </StackPanel>
+        </Grid>
     </Grid>
 </Page>

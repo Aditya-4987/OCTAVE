@@ -135,10 +135,34 @@ public sealed partial class PlaylistDetailPage : Page
         );
     }
 
-    private void DeletePlaylist_Click(object sender, RoutedEventArgs e)
+    // UI-PL-01: deleting a playlist used to happen on the very first click with
+    // no way back. Ask for confirmation first, matching the app's other
+    // destructive-action dialogs.
+    private async void DeletePlaylist_Click(object sender, RoutedEventArgs e)
     {
-        ViewModel.DeleteSelfCommand.Execute(null);
-        if (Frame.CanGoBack) Frame.GoBack();
+        try
+        {
+            if (this.XamlRoot is null) return;
+
+            var dialog = new ContentDialog
+            {
+                Title = "Delete playlist?",
+                Content = $"\"{ViewModel.Title}\" will be permanently deleted. The tracks themselves stay in your library.",
+                PrimaryButtonText = "Delete",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = this.XamlRoot
+            };
+
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+            ViewModel.DeleteSelfCommand.Execute(null);
+            if (Frame.CanGoBack) Frame.GoBack();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[PlaylistDetail] Delete dialog failed: {ex}");
+        }
     }
 
     private void BackButton_Click(object sender, RoutedEventArgs e)

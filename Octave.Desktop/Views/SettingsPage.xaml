@@ -21,28 +21,28 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <TextBlock Text="Settings &amp; Diagnostics" FontSize="28" FontWeight="Bold" Margin="0,0,0,24" Foreground="White" />
+        <TextBlock Text="Settings &amp; Diagnostics" FontSize="28" FontWeight="Bold" Margin="0,0,0,24" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
 
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled">
         <StackPanel Spacing="24" MaxWidth="600" HorizontalAlignment="Left" Padding="0,0,0,32">
             <!-- Sleep Timer -->
             <StackPanel Spacing="12">
-                <TextBlock Text="Sleep Timer" FontSize="18" FontWeight="SemiBold" Foreground="White" />
+                <TextBlock Text="Sleep Timer" FontSize="18" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <Button Content="Off" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="0" />
                     <Button Content="15 min" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="15" />
                     <Button Content="30 min" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="30" />
                     <Button Content="45 min" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="45" />
                     <Button Content="60 min" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="60" />
-                    <TextBlock Text="{x:Bind ViewModel.SleepTimerStatus, Mode=OneWay}" Foreground="#888888" VerticalAlignment="Center" />
+                    <TextBlock Text="{x:Bind ViewModel.SleepTimerStatus, Mode=OneWay}" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
                 </StackPanel>
             </StackPanel>
 
             <!-- Playback & Session Resume -->
             <StackPanel Spacing="12">
-                <TextBlock Text="Playback &amp; Session Resume" FontSize="18" FontWeight="SemiBold" Foreground="White" />
+                <TextBlock Text="Playback &amp; Session Resume" FontSize="18" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
                 <TextBlock Text="Choose whether OCTAVE remembers the exact timestamp where a track was paused on startup."
-                           FontSize="12" Foreground="#888888" />
+                           FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                 <ToggleSwitch Header="Remember playback position on startup"
                               IsOn="{x:Bind ViewModel.RestorePositionOnStartup, Mode=TwoWay}"
                               OffContent="Disabled (Songs start from 0:00)"
@@ -51,9 +51,9 @@
 
             <!-- Audio Visualizer -->
             <StackPanel Spacing="12">
-                <TextBlock Text="Audio Visualizer" FontSize="18" FontWeight="SemiBold" Foreground="White" />
+                <TextBlock Text="Audio Visualizer" FontSize="18" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
                 <TextBlock Text="Show real-time dynamic sound waveform visualizer above the progress bar during playback."
-                           FontSize="12" Foreground="#888888" />
+                           FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                 <ToggleSwitch Header="Enable progress bar audio visualizer"
                               IsOn="{x:Bind ViewModel.IsVisualizerEnabled, Mode=TwoWay}"
                               OffContent="Disabled (Hidden)"
@@ -62,24 +62,24 @@
 
             <!-- Audio Transition (Crossfade) -->
             <StackPanel Spacing="12">
-                <TextBlock Text="Audio Transition (Crossfade)" FontSize="18" FontWeight="SemiBold" Foreground="White" />
+                <TextBlock Text="Audio Transition (Crossfade)" FontSize="18" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
                 <TextBlock Text="Smoothly fade track volume when skipping or switching songs."
-                           FontSize="12" Foreground="#888888" />
+                           FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                 <ToggleSwitch Header="Enable Crossfade" IsOn="{x:Bind ViewModel.IsCrossfadeEnabled, Mode=TwoWay}" />
                 <StackPanel Orientation="Horizontal" Spacing="12" Visibility="{x:Bind BoolToVisibility(ViewModel.IsCrossfadeEnabled), Mode=OneWay}">
-                    <TextBlock Text="Crossfade Duration:" VerticalAlignment="Center" Foreground="White" FontSize="14" />
+                    <TextBlock Text="Crossfade Duration:" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="14" />
                     <Slider Width="200" Minimum="1" Maximum="10" StepFrequency="1"
                             Value="{x:Bind ViewModel.CrossfadeSeconds, Mode=TwoWay}" VerticalAlignment="Center" />
-                    <TextBlock Text="{x:Bind ViewModel.CrossfadeSeconds, Mode=OneWay}" VerticalAlignment="Center" Foreground="#888888" FontSize="14" />
-                    <TextBlock Text="sec" VerticalAlignment="Center" Foreground="#888888" FontSize="14" Margin="-8,0,0,0" />
+                    <TextBlock Text="{x:Bind ViewModel.CrossfadeSeconds, Mode=OneWay}" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorTertiaryBrush}" FontSize="14" />
+                    <TextBlock Text="sec" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorTertiaryBrush}" FontSize="14" Margin="-8,0,0,0" />
                 </StackPanel>
             </StackPanel>
 
             <!-- Equalizer -->
             <StackPanel Spacing="12">
-                <TextBlock Text="Equalizer" FontSize="18" FontWeight="SemiBold" Foreground="White" />
+                <TextBlock Text="Equalizer" FontSize="18" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
                 <TextBlock Text="10-band graphic EQ. Requires bass_fx.dll (drop it in BassPlugins\)."
-                           FontSize="12" Foreground="#888888" />
+                           FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                 <ToggleSwitch Header="Enable equalizer" IsOn="{x:Bind ViewModel.EqEnabled, Mode=TwoWay}" />
 
                 <ItemsControl ItemsSource="{x:Bind ViewModel.EqBands, Mode=OneWay}">
@@ -97,7 +97,7 @@
                                 <Slider Orientation="Vertical" Height="220" Minimum="-15" Maximum="15" StepFrequency="0.5"
                                         Value="{x:Bind Gain, Mode=TwoWay}" HorizontalAlignment="Center"
                                         IsThumbToolTipEnabled="False" />
-                                <TextBlock Text="{x:Bind Label}" FontSize="12" Foreground="#888888"
+                                <TextBlock Text="{x:Bind Label}" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                            HorizontalAlignment="Center" Margin="0,10,0,0" />
                             </StackPanel>
                         </DataTemplate>
@@ -116,15 +116,15 @@
 
             <!-- Music Folders -->
             <StackPanel Spacing="12">
-                <TextBlock Text="Music Folders" FontSize="18" FontWeight="SemiBold" Foreground="White" />
+                <TextBlock Text="Music Folders" FontSize="18" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
                 <TextBlock Text="Folders Octave scans and watches for music."
-                           FontSize="12" Foreground="#888888" />
+                           FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <Button Content="Add Folder" Click="AddFolder_Click" IsEnabled="{x:Bind ViewModel.IsNotProcessing, Mode=OneWay}" />
                     <Button Content="Rescan All" Command="{x:Bind ViewModel.RescanAllCommand}" IsEnabled="{x:Bind ViewModel.IsNotProcessing, Mode=OneWay}" />
                     <StackPanel Orientation="Horizontal" Spacing="8" Visibility="{x:Bind BoolToVisibility(ViewModel.IsProcessing), Mode=OneWay}" VerticalAlignment="Center" Margin="16,0,0,0">
                         <ProgressRing IsActive="True" Width="16" Height="16" />
-                        <TextBlock Text="Processing folders..." Foreground="#888888" FontSize="12" VerticalAlignment="Center" />
+                        <TextBlock Text="Processing folders..." Foreground="{ThemeResource TextFillColorTertiaryBrush}" FontSize="12" VerticalAlignment="Center" />
                     </StackPanel>
                 </StackPanel>
                 <ItemsControl ItemsSource="{x:Bind ViewModel.MonitoredFolders, Mode=OneWay}">
@@ -136,7 +136,7 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="{x:Bind}" VerticalAlignment="Center"
-                                           TextTrimming="CharacterEllipsis" Foreground="White" FontSize="13" />
+                                           TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="13" />
                                 <Button Grid.Column="1" Content="Remove" Click="RemoveFolder_Click"
                                         Background="Transparent" />
                             </Grid>
@@ -147,13 +147,18 @@
 
             <!-- Duplicate Tracks -->
             <StackPanel Spacing="12">
-                <TextBlock Text="Duplicate Tracks" FontSize="18" FontWeight="SemiBold" Foreground="White" />
+                <TextBlock Text="Duplicate Tracks" FontSize="18" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
                 <TextBlock Text="Find the same song stored in multiple formats (e.g. MP3 and FLAC)."
-                           FontSize="12" Foreground="#888888" />
+                           FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                <!-- UI-ST-01/SH-05: spell out what deletion does before anyone
+                     reaches for the red button - both delete paths confirm first,
+                     and bulk deletion always keeps the primary copy. -->
+                <TextBlock Text="Deletions send files to the Recycle Bin and keep the highest-quality copy in each group. Use “Manage” on a group to review or move individual copies."
+                           FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
                 <StackPanel Orientation="Horizontal" Spacing="12">
                     <Button Content="Scan for Duplicates" Command="{x:Bind ViewModel.FindDuplicatesCommand}" />
                     <Button Content="Delete All Duplicates" Click="DeleteAllDuplicates_Click" Foreground="#EF5350" />
-                    <TextBlock Text="{x:Bind ViewModel.DuplicatesSummary, Mode=OneWay}" Foreground="#888888" VerticalAlignment="Center" />
+                    <TextBlock Text="{x:Bind ViewModel.DuplicatesSummary, Mode=OneWay}" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
                 </StackPanel>
                 <ItemsControl ItemsSource="{x:Bind ViewModel.Duplicates, Mode=OneWay}">
                     <ItemsControl.ItemTemplate>
@@ -165,11 +170,11 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0">
-                                    <TextBlock Text="{x:Bind Title}" Foreground="White" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Text="{x:Bind ArtistName}" Foreground="#888888" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{x:Bind Title}" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{x:Bind ArtistName}" Foreground="{ThemeResource TextFillColorTertiaryBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
                                 <TextBlock Grid.Column="1" Text="{x:Bind local:SettingsPage.DuplicateSummary(Tracks)}"
-                                           Foreground="#888888" FontSize="12" VerticalAlignment="Center" />
+                                           Foreground="{ThemeResource TextFillColorTertiaryBrush}" FontSize="12" VerticalAlignment="Center" />
                                 <Button Grid.Column="2" Content="Manage" Margin="16,0,0,0">
                                     <Button.Flyout>
                                         <Flyout>
@@ -203,34 +208,34 @@
             <!-- ONLINE & EXTERNAL DATA SETTINGS -->
             <!-- ============================================================= -->
             <StackPanel Spacing="16">
-                <TextBlock Text="Online &amp; External Data" FontSize="20" FontWeight="Bold" Foreground="White" />
+                <TextBlock Text="Online &amp; External Data" FontSize="20" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
                 <TextBlock Text="Configure external providers, community metadata, online artwork, synchronized lyrics, and write safety policies."
-                           FontSize="12" Foreground="#888888" TextWrapping="Wrap" />
+                           FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
 
                 <!-- 0. Smart Library Enrichment Launcher -->
                 <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
-                        BorderBrush="#25FFFFFF" BorderThickness="1" CornerRadius="10" Padding="16">
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="10" Padding="16">
                     <Grid ColumnDefinitions="*,Auto">
                         <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
-                            <TextBlock Text="Smart Library Enrichment" FontSize="15" FontWeight="Bold" Foreground="White" />
+                            <TextBlock Text="Smart Library Enrichment" FontSize="15" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
                             <TextBlock Text="Scan your local library to preview or automatically enrich missing metadata, album artwork, lyrics, and artist biographies."
-                                       FontSize="12" Foreground="#888888" TextWrapping="Wrap" />
+                                       FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
                         </StackPanel>
                         <Button Grid.Column="1" VerticalAlignment="Center" Margin="12,0,0,0"
                                 Content="Scan &amp; Enrich Library..."
                                 Click="OpenLibraryEnrichment_Click"
                                 Background="{ThemeResource SystemControlHighlightAccentBrush}"
-                                Foreground="White" FontWeight="SemiBold" Height="36" />
+                                Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontWeight="SemiBold" Height="36" />
                     </Grid>
                 </Border>
 
                 <!-- 1. Privacy & Offline Behavior -->
                 <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
-                        BorderBrush="#25FFFFFF" BorderThickness="1" CornerRadius="10" Padding="16">
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="10" Padding="16">
                     <StackPanel Spacing="12">
                         <TextBlock Text="PRIVACY &amp; OFFLINE MODE" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" CharacterSpacing="80" />
                         <TextBlock Text="OCTAVE connects to online community databases (MusicBrainz, Cover Art Archive, LRCLIB, and TheAudioDB) to retrieve metadata, high-resolution artwork, biographies, and synchronized lyrics. Song title, artist, and album names are transmitted during search queries."
-                                   FontSize="12" Foreground="#888888" TextWrapping="Wrap" />
+                                   FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
                         
                         <ToggleSwitch Header="Offline-Only Mode (Disable All Remote API Requests)"
                                       IsOn="{x:Bind ExternalSettings.OfflineOnlyMode, Mode=TwoWay}"
@@ -257,15 +262,15 @@
 
                 <!-- 2. External Providers -->
                 <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
-                        BorderBrush="#25FFFFFF" BorderThickness="1" CornerRadius="10" Padding="16">
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="10" Padding="16">
                     <StackPanel Spacing="14">
                         <TextBlock Text="EXTERNAL PROVIDERS" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" CharacterSpacing="80" />
                         
                         <!-- MusicBrainz -->
                         <Grid ColumnDefinitions="*,Auto">
                             <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
-                                <TextBlock Text="MusicBrainz" FontWeight="SemiBold" Foreground="White" />
-                                <TextBlock Text="Music identity, release dates, track numbering &amp; fuzzy matching. (Rate-limited to 1 req/s, no key required)" FontSize="12" Foreground="#888888" TextWrapping="Wrap" />
+                                <TextBlock Text="MusicBrainz" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                <TextBlock Text="Music identity, release dates, track numbering &amp; fuzzy matching. (Rate-limited to 1 req/s, no key required)" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
                             </StackPanel>
                             <ToggleSwitch Grid.Column="1" IsOn="{x:Bind ExternalSettings.MusicBrainzEnabled, Mode=TwoWay}" Toggled="SettingToggled" VerticalAlignment="Center" />
                         </Grid>
@@ -275,8 +280,8 @@
                         <!-- LRCLIB -->
                         <Grid ColumnDefinitions="*,Auto">
                             <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
-                                <TextBlock Text="LRCLIB" FontWeight="SemiBold" Foreground="White" />
-                                <TextBlock Text="Synchronized timestamped (.lrc) and plain text lyrics. (No key required)" FontSize="12" Foreground="#888888" TextWrapping="Wrap" />
+                                <TextBlock Text="LRCLIB" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                <TextBlock Text="Synchronized timestamped (.lrc) and plain text lyrics. (No key required)" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
                             </StackPanel>
                             <ToggleSwitch Grid.Column="1" IsOn="{x:Bind ExternalSettings.LrcLibEnabled, Mode=TwoWay}" Toggled="SettingToggled" VerticalAlignment="Center" />
                         </Grid>
@@ -286,8 +291,8 @@
                         <!-- Cover Art Archive -->
                         <Grid ColumnDefinitions="*,Auto">
                             <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
-                                <TextBlock Text="Cover Art Archive" FontWeight="SemiBold" Foreground="White" />
-                                <TextBlock Text="Internet Archive community repository for front album artwork. (No key required)" FontSize="12" Foreground="#888888" TextWrapping="Wrap" />
+                                <TextBlock Text="Cover Art Archive" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                <TextBlock Text="Internet Archive community repository for front album artwork. (No key required)" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
                             </StackPanel>
                             <ToggleSwitch Grid.Column="1" IsOn="{x:Bind ExternalSettings.CoverArtArchiveEnabled, Mode=TwoWay}" Toggled="SettingToggled" VerticalAlignment="Center" />
                         </Grid>
@@ -297,8 +302,8 @@
                         <!-- TheAudioDB -->
                         <Grid ColumnDefinitions="*,Auto">
                             <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
-                                <TextBlock Text="TheAudioDB" FontWeight="SemiBold" Foreground="White" />
-                                <TextBlock Text="Artist biographies, genres, formation dates, social links, and profile photos." FontSize="12" Foreground="#888888" TextWrapping="Wrap" />
+                                <TextBlock Text="TheAudioDB" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                <TextBlock Text="Artist biographies, genres, formation dates, social links, and profile photos." FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
                             </StackPanel>
                             <ToggleSwitch Grid.Column="1" IsOn="{x:Bind ExternalSettings.TheAudioDbEnabled, Mode=TwoWay}" Toggled="SettingToggled" VerticalAlignment="Center" />
                         </Grid>
@@ -307,14 +312,14 @@
 
                 <!-- 3. API Credentials -->
                 <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
-                        BorderBrush="#25FFFFFF" BorderThickness="1" CornerRadius="10" Padding="16">
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="10" Padding="16">
                     <StackPanel Spacing="12">
                         <TextBlock Text="API CREDENTIALS" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" CharacterSpacing="80" />
-                        <TextBlock Text="Configure provider authentication keys. Keys are stored locally and never exposed in logs or diagnostics." FontSize="12" Foreground="#888888" TextWrapping="Wrap" />
+                        <TextBlock Text="Configure provider authentication keys. Keys are stored locally and never exposed in logs or diagnostics." FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
                         
                         <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
                             <StackPanel Grid.Column="0" Spacing="4">
-                                <TextBlock Text="TheAudioDB API Key" FontWeight="SemiBold" Foreground="White" />
+                                <TextBlock Text="TheAudioDB API Key" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
                                 <TextBlock Text="{x:Bind ExternalSettings.TheAudioDbStatusText, Mode=OneWay}" FontSize="12" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" />
                             </StackPanel>
                         </Grid>
@@ -343,10 +348,10 @@
 
                 <!-- 4. Metadata Write Policy -->
                 <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
-                        BorderBrush="#25FFFFFF" BorderThickness="1" CornerRadius="10" Padding="16">
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="10" Padding="16">
                     <StackPanel Spacing="12">
                         <TextBlock Text="METADATA WRITE &amp; AUTOMATION POLICY" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" CharacterSpacing="80" />
-                        <TextBlock Text="Control when and how external metadata is written to local audio files." FontSize="12" Foreground="#888888" TextWrapping="Wrap" />
+                        <TextBlock Text="Control when and how external metadata is written to local audio files." FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
 
                         <ComboBox Header="Automatic Write Policy"
                                   SelectedIndex="{x:Bind ExternalSettings.WritePolicyIndex, Mode=TwoWay}"
@@ -381,7 +386,7 @@
 
                 <!-- 5. Two-Tier Caching & Network Rate Limits -->
                 <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
-                        BorderBrush="#25FFFFFF" BorderThickness="1" CornerRadius="10" Padding="16">
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="10" Padding="16">
                     <StackPanel Spacing="12">
                         <TextBlock Text="CACHING &amp; NETWORK RATE LIMITS" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" CharacterSpacing="80" />
                         
@@ -404,7 +409,7 @@
                         </ComboBox>
 
                         <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
-                            <TextBlock Text="Maximum Concurrent External Requests:" VerticalAlignment="Center" Foreground="White" FontSize="14" />
+                            <TextBlock Text="Maximum Concurrent External Requests:" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="14" />
                             <Slider Grid.Column="1" Width="180" Minimum="1" Maximum="10" StepFrequency="1"
                                     Value="{x:Bind ExternalSettings.MaxConcurrentRequests, Mode=TwoWay}"
                                     ValueChanged="SettingSliderChanged" />
@@ -414,10 +419,10 @@
 
                 <!-- 6. Online Library Scan Preferences -->
                 <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
-                        BorderBrush="#25FFFFFF" BorderThickness="1" CornerRadius="10" Padding="16">
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="10" Padding="16">
                     <StackPanel Spacing="10">
                         <TextBlock Text="ONLINE SCAN PREFERENCES" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" CharacterSpacing="80" />
-                        <TextBlock Text="Configure targeted filters for automatic and manual library enrichment scan passes." FontSize="12" Foreground="#888888" TextWrapping="Wrap" />
+                        <TextBlock Text="Configure targeted filters for automatic and manual library enrichment scan passes." FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
 
                         <CheckBox Content="Scan entire library" IsChecked="{x:Bind ExternalSettings.ScanEntireLibrary, Mode=TwoWay}" Click="SettingCheckBoxClicked" />
                         <CheckBox Content="Scan only tracks with missing metadata" IsChecked="{x:Bind ExternalSettings.ScanOnlyMissingMetadata, Mode=TwoWay}" Click="SettingCheckBoxClicked" />
@@ -429,20 +434,32 @@
                 </Border>
             </StackPanel>
 
-            <TextBlock Text="Engine Diagnostic Harness" FontSize="18" FontWeight="SemiBold" Foreground="White" />
-            
-            <Button Content="Ignite Main Engines (Run Static Fire)" 
-                    Command="{x:Bind ViewModel.RunStaticFireCommand}" 
-                    Width="300" Height="40" 
-                    Background="#00FF66" Foreground="Black" FontWeight="Bold" />
+                <!-- ============================================================= -->
+                <!-- ENGINE DIAGNOSTIC HARNESS                                     -->
+                <!-- ============================================================= -->
+                <!-- UI-ST-02: used to be a neon-green "Ignite Main Engines (Run
+                     Static Fire)" button floating outside the settings column
+                     with no explanation of what it does. Restyled as a normal
+                     action, moved inside the settings stack, and given a caption.
+                     The console keeps its deliberate terminal look (#111111 /
+                     green on purpose). -->
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Engine Diagnostic Harness" FontSize="18" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                    <TextBlock Text="Runs an internal BASS engine self-test and prints the report to the console below. No library files are modified."
+                               FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
+                    <Button Content="Run Engine Diagnostics (Static Fire)"
+                            Command="{x:Bind ViewModel.RunStaticFireCommand}"
+                            Width="300" Height="40"
+                            FontWeight="SemiBold" />
 
-            <TextBlock Text="Console Log Output" FontSize="14" FontWeight="SemiBold" Foreground="#888888" />
-            
-            <ScrollViewer Height="300" Background="#111111" Padding="12" CornerRadius="4">
-                <TextBlock Text="{x:Bind ViewModel.ConsoleOutput, Mode=OneWay}" 
-                           TextWrapping="Wrap" FontFamily="Consolas" Foreground="#00FF66"/>
-            </ScrollViewer>
-        </StackPanel>
+                    <TextBlock Text="Console Log Output" FontSize="14" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+
+                    <ScrollViewer Height="300" Background="#111111" Padding="12" CornerRadius="4">
+                        <TextBlock Text="{x:Bind ViewModel.ConsoleOutput, Mode=OneWay}"
+                                   TextWrapping="Wrap" FontFamily="Consolas" Foreground="#00FF66"/>
+                    </ScrollViewer>
+                </StackPanel>
+            </StackPanel>
         </ScrollViewer>
     </Grid>
 </Page>

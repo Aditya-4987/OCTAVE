@@ -20,38 +20,41 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- Upper Banner Section -->
-        <Grid Grid.Row="0" Margin="-24,-24,-24,24" Padding="32,64,32,32" Background="{StaticResource CardHoverBrush}">
+        <!-- Upper Banner Section.
+             UI-ED-04: hardcoded #AAAAAA / #CCCCCC / White replaced with theme
+             resources; the banner background was {StaticResource CardHoverBrush}
+             (#282828, dark-locked) and now resolves the themed layer fill. -->
+        <Grid Grid.Row="0" Margin="-24,-24,-24,24" Padding="32,64,32,32" Background="{ThemeResource LayerFillColorDefaultBrush}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
             <!-- Artwork -->
-            <Border Grid.Column="0" Width="232" Height="232" CornerRadius="8" Background="#222222" Margin="0,0,32,0">
+            <Border Grid.Column="0" Width="232" Height="232" CornerRadius="8" Background="{ThemeResource LayerFillColorDefaultBrush}" Margin="0,0,32,0">
                 <Image Source="{x:Bind ViewModel.ArtworkUrl, Mode=OneWay, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Large}" Stretch="UniformToFill" />
             </Border>
 
             <!-- Text details -->
             <StackPanel Grid.Column="1" VerticalAlignment="Bottom">
-                <TextBlock Text="ALBUM" FontSize="12" FontWeight="Bold" Foreground="#AAAAAA" />
-                <TextBlock Text="{x:Bind ViewModel.Title, Mode=OneWay}" FontSize="64" FontWeight="Bold" Foreground="White" TextWrapping="Wrap" Margin="0,8,0,8" />
-                <TextBlock Text="{x:Bind ViewModel.Subtitle, Mode=OneWay}" FontSize="16" Foreground="#AAAAAA" Margin="0,0,0,8" />
-                <TextBlock Text="{x:Bind ViewModel.Description, Mode=OneWay}" FontSize="13" Foreground="#CCCCCC" TextWrapping="Wrap" MaxHeight="60" TextTrimming="CharacterEllipsis" Margin="0,0,0,16" Visibility="{x:Bind local:EntityDetailPage.HasTextVisibility(ViewModel.Description), Mode=OneWay}" />
-                
+                <TextBlock Text="ALBUM" FontSize="12" FontWeight="Bold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Text="{x:Bind ViewModel.Title, Mode=OneWay}" FontSize="64" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextWrapping="Wrap" Margin="0,8,0,8" />
+                <TextBlock Text="{x:Bind ViewModel.Subtitle, Mode=OneWay}" FontSize="16" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Margin="0,0,0,8" />
+                <TextBlock Text="{x:Bind ViewModel.Description, Mode=OneWay}" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" MaxHeight="60" TextTrimming="CharacterEllipsis" Margin="0,0,0,16" Visibility="{x:Bind local:EntityDetailPage.HasTextVisibility(ViewModel.Description), Mode=OneWay}" />
+
                 <StackPanel Orientation="Horizontal" Spacing="16" VerticalAlignment="Center">
                     <Button Command="{x:Bind ViewModel.PlayAllCommand}" Style="{StaticResource PrimaryPlayButtonStyle}">
                         <FontIcon Glyph="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="24" />
                     </Button>
 
                     <Button Command="{x:Bind ViewModel.EnrichEntityCommand}" ToolTipService.ToolTip="Fetch Online Information / Artwork" Style="{StaticResource GhostIconButtonStyle}">
-                        <FontIcon Glyph="&#xE721;" FontFamily="Segoe MDL2 Assets" Foreground="#AAAAAA" FontSize="20" />
+                        <FontIcon Glyph="&#xE721;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="20" />
                     </Button>
 
                     <ProgressRing IsActive="{x:Bind ViewModel.IsEnriching, Mode=OneWay}" Width="20" Height="20" Visibility="{x:Bind local:EntityDetailPage.VisibleWhen(ViewModel.IsEnriching), Mode=OneWay}" Margin="0,0,8,0" />
-                    
+
                     <Button Click="BackButton_Click" Style="{StaticResource GhostIconButtonStyle}">
-                        <FontIcon Glyph="&#xE72B;" FontFamily="Segoe MDL2 Assets" Foreground="#AAAAAA" FontSize="20" />
+                        <FontIcon Glyph="&#xE72B;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="20" />
                     </Button>
                 </StackPanel>
             </StackPanel>
@@ -88,26 +91,26 @@
                             <FontIcon Glyph="&#xE768;"
                                       FontFamily="Segoe MDL2 Assets"
                                       FontSize="14"
-                                      Foreground="White"/>
+                                      Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
                         </Button>
 
                         <!-- Title -->
-                        <TextBlock Grid.Column="1" Text="{x:Bind Title}" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="White" TextTrimming="CharacterEllipsis" Margin="8,0,0,0"/>
+                        <TextBlock Grid.Column="1" Text="{x:Bind Title}" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" Margin="8,0,0,0"/>
 
                         <!-- Local/Cloud Provider Status -->
                         <FontIcon Grid.Column="2" 
                                   Glyph="{x:Bind local:EntityDetailPage.GetProviderGlyph(Provider)}" 
                                   FontFamily="Segoe MDL2 Assets" 
                                   FontSize="14" 
-                                  Foreground="#888888" 
+                                  Foreground="{ThemeResource TextFillColorTertiaryBrush}" 
                                   Margin="12,0" 
                                   VerticalAlignment="Center"/>
 
                         <!-- Artist -->
-                        <TextBlock Grid.Column="3" Text="{x:Bind ArtistName}" VerticalAlignment="Center" Foreground="#888888" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Grid.Column="3" Text="{x:Bind ArtistName}" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextTrimming="CharacterEllipsis"/>
 
                         <!-- Duration -->
-                        <TextBlock Grid.Column="4" Text="{x:Bind local:EntityDetailPage.FormatDuration(DurationSeconds)}" VerticalAlignment="Center" Foreground="#888888" HorizontalAlignment="Right" Margin="0,0,8,0"/>
+                        <TextBlock Grid.Column="4" Text="{x:Bind local:EntityDetailPage.FormatDuration(DurationSeconds)}" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Right" Margin="0,0,8,0"/>
 
                         <!-- More Menu -->
                         <Button Grid.Column="5" 
@@ -117,7 +120,7 @@
                                 Click="MoreMenuButton_Click"
                                 HorizontalAlignment="Center" 
                                 VerticalAlignment="Center">
-                            <FontIcon Glyph="&#xE712;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#888888"/>
+                            <FontIcon Glyph="&#xE712;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
                         </Button>
                     </Grid>
                 </DataTemplate>

@@ -15,12 +15,13 @@
         </Grid.RowDefinitions>
 
         <Grid Grid.Row="0" Margin="0,0,0,24">
-            <TextBlock Text="Playlists" FontSize="28" FontWeight="Bold" Foreground="White" VerticalAlignment="Center" />
+            <!-- Hardcoded White / #888888 / #1E1E1E replaced with theme resources -->
+            <TextBlock Text="Playlists" FontSize="28" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" VerticalAlignment="Center" />
             <Button Content="New Playlist" Click="NewPlaylist_Click" HorizontalAlignment="Right" VerticalAlignment="Center" />
         </Grid>
 
         <TextBlock Grid.Row="1" Text="No playlists yet. Create one to get started."
-                   Foreground="#888888" VerticalAlignment="Top"
+                   Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Top"
                    Visibility="{x:Bind EmptyVisibility(ViewModel.Items.Count), Mode=OneWay}" />
 
         <GridView Grid.Row="1"
@@ -30,7 +31,7 @@
                   ItemClick="GridView_ItemClick">
             <GridView.ItemTemplate>
                 <DataTemplate x:DataType="models:Playlist">
-                    <Grid Width="180" Height="120" Margin="8" Padding="16" Background="#1E1E1E" CornerRadius="8"
+                    <Grid Width="180" Height="120" Margin="8" Padding="16" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="8"
                           RightTapped="PlaylistCard_RightTapped">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
@@ -38,10 +39,10 @@
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
                         <FontIcon Grid.Row="0" Glyph="&#xE90B;" FontFamily="Segoe MDL2 Assets" FontSize="22"
-                                  Foreground="#888888" HorizontalAlignment="Left" />
-                        <TextBlock Grid.Row="1" Text="{x:Bind Title}" FontWeight="SemiBold" FontSize="15" Foreground="White"
+                                  Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Left" />
+                        <TextBlock Grid.Row="1" Text="{x:Bind Title}" FontWeight="SemiBold" FontSize="15" Foreground="{ThemeResource TextFillColorPrimaryBrush}"
                                    TextTrimming="CharacterEllipsis" VerticalAlignment="Bottom" />
-                        <TextBlock Grid.Row="2" Text="{x:Bind TrackCount}" Foreground="#888888" FontSize="12" />
+                        <TextBlock Grid.Row="2" Text="{x:Bind TrackCount}" Foreground="{ThemeResource TextFillColorTertiaryBrush}" FontSize="12" />
                     </Grid>
                 </DataTemplate>
             </GridView.ItemTemplate>

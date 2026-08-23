@@ -3,8 +3,6 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.Extensions.DependencyInjection;
 using Octave_Desktop.ViewModels;
 using Octave.Core.Models;
-using Microsoft.UI.Xaml.Input;
-using Microsoft.UI.Xaml.Media;
 
 namespace Octave_Desktop.Views;
 
@@ -96,22 +94,7 @@ public sealed partial class HomePage : Page
         await Helpers.TrackContextMenu.ShowAsync(fe, track, libraryService, playlistService, queueService, this.XamlRoot);
     }
 
-    private void Card_PointerEntered(object sender, PointerRoutedEventArgs e)
-    {
-        if (sender is Grid grid)
-        {
-            if (Application.Current.Resources.TryGetValue("SystemControlHighlightAccentBrush", out var accentObj) && accentObj is SolidColorBrush accent)
-            {
-                grid.BorderBrush = accent;
-            }
-        }
-    }
-
-    private void Card_PointerExited(object sender, PointerRoutedEventArgs e)
-    {
-        if (sender is Grid grid)
-        {
-            grid.BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.Transparent) { Color = Microsoft.UI.ColorHelper.FromArgb(255, 42, 42, 42) }; // #2A2A2A
-        }
-    }
+    // UI-HP-05: the Card_PointerEntered / Card_PointerExited brush-injection
+    // handlers are gone - card hover feedback is now a PointerOver visual state
+    // declared inside the two HomePage data templates.
 }

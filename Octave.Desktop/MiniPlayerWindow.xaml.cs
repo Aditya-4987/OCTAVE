@@ -22,6 +22,10 @@ public sealed partial class MiniPlayerWindow : Window
         InitializeComponent();
         RootGrid.DataContext = this; // for the {Binding} artwork image
 
+        // UI-MP-03: track the app's saved theme, not whatever the OS is set to
+        // (mirrors MainWindow's RequestedTheme assignment).
+        RootGrid.RequestedTheme = ThemeHelper.GetSavedTheme();
+
         // Compact, always-on-top, non-resizable overlay.
         if (AppWindow.Presenter is OverlappedPresenter presenter)
         {

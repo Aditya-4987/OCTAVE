@@ -221,28 +221,40 @@ public sealed partial class MainWindow : Window
 
     public string FormatSeconds(double seconds) => Converters.DurationFormatConverter.FormatSeconds(seconds);
 
+    // UI-MW-04: these helpers used to hand out hardcoded White / #888888 brushes.
+    // Theme resources are resolved per call so a light/dark switch restyles the
+    // transport icons immediately instead of leaving them stuck in the old theme.
+    private static Brush ThemedBrush(string resourceKey, Windows.UI.Color fallback)
+    {
+        if (Application.Current.Resources.TryGetValue(resourceKey, out object? value) && value is Brush brush)
+        {
+            return brush;
+        }
+        return new SolidColorBrush(fallback);
+    }
+
     public Brush GetShuffleColor(bool isShuffle)
     {
-        return isShuffle 
-            ? new SolidColorBrush(Microsoft.UI.Colors.White) 
-            : new SolidColorBrush(Windows.UI.Color.FromArgb(255, 136, 136, 136));
+        return isShuffle
+            ? ThemedBrush("TextFillColorPrimaryBrush", Microsoft.UI.Colors.White)
+            : ThemedBrush("TextFillColorTertiaryBrush", Windows.UI.Color.FromArgb(255, 136, 136, 136));
     }
 
     public Brush GetActiveColor(bool isActive)
     {
-        return isActive ? (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"] : new SolidColorBrush(Microsoft.UI.Colors.White);
+        return isActive ? ThemedBrush("SystemControlHighlightAccentBrush", Microsoft.UI.Colors.DodgerBlue) : ThemedBrush("TextFillColorPrimaryBrush", Microsoft.UI.Colors.White);
     }
 
     public Brush GetFavoriteColor(bool isFavorite)
     {
-        return isFavorite ? (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"] : new SolidColorBrush(Microsoft.UI.Colors.White);
+        return isFavorite ? ThemedBrush("SystemControlHighlightAccentBrush", Microsoft.UI.Colors.DodgerBlue) : ThemedBrush("TextFillColorPrimaryBrush", Microsoft.UI.Colors.White);
     }
 
     public Brush GetRepeatColor(RepeatMode mode)
     {
-        return mode != RepeatMode.None 
-            ? new SolidColorBrush(Microsoft.UI.Colors.White) 
-            : new SolidColorBrush(Windows.UI.Color.FromArgb(255, 136, 136, 136));
+        return mode != RepeatMode.None
+            ? ThemedBrush("TextFillColorPrimaryBrush", Microsoft.UI.Colors.White)
+            : ThemedBrush("TextFillColorTertiaryBrush", Windows.UI.Color.FromArgb(255, 136, 136, 136));
     }
 
     public string GetRepeatGlyph(RepeatMode mode)

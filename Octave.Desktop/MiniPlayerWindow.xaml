@@ -9,7 +9,9 @@
     mc:Ignorable="d"
     Title="Octave Mini">
 
-    <Grid x:Name="RootGrid" Background="#1C1C1C" Padding="14" RowSpacing="8">
+    <!-- UI-MP-03: was hardcoded #1C1C1C; the saved theme is applied to RootGrid
+         in the constructor so these theme resources track the app setting. -->
+    <Grid x:Name="RootGrid" Background="{ThemeResource SolidBackgroundFillColorBaseBrush}" Padding="14" RowSpacing="8">
         <Grid.Resources>
             <converters:ArtworkPathConverter x:Key="ArtworkPathConverter" />
         </Grid.Resources>
@@ -37,28 +39,28 @@
             </Grid>
 
             <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                <TextBlock Text="{x:Bind ViewModel.TrackTitle, Mode=OneWay}" FontWeight="SemiBold" FontSize="14" Foreground="White" TextTrimming="CharacterEllipsis" />
-                <TextBlock Text="{x:Bind ViewModel.ArtistName, Mode=OneWay}" FontSize="12" Foreground="#888888" TextTrimming="CharacterEllipsis" />
+                <TextBlock Text="{x:Bind ViewModel.TrackTitle, Mode=OneWay}" FontWeight="SemiBold" FontSize="14" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" />
+                <TextBlock Text="{x:Bind ViewModel.ArtistName, Mode=OneWay}" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextTrimming="CharacterEllipsis" />
             </StackPanel>
 
             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                 <Button Command="{x:Bind ViewModel.PreviousCommand}" Background="Transparent" BorderBrush="Transparent" Padding="6">
-                    <FontIcon Glyph="&#xE892;" FontFamily="Segoe MDL2 Assets" Foreground="White" FontSize="14" />
+                    <FontIcon Glyph="&#xE892;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="14" />
                 </Button>
                 <Button Command="{x:Bind ViewModel.PlayCommand}" Visibility="{x:Bind BoolToVisibilityNegation(ViewModel.IsPlaying), Mode=OneWay}" Background="Transparent" BorderBrush="Transparent" Padding="6">
-                    <FontIcon Glyph="&#xE768;" FontFamily="Segoe MDL2 Assets" Foreground="White" FontSize="16" />
+                    <FontIcon Glyph="&#xE768;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="16" />
                 </Button>
                 <Button Command="{x:Bind ViewModel.PauseCommand}" Visibility="{x:Bind BoolToVisibility(ViewModel.IsPlaying), Mode=OneWay}" Background="Transparent" BorderBrush="Transparent" Padding="6">
-                    <FontIcon Glyph="&#xE769;" FontFamily="Segoe MDL2 Assets" Foreground="White" FontSize="16" />
+                    <FontIcon Glyph="&#xE769;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="16" />
                 </Button>
                 <Button Command="{x:Bind ViewModel.NextCommand}" Background="Transparent" BorderBrush="Transparent" Padding="6">
-                    <FontIcon Glyph="&#xE893;" FontFamily="Segoe MDL2 Assets" Foreground="White" FontSize="14" />
+                    <FontIcon Glyph="&#xE893;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="14" />
                 </Button>
             </StackPanel>
 
             <Button Grid.Column="3" Click="Expand_Click" Background="Transparent" BorderBrush="Transparent" Padding="6"
                     VerticalAlignment="Center" ToolTipService.ToolTip="Back to main window">
-                <FontIcon Glyph="&#xE740;" FontFamily="Segoe MDL2 Assets" Foreground="#888888" FontSize="14" />
+                <FontIcon Glyph="&#xE740;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorTertiaryBrush}" FontSize="14" />
             </Button>
         </Grid>
 
@@ -69,14 +71,14 @@
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <TextBlock Grid.Column="0" Text="{x:Bind FormatSeconds(ViewModel.PositionSeconds), Mode=OneWay}" FontSize="11" Foreground="#888888" VerticalAlignment="Center" Width="36" TextAlignment="Right" />
+            <TextBlock Grid.Column="0" Text="{x:Bind FormatSeconds(ViewModel.PositionSeconds), Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" Width="36" TextAlignment="Right" />
             <Slider Grid.Column="1" x:Name="MiniSeek" Minimum="0"
                     Maximum="{x:Bind ViewModel.DurationSeconds, Mode=OneWay}"
                     Value="{x:Bind ViewModel.PositionSeconds, Mode=OneWay}"
                     IsThumbToolTipEnabled="False" VerticalAlignment="Center" Margin="0,-8,0,-8"
                     PointerPressed="MiniSeek_PointerPressed" PointerReleased="MiniSeek_PointerReleased"
                     PointerCaptureLost="MiniSeek_PointerCaptureLost" PointerCanceled="MiniSeek_PointerCanceled" />
-            <TextBlock Grid.Column="2" Text="{x:Bind FormatSeconds(ViewModel.DurationSeconds), Mode=OneWay}" FontSize="11" Foreground="#888888" VerticalAlignment="Center" Width="36" TextAlignment="Left" />
+            <TextBlock Grid.Column="2" Text="{x:Bind FormatSeconds(ViewModel.DurationSeconds), Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" Width="36" TextAlignment="Left" />
         </Grid>
     </Grid>
 </Window>
