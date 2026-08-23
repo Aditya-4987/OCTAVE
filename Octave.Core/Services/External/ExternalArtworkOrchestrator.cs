@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -49,97 +48,91 @@ public class ExternalArtworkOrchestrator : IExternalArtworkOrchestrator
         string normAlbum = MetadataTextNormalizer.Normalize(albumTitle);
         string cacheKey = $"art:album:{normArtist}:{normAlbum}";
 
-        // 1. Check cache for previously resolved local token
+        // 1. Check cache for previously resolved local token. ORC-03: existence
+        // probing is delegated to the manager (token layout + memoized probe).
         var cachedToken = await _cache.GetAsync<string>(cacheKey, ct).ConfigureAwait(false);
-        if (!string.IsNullOrWhiteSpace(cachedToken))
+        if (!string.IsNullOrWhiteSpace(cachedToken) && _artworkCacheManager.CachedFileExists(cachedToken))
         {
-            // Verify file actually exists in artwork cache directory
-            string relativePath = cachedToken.Replace("ArtworkCache/", "");
-            string absolutePath = Path.Combine(_artworkCacheManager.CacheRoot, relativePath);
-            if (File.Exists(absolutePath))
-            {
-                return cachedToken;
-            }
+            return cachedToken;
         }
 
         // 2. Deduplicate concurrent in-flight requests for the same album
         string inFlightKey = $"resolve_album_art:{cacheKey}";
-        return await _singleFlight.ExecuteAsync(inFlightKey, async () =>
+        try
         {
-            // Double check cache inside single-flight
-            var tokenAgain = await _cache.GetAsync<string>(cacheKey, ct).ConfigureAwait(false);
-            if (!string.IsNullOrWhiteSpace(tokenAgain))
+            return await _singleFlight.ExecuteAsync(inFlightKey, async () =>
             {
-                string relativePath = tokenAgain.Replace("ArtworkCache/", "");
-                string absolutePath = Path.Combine(_artworkCacheManager.CacheRoot, relativePath);
-                if (File.Exists(absolutePath))
+                // Double check cache inside single-flight
+                var tokenAgain = await _cache.GetAsync<string>(cacheKey).ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(tokenAgain) && _artworkCacheManager.CachedFileExists(tokenAgain))
                 {
                     return tokenAgain;
                 }
-            }
 
-            var sortedProviders = _albumArtworkProviders.Where(p => p.IsEnabled).OrderBy(p => p.Priority);
+                var sortedProviders = _albumArtworkProviders.Where(p => p.IsEnabled).OrderBy(p => p.Priority);
 
-            foreach (var provider in sortedProviders)
-            {
-                if (ct.IsCancellationRequested) break;
-
-                try
+                // SF-01: the shared factory never observes a caller's token — the
+                // sweep runs to completion under its own 15s-per-request timeouts so
+                // one caller cancelling cannot corrupt the result other joiners are
+                // awaiting. The caller's own ct is applied by AsyncSingleFlight to
+                // their personal wait only.
+                foreach (var provider in sortedProviders)
                 {
-                    var candidateUrls = await provider.SearchAlbumArtworkUrlsAsync(albumTitle, artistName, externalIds, ct).ConfigureAwait(false);
-                    if (candidateUrls != null && candidateUrls.Count > 0)
+                    try
                     {
-                        foreach (var url in candidateUrls)
+                        var candidateUrls = await provider.SearchAlbumArtworkUrlsAsync(albumTitle, artistName, externalIds, CancellationToken.None).ConfigureAwait(false);
+                        if (candidateUrls != null && candidateUrls.Count > 0)
                         {
-                            if (string.IsNullOrWhiteSpace(url) || ct.IsCancellationRequested) continue;
-
-                            var byteResult = await _httpService.GetByteArrayAsync(
-                                url,
-                                provider.ProviderName,
-                                null,
-                                TimeSpan.FromSeconds(15),
-                                ct).ConfigureAwait(false);
-
-                            if (byteResult.IsSuccess && byteResult.Data != null)
+                            foreach (var url in candidateUrls)
                             {
-                                // Validate image bytes before caching to reject corrupted data/HTML error pages
-                                if (ImageValidator.IsValidImage(byteResult.Data, out string detectedMimeType))
+                                if (string.IsNullOrWhiteSpace(url)) continue;
+
+                                var byteResult = await _httpService.GetByteArrayAsync(
+                                    url,
+                                    provider.ProviderName,
+                                    null,
+                                    TimeSpan.FromSeconds(15),
+                                    CancellationToken.None).ConfigureAwait(false);
+
+                                if (byteResult.IsSuccess && byteResult.Data != null)
                                 {
-                                    string? token = await _artworkCacheManager.CacheBytesAsync(byteResult.Data, detectedMimeType).ConfigureAwait(false);
-                                    if (!string.IsNullOrWhiteSpace(token))
+                                    // Validate image bytes before caching to reject corrupted data/HTML error pages
+                                    if (ImageValidator.IsValidImage(byteResult.Data, out string detectedMimeType))
                                     {
-                                        await _cache.SetAsync(cacheKey, token, TimeSpan.FromDays(90), ct).ConfigureAwait(false);
-                                        return token;
+                                        string? token = await _artworkCacheManager.CacheBytesAsync(byteResult.Data, detectedMimeType).ConfigureAwait(false);
+                                        if (!string.IsNullOrWhiteSpace(token))
+                                        {
+                                            await _cache.SetAsync(cacheKey, token, TimeSpan.FromDays(90), CancellationToken.None).ConfigureAwait(false);
+                                            return token;
+                                        }
                                     }
                                 }
                             }
                         }
                     }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[ExternalArtworkOrchestrator] Album artwork provider '{provider.ProviderName}' failed: {ex.Message}");
+                    }
                 }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"[ExternalArtworkOrchestrator] Album artwork provider '{provider.ProviderName}' failed: {ex.Message}");
-                }
-            }
 
-            // Fallback: Check stale cache on provider failure / offline
-            var stale = await _cache.GetWithMetadataAsync<string>(cacheKey, allowStale: true, ct).ConfigureAwait(false);
-            if (stale != null && !string.IsNullOrWhiteSpace(stale.Value))
-            {
-                string relativePath = stale.Value.Replace("ArtworkCache/", "");
-                string absolutePath = Path.Combine(_artworkCacheManager.CacheRoot, relativePath);
-                if (File.Exists(absolutePath))
+                // Fallback: Check stale cache on provider failure / offline
+                var stale = await _cache.GetWithMetadataAsync<string>(cacheKey, allowStale: true).ConfigureAwait(false);
+                if (stale != null && !string.IsNullOrWhiteSpace(stale.Value) && _artworkCacheManager.CachedFileExists(stale.Value))
                 {
                     return stale.Value;
                 }
-            }
 
+                return null;
+            }, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // SF-01: this caller's personal wait was cancelled; the shared fetch
+            // continues for everyone else. Exit gracefully per the established
+            // orchestrator contract.
             return null;
-        }).ConfigureAwait(false);
+        }
     }
 
     public async Task<string?> ResolveAndCacheArtistImageAsync(
@@ -155,91 +148,80 @@ public class ExternalArtworkOrchestrator : IExternalArtworkOrchestrator
 
         // 1. Check cache
         var cachedToken = await _cache.GetAsync<string>(cacheKey, ct).ConfigureAwait(false);
-        if (!string.IsNullOrWhiteSpace(cachedToken))
+        if (!string.IsNullOrWhiteSpace(cachedToken) && _artworkCacheManager.CachedFileExists(cachedToken))
         {
-            string relativePath = cachedToken.Replace("ArtworkCache/", "");
-            string absolutePath = Path.Combine(_artworkCacheManager.CacheRoot, relativePath);
-            if (File.Exists(absolutePath))
-            {
-                return cachedToken;
-            }
+            return cachedToken;
         }
 
         // 2. Deduplicate concurrent in-flight requests for the same artist
         string inFlightKey = $"resolve_artist_art:{cacheKey}";
-        return await _singleFlight.ExecuteAsync(inFlightKey, async () =>
+        try
         {
-            var tokenAgain = await _cache.GetAsync<string>(cacheKey, ct).ConfigureAwait(false);
-            if (!string.IsNullOrWhiteSpace(tokenAgain))
+            return await _singleFlight.ExecuteAsync(inFlightKey, async () =>
             {
-                string relativePath = tokenAgain.Replace("ArtworkCache/", "");
-                string absolutePath = Path.Combine(_artworkCacheManager.CacheRoot, relativePath);
-                if (File.Exists(absolutePath))
+                var tokenAgain = await _cache.GetAsync<string>(cacheKey).ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(tokenAgain) && _artworkCacheManager.CachedFileExists(tokenAgain))
                 {
                     return tokenAgain;
                 }
-            }
 
-            var sortedProviders = _artistImageProviders.Where(p => p.IsEnabled).OrderBy(p => p.Priority);
+                var sortedProviders = _artistImageProviders.Where(p => p.IsEnabled).OrderBy(p => p.Priority);
 
-            foreach (var provider in sortedProviders)
-            {
-                if (ct.IsCancellationRequested) break;
-
-                try
+                // SF-01: shared sweep runs free of any single caller's token.
+                foreach (var provider in sortedProviders)
                 {
-                    var candidateUrls = await provider.SearchArtistImageUrlsAsync(artistName, externalIds, ct).ConfigureAwait(false);
-                    if (candidateUrls != null && candidateUrls.Count > 0)
+                    try
                     {
-                        foreach (var url in candidateUrls)
+                        var candidateUrls = await provider.SearchArtistImageUrlsAsync(artistName, externalIds, CancellationToken.None).ConfigureAwait(false);
+                        if (candidateUrls != null && candidateUrls.Count > 0)
                         {
-                            if (string.IsNullOrWhiteSpace(url) || ct.IsCancellationRequested) continue;
-
-                            var byteResult = await _httpService.GetByteArrayAsync(
-                                url,
-                                provider.ProviderName,
-                                null,
-                                TimeSpan.FromSeconds(15),
-                                ct).ConfigureAwait(false);
-
-                            if (byteResult.IsSuccess && byteResult.Data != null)
+                            foreach (var url in candidateUrls)
                             {
-                                if (ImageValidator.IsValidImage(byteResult.Data, out string detectedMimeType))
+                                if (string.IsNullOrWhiteSpace(url)) continue;
+
+                                var byteResult = await _httpService.GetByteArrayAsync(
+                                    url,
+                                    provider.ProviderName,
+                                    null,
+                                    TimeSpan.FromSeconds(15),
+                                    CancellationToken.None).ConfigureAwait(false);
+
+                                if (byteResult.IsSuccess && byteResult.Data != null)
                                 {
-                                    string? token = await _artworkCacheManager.CacheBytesAsync(byteResult.Data, detectedMimeType).ConfigureAwait(false);
-                                    if (!string.IsNullOrWhiteSpace(token))
+                                    if (ImageValidator.IsValidImage(byteResult.Data, out string detectedMimeType))
                                     {
-                                        await _cache.SetAsync(cacheKey, token, TimeSpan.FromDays(90), ct).ConfigureAwait(false);
-                                        return token;
+                                        string? token = await _artworkCacheManager.CacheBytesAsync(byteResult.Data, detectedMimeType).ConfigureAwait(false);
+                                        if (!string.IsNullOrWhiteSpace(token))
+                                        {
+                                            await _cache.SetAsync(cacheKey, token, TimeSpan.FromDays(90), CancellationToken.None).ConfigureAwait(false);
+                                            return token;
+                                        }
                                     }
                                 }
                             }
                         }
                     }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[ExternalArtworkOrchestrator] Artist image provider '{provider.ProviderName}' failed: {ex.Message}");
+                    }
                 }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"[ExternalArtworkOrchestrator] Artist image provider '{provider.ProviderName}' failed: {ex.Message}");
-                }
-            }
 
-            // Fallback: Check stale cache on provider failure / offline
-            var stale = await _cache.GetWithMetadataAsync<string>(cacheKey, allowStale: true, ct).ConfigureAwait(false);
-            if (stale != null && !string.IsNullOrWhiteSpace(stale.Value))
-            {
-                string relativePath = stale.Value.Replace("ArtworkCache/", "");
-                string absolutePath = Path.Combine(_artworkCacheManager.CacheRoot, relativePath);
-                if (File.Exists(absolutePath))
+                // Fallback: Check stale cache on provider failure / offline
+                var stale = await _cache.GetWithMetadataAsync<string>(cacheKey, allowStale: true).ConfigureAwait(false);
+                if (stale != null && !string.IsNullOrWhiteSpace(stale.Value) && _artworkCacheManager.CachedFileExists(stale.Value))
                 {
                     return stale.Value;
                 }
-            }
 
+                return null;
+            }, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // SF-01: this caller's personal wait was cancelled; the shared fetch
+            // continues for everyone else. Exit gracefully.
             return null;
-        }).ConfigureAwait(false);
+        }
     }
 }

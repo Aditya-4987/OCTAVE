@@ -194,7 +194,6 @@ public class HttpService : IHttpService, IDisposable
         TimeSpan effectiveTimeout = timeout ?? _defaultTimeout;
 
         int attempt = 0;
-        var rng = new Random();
 
         while (true)
         {
@@ -206,7 +205,7 @@ public class HttpService : IHttpService, IDisposable
 
                 using var timeoutCts = new CancellationTokenSource(effectiveTimeout);
                 using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
-                using var currentReq = CloneRequest(request);
+                using var currentReq = await CloneRequestAsync(request).ConfigureAwait(false);
 
                 var response = await _httpClient.SendAsync(currentReq, linkedCts.Token).ConfigureAwait(false);
 
@@ -221,15 +220,20 @@ public class HttpService : IHttpService, IDisposable
                 if (IsTransientStatusCode(response.StatusCode) && attempt <= _maxRetries)
                 {
                     response.Dispose();
-                    TimeSpan backoff = CalculateBackoff(attempt, retryAfter, rng);
+                    TimeSpan backoff = CalculateBackoff(attempt, retryAfter);
                     await Task.Delay(backoff, ct).ConfigureAwait(false);
                     continue;
                 }
 
                 if (!response.IsSuccessStatusCode)
                 {
+                    // NET-02: non-success responses are terminal for this request —
+                    // dispose before returning Failure so the connection and its
+                    // content buffers are released (the retry branch already did).
                     string error = $"HTTP {(int)response.StatusCode} {response.ReasonPhrase}";
-                    return HttpResult<HttpResponseMessage>.Failure(error, response.StatusCode, retryAfter);
+                    HttpStatusCode statusCode = response.StatusCode;
+                    response.Dispose();
+                    return HttpResult<HttpResponseMessage>.Failure(error, statusCode, retryAfter);
                 }
 
                 return HttpResult<HttpResponseMessage>.Success(response, response.StatusCode);
@@ -243,7 +247,7 @@ public class HttpService : IHttpService, IDisposable
                 // Timeout occurred
                 if (attempt <= _maxRetries)
                 {
-                    TimeSpan backoff = CalculateBackoff(attempt, null, rng);
+                    TimeSpan backoff = CalculateBackoff(attempt, null);
                     try { await Task.Delay(backoff, ct).ConfigureAwait(false); } catch { return HttpResult<HttpResponseMessage>.Cancelled(); }
                     continue;
                 }
@@ -253,7 +257,7 @@ public class HttpService : IHttpService, IDisposable
             {
                 if (attempt <= _maxRetries)
                 {
-                    TimeSpan backoff = CalculateBackoff(attempt, null, rng);
+                    TimeSpan backoff = CalculateBackoff(attempt, null);
                     try { await Task.Delay(backoff, ct).ConfigureAwait(false); } catch { return HttpResult<HttpResponseMessage>.Cancelled(); }
                     continue;
                 }
@@ -352,16 +356,20 @@ public class HttpService : IHttpService, IDisposable
         }
     }
 
-    private static TimeSpan CalculateBackoff(int attempt, TimeSpan? retryAfter, Random rng)
+    private static TimeSpan CalculateBackoff(int attempt, TimeSpan? retryAfter)
     {
         if (retryAfter.HasValue && retryAfter.Value > TimeSpan.Zero)
         {
             return retryAfter.Value;
         }
 
+        // NET-05: Random.Shared — a per-call `new Random()` seeded from the clock
+        // could produce identical jitter sequences when two retries land in the
+        // same timer tick.
+        double jitterMs = Random.Shared.Next(0, 200);
+
         // Bounded exponential backoff with jitter: base 250ms * 2^attempt + jitter up to 200ms, capped at 10s
         double baseMs = 250.0 * Math.Pow(2, attempt - 1);
-        double jitterMs = rng.Next(0, 200);
         double totalMs = Math.Min(10000.0, baseMs + jitterMs);
         return TimeSpan.FromMilliseconds(totalMs);
     }
@@ -384,7 +392,12 @@ public class HttpService : IHttpService, IDisposable
         return null;
     }
 
-    private static HttpRequestMessage CloneRequest(HttpRequestMessage req)
+    // NET-03: the clone carries the payload too. Buffering the content makes it
+    // replayable across retry attempts (a stream would be consumed by the first
+    // send) and lets Content.Headers travel with the body instead of being
+    // silently dropped. All current call sites are GETs, so this is latent
+    // hardening for future POST/PUT use.
+    private static async Task<HttpRequestMessage> CloneRequestAsync(HttpRequestMessage req)
     {
         var clone = new HttpRequestMessage(req.Method, req.RequestUri)
         {
@@ -394,6 +407,17 @@ public class HttpService : IHttpService, IDisposable
         foreach (var header in req.Headers)
         {
             clone.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        }
+
+        if (req.Content != null)
+        {
+            byte[] buffered = await req.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+            var clonedContent = new ByteArrayContent(buffered);
+            foreach (var header in req.Content.Headers)
+            {
+                clonedContent.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            }
+            clone.Content = clonedContent;
         }
 
         return clone;

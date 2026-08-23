@@ -12,6 +12,11 @@ namespace Octave.Core.Services.External;
 
 public class ExternalMetadataOrchestrator : IExternalMetadataOrchestrator
 {
+    // ORC-01: an empty search result is remembered briefly so a lookup with no
+    // matches anywhere doesn't re-sweep every provider on repeat views. Far
+    // shorter than the 7-day positive TTL by design.
+    private static readonly TimeSpan NegativeResultTtl = TimeSpan.FromHours(1);
+
     private readonly IEnumerable<IExternalMetadataProvider> _providers;
     private readonly IExternalDataCache _cache;
     private readonly AsyncSingleFlight _singleFlight = new();
@@ -41,62 +46,76 @@ public class ExternalMetadataOrchestrator : IExternalMetadataOrchestrator
         string normAlbum = !string.IsNullOrWhiteSpace(album) ? MetadataTextNormalizer.Normalize(album) : "";
         string cacheKey = $"search:track:{normArtist}:{normTitle}:{normAlbum}";
 
-        // 1. Check Cache
-        var cached = await _cache.GetAsync<List<TrackMatchCandidate>>(cacheKey, ct).ConfigureAwait(false);
-        if (cached != null && cached.Count > 0)
+        // 1. Check Cache. An EMPTY entry (only ever written as ORC-01's negative
+        // sentinel) is served while fresh instead of re-sweeping the providers.
+        var cachedItem = await _cache.GetWithMetadataAsync<List<TrackMatchCandidate>>(cacheKey, allowStale: false, ct).ConfigureAwait(false);
+        if (cachedItem != null && !cachedItem.IsExpired && cachedItem.Value.Count > 0)
         {
-            return cached;
+            return cachedItem.Value;
         }
+        bool negativeHit = cachedItem != null && !cachedItem.IsExpired;
 
         // 2. Single-flight request across providers
         string inFlightKey = $"search_tracks:{cacheKey}";
-        return await _singleFlight.ExecuteAsync(inFlightKey, async () =>
+        try
         {
-            var cachedAgain = await _cache.GetAsync<List<TrackMatchCandidate>>(cacheKey, ct).ConfigureAwait(false);
-            if (cachedAgain != null && cachedAgain.Count > 0) return cachedAgain;
-
-            var results = new List<TrackMatchCandidate>();
-            var sortedProviders = _providers.Where(p => p.IsEnabled).OrderBy(p => p.Priority);
-
-            foreach (var provider in sortedProviders)
+            return await _singleFlight.ExecuteAsync(inFlightKey, async () =>
             {
-                if (ct.IsCancellationRequested) break;
+                var cachedAgain = await _cache.GetAsync<List<TrackMatchCandidate>>(cacheKey).ConfigureAwait(false);
+                if (cachedAgain != null && cachedAgain.Count > 0) return cachedAgain;
+                if (negativeHit) return cachedAgain ?? new List<TrackMatchCandidate>();
 
-                try
+                var results = new List<TrackMatchCandidate>();
+                var sortedProviders = _providers.Where(p => p.IsEnabled).OrderBy(p => p.Priority);
+
+                // SF-01: the shared sweep runs detached from any single caller's
+                // token; AsyncSingleFlight applies each caller's ct to their own wait.
+                foreach (var provider in sortedProviders)
                 {
-                    var candidates = await provider.SearchTrackCandidatesAsync(title, artist, album, durationSeconds, ct).ConfigureAwait(false);
-                    if (candidates != null && candidates.Count > 0)
+                    try
                     {
-                        results.AddRange(candidates);
+                        var candidates = await provider.SearchTrackCandidatesAsync(title, artist, album, durationSeconds, CancellationToken.None).ConfigureAwait(false);
+                        if (candidates != null && candidates.Count > 0)
+                        {
+                            results.AddRange(candidates);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[ExternalMetadataOrchestrator] Provider '{provider.ProviderName}' search failed: {ex.Message}");
                     }
                 }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+
+                // OL-06: different providers routinely report the SAME recording —
+                // merge to one candidate per real-world track before ranking.
+                var sorted = DedupeByIdentity(results.OrderByDescending(c => c.Confidence)).ToList();
+                if (sorted.Count > 0)
                 {
-                    break;
+                    // Cache search candidates with 7-day TTL
+                    await _cache.SetAsync(cacheKey, sorted, TimeSpan.FromDays(7)).ConfigureAwait(false);
+                    return (IReadOnlyList<TrackMatchCandidate>)sorted;
                 }
-                catch (Exception ex)
+
+                // Fallback: Check for stale cached results on provider failure/offline
+                var staleEntry = await _cache.GetWithMetadataAsync<List<TrackMatchCandidate>>(cacheKey, allowStale: true).ConfigureAwait(false);
+                if (staleEntry != null && staleEntry.Value.Count > 0)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[ExternalMetadataOrchestrator] Provider '{provider.ProviderName}' search failed: {ex.Message}");
+                    return staleEntry.Value;
                 }
-            }
 
-            var sorted = results.OrderByDescending(c => c.Confidence).ToList();
-            if (sorted.Count > 0)
-            {
-                // Cache search candidates with 7-day TTL
-                await _cache.SetAsync(cacheKey, sorted, TimeSpan.FromDays(7), ct).ConfigureAwait(false);
-                return (IReadOnlyList<TrackMatchCandidate>)sorted;
-            }
-
-            // Fallback: Check for stale cached results on provider failure/offline
-            var staleEntry = await _cache.GetWithMetadataAsync<List<TrackMatchCandidate>>(cacheKey, allowStale: true, ct).ConfigureAwait(false);
-            if (staleEntry != null && staleEntry.Value.Count > 0)
-            {
-                return staleEntry.Value;
-            }
-
+                // ORC-01: remember the fruitless sweep briefly.
+                var negative = new List<TrackMatchCandidate>();
+                await _cache.SetAsync(cacheKey, negative, NegativeResultTtl).ConfigureAwait(false);
+                return (IReadOnlyList<TrackMatchCandidate>)negative;
+            }, ct).ConfigureAwait(false) ?? Array.Empty<TrackMatchCandidate>();
+        }
+        catch (OperationCanceledException)
+        {
+            // SF-01: only THIS caller's personal wait was cancelled — the shared
+            // sweep continues untouched for everyone else. This request exits
+            // gracefully (established orchestrator contract).
             return Array.Empty<TrackMatchCandidate>();
-        }).ConfigureAwait(false) ?? Array.Empty<TrackMatchCandidate>();
+        }
     }
 
     public async Task<IReadOnlyList<AlbumMatchCandidate>> SearchAlbumCandidatesAsync(
@@ -114,58 +133,65 @@ public class ExternalMetadataOrchestrator : IExternalMetadataOrchestrator
         string normArtist = MetadataTextNormalizer.Normalize(artistName);
         string cacheKey = $"search:album:{normArtist}:{normAlbum}:{year ?? 0}";
 
-        var cached = await _cache.GetAsync<List<AlbumMatchCandidate>>(cacheKey, ct).ConfigureAwait(false);
-        if (cached != null && cached.Count > 0)
+        var cachedItem = await _cache.GetWithMetadataAsync<List<AlbumMatchCandidate>>(cacheKey, allowStale: false, ct).ConfigureAwait(false);
+        if (cachedItem != null && !cachedItem.IsExpired && cachedItem.Value.Count > 0)
         {
-            return cached;
+            return cachedItem.Value;
         }
+        bool negativeHit = cachedItem != null && !cachedItem.IsExpired;
 
         string inFlightKey = $"search_albums:{cacheKey}";
-        return await _singleFlight.ExecuteAsync(inFlightKey, async () =>
+        try
         {
-            var cachedAgain = await _cache.GetAsync<List<AlbumMatchCandidate>>(cacheKey, ct).ConfigureAwait(false);
-            if (cachedAgain != null && cachedAgain.Count > 0) return cachedAgain;
-
-            var results = new List<AlbumMatchCandidate>();
-            var sortedProviders = _providers.Where(p => p.IsEnabled).OrderBy(p => p.Priority);
-
-            foreach (var provider in sortedProviders)
+            return await _singleFlight.ExecuteAsync(inFlightKey, async () =>
             {
-                if (ct.IsCancellationRequested) break;
+                var cachedAgain = await _cache.GetAsync<List<AlbumMatchCandidate>>(cacheKey).ConfigureAwait(false);
+                if (cachedAgain != null && cachedAgain.Count > 0) return cachedAgain;
+                if (negativeHit) return cachedAgain ?? new List<AlbumMatchCandidate>();
 
-                try
+                var results = new List<AlbumMatchCandidate>();
+                var sortedProviders = _providers.Where(p => p.IsEnabled).OrderBy(p => p.Priority);
+
+                foreach (var provider in sortedProviders)
                 {
-                    var candidates = await provider.SearchAlbumCandidatesAsync(albumTitle, artistName, year, ct).ConfigureAwait(false);
-                    if (candidates != null && candidates.Count > 0)
+                    try
                     {
-                        results.AddRange(candidates);
+                        var candidates = await provider.SearchAlbumCandidatesAsync(albumTitle, artistName, year, CancellationToken.None).ConfigureAwait(false);
+                        if (candidates != null && candidates.Count > 0)
+                        {
+                            results.AddRange(candidates);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[ExternalMetadataOrchestrator] Provider '{provider.ProviderName}' album search failed: {ex.Message}");
                     }
                 }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+
+                var sorted = results.OrderByDescending(c => c.Confidence).ToList();
+                if (sorted.Count > 0)
                 {
-                    break;
+                    await _cache.SetAsync(cacheKey, sorted, TimeSpan.FromDays(7)).ConfigureAwait(false);
+                    return (IReadOnlyList<AlbumMatchCandidate>)sorted;
                 }
-                catch (Exception ex)
+
+                var staleEntry = await _cache.GetWithMetadataAsync<List<AlbumMatchCandidate>>(cacheKey, allowStale: true).ConfigureAwait(false);
+                if (staleEntry != null && staleEntry.Value.Count > 0)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[ExternalMetadataOrchestrator] Provider '{provider.ProviderName}' album search failed: {ex.Message}");
+                    return staleEntry.Value;
                 }
-            }
 
-            var sorted = results.OrderByDescending(c => c.Confidence).ToList();
-            if (sorted.Count > 0)
-            {
-                await _cache.SetAsync(cacheKey, sorted, TimeSpan.FromDays(7), ct).ConfigureAwait(false);
-                return (IReadOnlyList<AlbumMatchCandidate>)sorted;
-            }
-
-            var staleEntry = await _cache.GetWithMetadataAsync<List<AlbumMatchCandidate>>(cacheKey, allowStale: true, ct).ConfigureAwait(false);
-            if (staleEntry != null && staleEntry.Value.Count > 0)
-            {
-                return staleEntry.Value;
-            }
-
+                var negative = new List<AlbumMatchCandidate>();
+                await _cache.SetAsync(cacheKey, negative, NegativeResultTtl).ConfigureAwait(false);
+                return (IReadOnlyList<AlbumMatchCandidate>)negative;
+            }, ct).ConfigureAwait(false) ?? Array.Empty<AlbumMatchCandidate>();
+        }
+        catch (OperationCanceledException)
+        {
+            // SF-01: only THIS caller's personal wait was cancelled — the shared
+            // sweep continues untouched for everyone else. Exit gracefully.
             return Array.Empty<AlbumMatchCandidate>();
-        }).ConfigureAwait(false) ?? Array.Empty<AlbumMatchCandidate>();
+        }
     }
 
     public async Task<IReadOnlyList<ArtistMatchCandidate>> SearchArtistCandidatesAsync(
@@ -180,58 +206,92 @@ public class ExternalMetadataOrchestrator : IExternalMetadataOrchestrator
         string normArtist = MetadataTextNormalizer.Normalize(artistName);
         string cacheKey = $"search:artist:{normArtist}";
 
-        var cached = await _cache.GetAsync<List<ArtistMatchCandidate>>(cacheKey, ct).ConfigureAwait(false);
-        if (cached != null && cached.Count > 0)
+        var cachedItem = await _cache.GetWithMetadataAsync<List<ArtistMatchCandidate>>(cacheKey, allowStale: false, ct).ConfigureAwait(false);
+        if (cachedItem != null && !cachedItem.IsExpired && cachedItem.Value.Count > 0)
         {
-            return cached;
+            return cachedItem.Value;
         }
+        bool negativeHit = cachedItem != null && !cachedItem.IsExpired;
 
         string inFlightKey = $"search_artists:{cacheKey}";
-        return await _singleFlight.ExecuteAsync(inFlightKey, async () =>
+        try
         {
-            var cachedAgain = await _cache.GetAsync<List<ArtistMatchCandidate>>(cacheKey, ct).ConfigureAwait(false);
-            if (cachedAgain != null && cachedAgain.Count > 0) return cachedAgain;
-
-            var results = new List<ArtistMatchCandidate>();
-            var sortedProviders = _providers.Where(p => p.IsEnabled).OrderBy(p => p.Priority);
-
-            foreach (var provider in sortedProviders)
+            return await _singleFlight.ExecuteAsync(inFlightKey, async () =>
             {
-                if (ct.IsCancellationRequested) break;
+                var cachedAgain = await _cache.GetAsync<List<ArtistMatchCandidate>>(cacheKey).ConfigureAwait(false);
+                if (cachedAgain != null && cachedAgain.Count > 0) return cachedAgain;
+                if (negativeHit) return cachedAgain ?? new List<ArtistMatchCandidate>();
 
-                try
+                var results = new List<ArtistMatchCandidate>();
+                var sortedProviders = _providers.Where(p => p.IsEnabled).OrderBy(p => p.Priority);
+
+                foreach (var provider in sortedProviders)
                 {
-                    var candidates = await provider.SearchArtistCandidatesAsync(artistName, ct).ConfigureAwait(false);
-                    if (candidates != null && candidates.Count > 0)
+                    try
                     {
-                        results.AddRange(candidates);
+                        var candidates = await provider.SearchArtistCandidatesAsync(artistName, CancellationToken.None).ConfigureAwait(false);
+                        if (candidates != null && candidates.Count > 0)
+                        {
+                            results.AddRange(candidates);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[ExternalMetadataOrchestrator] Provider '{provider.ProviderName}' artist search failed: {ex.Message}");
                     }
                 }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+
+                var sorted = results.OrderByDescending(c => c.Confidence).ToList();
+                if (sorted.Count > 0)
                 {
-                    break;
+                    await _cache.SetAsync(cacheKey, sorted, TimeSpan.FromDays(7)).ConfigureAwait(false);
+                    return (IReadOnlyList<ArtistMatchCandidate>)sorted;
                 }
-                catch (Exception ex)
+
+                var staleEntry = await _cache.GetWithMetadataAsync<List<ArtistMatchCandidate>>(cacheKey, allowStale: true).ConfigureAwait(false);
+                if (staleEntry != null && staleEntry.Value.Count > 0)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[ExternalMetadataOrchestrator] Provider '{provider.ProviderName}' artist search failed: {ex.Message}");
+                    return staleEntry.Value;
                 }
-            }
 
-            var sorted = results.OrderByDescending(c => c.Confidence).ToList();
-            if (sorted.Count > 0)
-            {
-                await _cache.SetAsync(cacheKey, sorted, TimeSpan.FromDays(7), ct).ConfigureAwait(false);
-                return (IReadOnlyList<ArtistMatchCandidate>)sorted;
-            }
-
-            var staleEntry = await _cache.GetWithMetadataAsync<List<ArtistMatchCandidate>>(cacheKey, allowStale: true, ct).ConfigureAwait(false);
-            if (staleEntry != null && staleEntry.Value.Count > 0)
-            {
-                return staleEntry.Value;
-            }
-
+                var negative = new List<ArtistMatchCandidate>();
+                await _cache.SetAsync(cacheKey, negative, NegativeResultTtl).ConfigureAwait(false);
+                return (IReadOnlyList<ArtistMatchCandidate>)negative;
+            }, ct).ConfigureAwait(false) ?? Array.Empty<ArtistMatchCandidate>();
+        }
+        catch (OperationCanceledException)
+        {
+            // SF-01: only THIS caller's personal wait was cancelled — the shared
+            // sweep continues untouched for everyone else. Exit gracefully.
             return Array.Empty<ArtistMatchCandidate>();
-        }).ConfigureAwait(false) ?? Array.Empty<ArtistMatchCandidate>();
+        }
+    }
+
+    // OL-06: one candidate per real-world recording. A MusicBrainz id, when
+    // present, is authoritative; otherwise fall back to the normalized
+    // title/artist/album triple so differently-keyed providers still collapse.
+    private static IEnumerable<TrackMatchCandidate> DedupeByIdentity(IEnumerable<TrackMatchCandidate> ranked)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var candidate in ranked)
+        {
+            if (seen.Add(CandidateIdentityKey(candidate)))
+            {
+                yield return candidate;
+            }
+        }
+    }
+
+    private static string CandidateIdentityKey(TrackMatchCandidate c)
+    {
+        if (!string.IsNullOrWhiteSpace(c.ExternalIds.MusicBrainzId))
+        {
+            return "mbid:" + c.ExternalIds.MusicBrainzId.Trim();
+        }
+
+        var m = c.Metadata;
+        return $"t:{m.Title?.Trim().ToLowerInvariant()}|a:{m.ArtistName?.Trim().ToLowerInvariant()}" +
+               $"|al:{m.AlbumTitle?.Trim().ToLowerInvariant()}";
     }
 
     public async Task<ExternalTrackMetadata?> GetTrackMetadataAsync(
@@ -247,32 +307,42 @@ public class ExternalMetadataOrchestrator : IExternalMetadataOrchestrator
         if (cached != null) return cached;
 
         string inFlightKey = $"get_track:{cacheKey}";
-        return await _singleFlight.ExecuteAsync(inFlightKey, async () =>
+        try
         {
-            var cachedAgain = await _cache.GetAsync<ExternalTrackMetadata>(cacheKey, ct).ConfigureAwait(false);
-            if (cachedAgain != null) return cachedAgain;
-
-            var provider = _providers.FirstOrDefault(p => p.ProviderName.Equals(providerName, StringComparison.OrdinalIgnoreCase) && p.IsEnabled);
-            if (provider == null) return null;
-
-            try
+            return await _singleFlight.ExecuteAsync(inFlightKey, async () =>
             {
-                var meta = await provider.GetTrackMetadataAsync(providerEntityId, ct).ConfigureAwait(false);
-                if (meta != null)
+                var cachedAgain = await _cache.GetAsync<ExternalTrackMetadata>(cacheKey).ConfigureAwait(false);
+                if (cachedAgain != null) return cachedAgain;
+
+                var provider = _providers.FirstOrDefault(p => p.ProviderName.Equals(providerName, StringComparison.OrdinalIgnoreCase) && p.IsEnabled);
+                if (provider == null) return null;
+
+                // SF-01: the shared fetch runs free of any single caller's token.
+                try
                 {
-                    await _cache.SetAsync(cacheKey, meta, TimeSpan.FromDays(30), ct).ConfigureAwait(false);
-                    return meta;
+                    var meta = await provider.GetTrackMetadataAsync(providerEntityId, CancellationToken.None).ConfigureAwait(false);
+                    if (meta != null)
+                    {
+                        await _cache.SetAsync(cacheKey, meta, TimeSpan.FromDays(30), CancellationToken.None).ConfigureAwait(false);
+                        return meta;
+                    }
                 }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[ExternalMetadataOrchestrator] GetTrackMetadataAsync failed for '{providerName}:{providerEntityId}': {ex.Message}");
-            }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[ExternalMetadataOrchestrator] GetTrackMetadataAsync failed for '{providerName}:{providerEntityId}': {ex.Message}");
+                }
 
-            // Stale fallback on network error/offline
-            var stale = await _cache.GetWithMetadataAsync<ExternalTrackMetadata>(cacheKey, allowStale: true, ct).ConfigureAwait(false);
-            return stale?.Value;
-        }).ConfigureAwait(false);
+                // Stale fallback on network error/offline
+                var stale = await _cache.GetWithMetadataAsync<ExternalTrackMetadata>(cacheKey, allowStale: true).ConfigureAwait(false);
+                return stale?.Value;
+            }, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // SF-01: only THIS caller's personal wait was cancelled — the shared
+            // fetch continues untouched for everyone else. Exit gracefully.
+            return null;
+        }
     }
 
     public async Task<ExternalAlbumMetadata?> GetAlbumMetadataAsync(
@@ -288,31 +358,41 @@ public class ExternalMetadataOrchestrator : IExternalMetadataOrchestrator
         if (cached != null) return cached;
 
         string inFlightKey = $"get_album:{cacheKey}";
-        return await _singleFlight.ExecuteAsync(inFlightKey, async () =>
+        try
         {
-            var cachedAgain = await _cache.GetAsync<ExternalAlbumMetadata>(cacheKey, ct).ConfigureAwait(false);
-            if (cachedAgain != null) return cachedAgain;
-
-            var provider = _providers.FirstOrDefault(p => p.ProviderName.Equals(providerName, StringComparison.OrdinalIgnoreCase) && p.IsEnabled);
-            if (provider == null) return null;
-
-            try
+            return await _singleFlight.ExecuteAsync(inFlightKey, async () =>
             {
-                var meta = await provider.GetAlbumMetadataAsync(providerEntityId, ct).ConfigureAwait(false);
-                if (meta != null)
+                var cachedAgain = await _cache.GetAsync<ExternalAlbumMetadata>(cacheKey).ConfigureAwait(false);
+                if (cachedAgain != null) return cachedAgain;
+
+                var provider = _providers.FirstOrDefault(p => p.ProviderName.Equals(providerName, StringComparison.OrdinalIgnoreCase) && p.IsEnabled);
+                if (provider == null) return null;
+
+                // SF-01: the shared fetch runs free of any single caller's token.
+                try
                 {
-                    await _cache.SetAsync(cacheKey, meta, TimeSpan.FromDays(30), ct).ConfigureAwait(false);
-                    return meta;
+                    var meta = await provider.GetAlbumMetadataAsync(providerEntityId, CancellationToken.None).ConfigureAwait(false);
+                    if (meta != null)
+                    {
+                        await _cache.SetAsync(cacheKey, meta, TimeSpan.FromDays(30), CancellationToken.None).ConfigureAwait(false);
+                        return meta;
+                    }
                 }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[ExternalMetadataOrchestrator] GetAlbumMetadataAsync failed for '{providerName}:{providerEntityId}': {ex.Message}");
-            }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[ExternalMetadataOrchestrator] GetAlbumMetadataAsync failed for '{providerName}:{providerEntityId}': {ex.Message}");
+                }
 
-            var stale = await _cache.GetWithMetadataAsync<ExternalAlbumMetadata>(cacheKey, allowStale: true, ct).ConfigureAwait(false);
-            return stale?.Value;
-        }).ConfigureAwait(false);
+                var stale = await _cache.GetWithMetadataAsync<ExternalAlbumMetadata>(cacheKey, allowStale: true).ConfigureAwait(false);
+                return stale?.Value;
+            }, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // SF-01: only THIS caller's personal wait was cancelled — the shared
+            // fetch continues untouched for everyone else. Exit gracefully.
+            return null;
+        }
     }
 
     public async Task<ExternalArtistMetadata?> GetArtistMetadataAsync(
@@ -328,30 +408,40 @@ public class ExternalMetadataOrchestrator : IExternalMetadataOrchestrator
         if (cached != null) return cached;
 
         string inFlightKey = $"get_artist:{cacheKey}";
-        return await _singleFlight.ExecuteAsync(inFlightKey, async () =>
+        try
         {
-            var cachedAgain = await _cache.GetAsync<ExternalArtistMetadata>(cacheKey, ct).ConfigureAwait(false);
-            if (cachedAgain != null) return cachedAgain;
-
-            var provider = _providers.FirstOrDefault(p => p.ProviderName.Equals(providerName, StringComparison.OrdinalIgnoreCase) && p.IsEnabled);
-            if (provider == null) return null;
-
-            try
+            return await _singleFlight.ExecuteAsync(inFlightKey, async () =>
             {
-                var meta = await provider.GetArtistMetadataAsync(providerEntityId, ct).ConfigureAwait(false);
-                if (meta != null)
+                var cachedAgain = await _cache.GetAsync<ExternalArtistMetadata>(cacheKey).ConfigureAwait(false);
+                if (cachedAgain != null) return cachedAgain;
+
+                var provider = _providers.FirstOrDefault(p => p.ProviderName.Equals(providerName, StringComparison.OrdinalIgnoreCase) && p.IsEnabled);
+                if (provider == null) return null;
+
+                // SF-01: the shared fetch runs free of any single caller's token.
+                try
                 {
-                    await _cache.SetAsync(cacheKey, meta, TimeSpan.FromDays(30), ct).ConfigureAwait(false);
-                    return meta;
+                    var meta = await provider.GetArtistMetadataAsync(providerEntityId, CancellationToken.None).ConfigureAwait(false);
+                    if (meta != null)
+                    {
+                        await _cache.SetAsync(cacheKey, meta, TimeSpan.FromDays(30), CancellationToken.None).ConfigureAwait(false);
+                        return meta;
+                    }
                 }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[ExternalMetadataOrchestrator] GetArtistMetadataAsync failed for '{providerName}:{providerEntityId}': {ex.Message}");
-            }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[ExternalMetadataOrchestrator] GetArtistMetadataAsync failed for '{providerName}:{providerEntityId}': {ex.Message}");
+                }
 
-            var stale = await _cache.GetWithMetadataAsync<ExternalArtistMetadata>(cacheKey, allowStale: true, ct).ConfigureAwait(false);
-            return stale?.Value;
-        }).ConfigureAwait(false);
+                var stale = await _cache.GetWithMetadataAsync<ExternalArtistMetadata>(cacheKey, allowStale: true).ConfigureAwait(false);
+                return stale?.Value;
+            }, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // SF-01: only THIS caller's personal wait was cancelled — the shared
+            // fetch continues untouched for everyone else. Exit gracefully.
+            return null;
+        }
     }
 }

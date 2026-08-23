@@ -1,9 +1,9 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Data;
 using Microsoft.UI.Xaml.Media.Imaging;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 
 namespace Octave_Desktop.Converters;
 
@@ -44,8 +44,13 @@ public class ArtworkPathConverter : IValueConverter
             }
             else if (artworkUrl.StartsWith("ArtworkCache/", StringComparison.OrdinalIgnoreCase))
             {
+                // NF-09 (Batch 10): the token→absolute-path mapping belongs to the
+                // manager that owns the token layout — this used to re-implement
+                // "<LocalFolder>\ArtworkCache" here and would break silently if
+                // the cache root ever moved.
                 // WinUI's BitmapImage decodes ms-appdata:///local/ asynchronously on a background worker thread
-                uriString = Path.Combine(Windows.Storage.ApplicationData.Current.LocalFolder.Path, artworkUrl.Replace('/', '\\'));
+                uriString = App.Services.GetRequiredService<Octave.Core.Interfaces.IArtworkCacheManager>()
+                    .ResolveTokenPath(artworkUrl);
             }
             else if (artworkUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase) || 
                      artworkUrl.StartsWith("ms-appx", StringComparison.OrdinalIgnoreCase) ||

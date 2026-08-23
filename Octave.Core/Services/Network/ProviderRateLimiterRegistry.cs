@@ -8,7 +8,11 @@ namespace Octave.Core.Services.Network;
 public class ProviderRateLimiter : IProviderRateLimiter
 {
     private readonly SemaphoreSlim _semaphore = new(1, 1);
-    private DateTimeOffset _nextAllowedTime = DateTimeOffset.MinValue;
+    // NET-01: the next-allowed instant is stored as UTC ticks in a single long
+    // and accessed with Interlocked. The old raw DateTimeOffset field (16 bytes)
+    // could tear when NotifyRetryAfter's unsynchronized read/write raced a
+    // semaphore-holder's write inside WaitAsync.
+    private long _nextAllowedTicksUtc;
     private readonly TimeSpan _minInterval;
 
     public string ProviderKey { get; }
@@ -25,15 +29,15 @@ public class ProviderRateLimiter : IProviderRateLimiter
         await _semaphore.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            DateTimeOffset now = DateTimeOffset.UtcNow;
-            if (_nextAllowedTime > now)
+            long nowTicks = DateTime.UtcNow.Ticks;
+            if (Interlocked.Read(ref _nextAllowedTicksUtc) > nowTicks)
             {
-                TimeSpan delay = _nextAllowedTime - now;
+                TimeSpan delay = TimeSpan.FromTicks(Interlocked.Read(ref _nextAllowedTicksUtc) - nowTicks);
                 await Task.Delay(delay, ct).ConfigureAwait(false);
-                now = DateTimeOffset.UtcNow;
+                nowTicks = DateTime.UtcNow.Ticks;
             }
 
-            _nextAllowedTime = now + _minInterval;
+            Interlocked.Exchange(ref _nextAllowedTicksUtc, nowTicks + _minInterval.Ticks);
         }
         finally
         {
@@ -43,11 +47,17 @@ public class ProviderRateLimiter : IProviderRateLimiter
 
     public void NotifyRetryAfter(TimeSpan retryAfter)
     {
-        DateTimeOffset target = DateTimeOffset.UtcNow + retryAfter;
-        // Extend next allowed time if retryAfter is greater
-        if (target > _nextAllowedTime)
+        long target = DateTime.UtcNow.Ticks + retryAfter.Ticks;
+        long current = Interlocked.Read(ref _nextAllowedTicksUtc);
+
+        // Extend the next allowed time only — never shorten an in-flight
+        // backoff window. CAS loop keeps the read/extend atomic against the
+        // semaphore holder's writes.
+        while (target > current)
         {
-            _nextAllowedTime = target;
+            long previous = Interlocked.CompareExchange(ref _nextAllowedTicksUtc, target, current);
+            if (previous == current) break;
+            current = previous;
         }
     }
 }
@@ -62,12 +72,21 @@ public class ProviderRateLimiterRegistry : IProviderRateLimiterRegistry
         _defaultInterval = defaultInterval ?? TimeSpan.FromMilliseconds(500);
     }
 
+    /// <summary>
+    /// Returns the limiter for a provider, creating it on first use.
+    /// NET-04: the interval binds at FIRST creation for a key — later callers
+    /// passing a different <paramref name="defaultMinInterval"/> share the
+    /// original instance (per-key spacing state must survive across calls;
+    /// re-creating would reset it and permit bursts). Stricter per-provider
+    /// floors that must not depend on construction order are enforced above
+    /// this layer (see HttpService's PROV-02 decorator).
+    /// </summary>
     public IProviderRateLimiter GetOrCreate(string providerKey, TimeSpan? defaultMinInterval = null)
     {
-        if (string.IsNullOrWhiteSpace(providerKey))
-            providerKey = "default";
+        string key = string.IsNullOrWhiteSpace(providerKey) ? "default" : providerKey;
+        TimeSpan interval = defaultMinInterval ?? _defaultInterval;
 
-        return _limiters.GetOrAdd(providerKey, key =>
-            new ProviderRateLimiter(key, defaultMinInterval ?? _defaultInterval));
+        // Keyed GetOrAdd overload: no closure allocation per call.
+        return _limiters.GetOrAdd(key, static (k, i) => new ProviderRateLimiter(k, i), interval);
     }
 }
