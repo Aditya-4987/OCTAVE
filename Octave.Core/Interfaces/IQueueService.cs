@@ -22,6 +22,9 @@ public interface IQueueService
     void EnqueueRange(IEnumerable<Track> tracks);
     void EnqueueNext(Track track);
     void PlayIndex(int index);
+    // Plays a queued entry by its surrogate item Id (NP-10: lets a VM click play
+    // without snapshotting + linearly rescanning the whole queue).
+    void PlayQueueItem(string itemId);
     void RemoveAt(int index);
     void Clear(bool keepCurrentTrack = false);
     void Reorder(int oldIndex, int newIndex);

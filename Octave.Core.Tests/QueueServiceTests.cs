@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Moq;
 using Octave.Core.Interfaces;
@@ -167,5 +168,227 @@ public class QueueServiceTests : IDisposable
         Assert.Equal("t2", queue[0].Track.Id);
         Assert.Equal("t3", queue[1].Track.Id);
         Assert.Equal("t1", queue[2].Track.Id);
+    }
+
+    // =================================================================
+    // Batch 4 — queue integrity & event storms (§12.4 / §15 Batch 4)
+    // =================================================================
+
+    private static string MissingLocalPath(string fileName) =>
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), "octave_missing_" + fileName + ".mp3");
+
+    [Fact]
+    public void SetShuffle_TrueWhilePlaying_CurrentTrackAppearsExactlyOnce()
+    {
+        // QUEUE-09: the active-list instance and its unshuffled twin are distinct
+        // objects; the old reference-based Remove matched nothing and duplicated the
+        // playing track (queue grew by one on every shuffle toggle).
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+
+        var tracks = new List<Track>();
+        for (int i = 0; i < 8; i++)
+        {
+            tracks.Add(new Track($"sq{i}", $"Track {i}", "ar1", "Artist", "al1", "Album", 180, $"http://test/{i}.mp3", "web", i, 2024, DateTime.UtcNow));
+        }
+
+        queueService.EnqueueRange(tracks);
+        queueService.PlayIndex(3);
+        queueService.SetShuffle(true);
+
+        var shuffled = queueService.GetCurrentQueue();
+        Assert.Equal(8, shuffled.Count); // was 9 with the duplication bug
+        Assert.Equal(1, shuffled.Count(i => i.Track.Id == "sq3"));
+        Assert.Equal("sq3", shuffled[0].Track.Id); // playing track pinned to front
+    }
+
+    [Fact]
+    public void EnqueueNext_BeforeAnythingPlays_InsertsAtFrontOfNaturalOrderToo()
+    {
+        // QUEUE-10: with _currentIndex == -1 the item went to the front of the
+        // active queue but was APPENDED to the unshuffled mirror — the two lists
+        // disagreed and shuffle-off later surfaced the wrong order.
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
+        var t2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", "web", 2, 2024, DateTime.UtcNow);
+        var tx = new Track("tx", "Next Up", "ar1", "Artist", "al1", "Album", 180, "http://test/x.mp3", "web", 3, 2024, DateTime.UtcNow);
+
+        queueService.EnqueueRange(new[] { t1, t2 });
+        queueService.EnqueueNext(tx); // nothing playing yet
+
+        // Round-trip through shuffle to force the active queue to be rebuilt from
+        // the unshuffled mirror — the only externally visible proof of sync.
+        queueService.SetShuffle(true);
+        queueService.SetShuffle(false);
+
+        var queue = queueService.GetCurrentQueue();
+        Assert.Equal(new[] { "tx", "t1", "t2" }, queue.Select(i => i.Track.Id).ToArray());
+    }
+
+    [Fact]
+    public async Task RestoreAsync_SeedsUnshuffledQueue_FromPersistedUnshuffledOrder()
+    {
+        // QUEUE-08: closing while shuffled then restarting used to promote the
+        // shuffled order to "original" — both queues were rebuilt from the saved
+        // ACTIVE order even though UnshuffledTrackIds was persisted.
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
+        var t2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", "web", 2, 2024, DateTime.UtcNow);
+        var t3 = new Track("t3", "Track 3", "ar1", "Artist", "al1", "Album", 180, "http://test/3.mp3", "web", 3, 2024, DateTime.UtcNow);
+        await _dbContext.UpsertTrackAsync(t1);
+        await _dbContext.UpsertTrackAsync(t2);
+        await _dbContext.UpsertTrackAsync(t3);
+
+        // Persisted mid-session: shuffled active order, natural unshuffled order.
+        await _dbContext.SavePlayerStateAsync(
+            new[] { "t3", "t1", "t2" }, new[] { "t1", "t2", "t3" },
+            0, 42.0, 0.7f, isShuffle: true, RepeatMode.None);
+
+        await queueService.RestoreAsync();
+
+        var restored = queueService.GetCurrentQueue();
+        Assert.Equal(new[] { "t3", "t1", "t2" }, restored.Select(i => i.Track.Id).ToArray());
+        Assert.True(queueService.CurrentState.IsShuffle);
+
+        // Toggling shuffle off must recover the TRUE natural order.
+        queueService.SetShuffle(false);
+        var natural = queueService.GetCurrentQueue();
+        Assert.Equal(new[] { "t1", "t2", "t3" }, natural.Select(i => i.Track.Id).ToArray());
+    }
+
+    [Fact]
+    public async Task TrackEnded_UndecodableFilesForOneLap_StopsInsteadOfLoopingForever()
+    {
+        // QUEUE-02: files that exist but fail to decode fire TrackEnded at ~zero
+        // position; with RepeatMode.Queue that used to loop the whole queue forever.
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+        _audioPlayerMock.Setup(a => a.PositionSeconds).Returns(0.0); // never actually played
+
+        // The files must EXIST (that's the undecodable case, not the missing case)
+        // for the whole test — cleaned up in finally.
+        var paths = new List<string>();
+        try
+        {
+            var tracks = new List<Track>();
+            for (int i = 0; i < 3; i++)
+            {
+                string path = MissingLocalPath("undecodable_" + Guid.NewGuid().ToString("N"));
+                File.WriteAllText(path, "not audio"); // exists, but is not decodable
+                paths.Add(path);
+                tracks.Add(new Track($"ud{i}", $"Track {i}", "ar1", "Artist", "al1", "Album", 180, path, "Local", i, 2024, DateTime.UtcNow));
+            }
+
+            await _dbContext.UpsertTrackAsync(tracks[0]);
+            await _dbContext.UpsertTrackAsync(tracks[1]);
+            await _dbContext.UpsertTrackAsync(tracks[2]);
+
+            queueService.EnqueueRange(tracks);
+            queueService.PlayIndex(0);
+
+            for (int i = 0; i < 3; i++) // one full lap of 3 undecodable tracks trips the breaker
+            {
+                _audioPlayerMock.Raise(a => a.TrackEnded += null, new TrackEndedEventArgs(100L, tracks[i].SourceUri));
+                await Task.Delay(50);
+            }
+
+            _audioPlayerMock.Verify(a => a.Stop(), Times.Once);
+            // Playback halted on the last lap entry — it did not wrap around and keep spinning.
+            Assert.Equal("ud2", queueService.CurrentState.CurrentTrack?.Id);
+        }
+        finally
+        {
+            foreach (var p in paths)
+            {
+                try { File.Delete(p); } catch { }
+            }
+        }
+    }
+
+    [Fact]
+    public void RemoveAt_CrossListRemoval_ShuffleOffDoesNotResurrectRemovedTrack()
+    {
+        // New finding (Batch 4): _unshuffledQueue.Remove(item) compared an
+        // active-list instance against the unshuffled twin — never matched, so the
+        // removed track survived in the natural order and came back on shuffle-off.
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
+        var t2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", "web", 2, 2024, DateTime.UtcNow);
+        var t3 = new Track("t3", "Track 3", "ar1", "Artist", "al1", "Album", 180, "http://test/3.mp3", "web", 3, 2024, DateTime.UtcNow);
+
+        queueService.EnqueueRange(new[] { t1, t2, t3 });
+        queueService.PlayIndex(0);
+        queueService.RemoveAt(2); // remove t3 while t1 plays
+
+        queueService.SetShuffle(true);
+        queueService.SetShuffle(false);
+
+        var queue = queueService.GetCurrentQueue();
+        Assert.Equal(new[] { "t1", "t2" }, queue.Select(i => i.Track.Id).ToArray());
+    }
+
+    [Fact]
+    public async Task PlayIndex_EmitsStateAndQueueChangedOnce_TrackStartedNoLongerRebroadcasts()
+    {
+        // QUEUE-03: TrackStarted fired synchronously inside Play and the handler
+        // emitted PlaybackStateChanged again — every transition reached the UI twice.
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+        int stateChanges = 0;
+        int queueChanges = 0;
+        queueService.PlaybackStateChanged += (s, e) => stateChanges++;
+        queueService.QueueChanged += (s, e) => queueChanges++;
+
+        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
+        queueService.EnqueueRange(new[] { t1 });
+
+        stateChanges = 0;
+        queueChanges = 0;
+        queueService.PlayIndex(0);
+        Assert.Equal(1, stateChanges);
+        Assert.Equal(1, queueChanges);
+
+        // The audio service's own TrackStarted (real engine raises it during Play)
+        // must not produce a second broadcast.
+        _audioPlayerMock.Raise(a => a.TrackStarted += null, "http://test/1.mp3");
+        Assert.Equal(1, stateChanges);
+        Assert.Equal(1, queueChanges);
+
+        await Task.CompletedTask;
+    }
+
+    [Fact]
+    public void PlayIndex_AllEntriesMissingFiles_SkipsIterativelyWithoutOverflow()
+    {
+        // QUEUE-06: the missing-file skip recursed per entry; a fully-offline queue
+        // could overflow the call stack. Now iterative — 20k dead entries must clear.
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+
+        var tracks = new List<Track>();
+        for (int i = 0; i < 20000; i++)
+        {
+            tracks.Add(new Track($"gone{i}", $"Track {i}", "ar1", "Artist", "al1", "Album", 180, MissingLocalPath($"gone_{i}"), "Local", i, 2024, DateTime.UtcNow));
+        }
+        queueService.EnqueueRange(tracks);
+
+        queueService.PlayIndex(0);
+
+        Assert.Empty(queueService.GetCurrentQueue());
+        _audioPlayerMock.Verify(a => a.Play(It.IsAny<string>(), It.IsAny<double>()), Times.Never);
+        _audioPlayerMock.Verify(a => a.Stop(), Times.Once);
+    }
+
+    [Fact]
+    public async Task PlayQueueItem_ByItemId_PlaysResolvedEntry()
+    {
+        // NP-10: VM clicks now resolve the index under the queue lock by item Id.
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
+        var t2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", "web", 2, 2024, DateTime.UtcNow);
+        queueService.EnqueueRange(new[] { t1, t2 });
+
+        string secondItemId = queueService.GetCurrentQueue()[1].Id;
+        queueService.PlayQueueItem(secondItemId);
+
+        Assert.Equal("t2", queueService.CurrentState.CurrentTrack?.Id);
+        _audioPlayerMock.Verify(a => a.Play(It.Is<string>(p => p.Contains("2.mp3")), It.IsAny<double>()), Times.Once);
+        await Task.CompletedTask;
     }
 }

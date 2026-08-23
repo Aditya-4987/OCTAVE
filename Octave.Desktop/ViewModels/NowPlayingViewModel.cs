@@ -28,6 +28,7 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
     private CancellationTokenSource? _creditsCts;
     private long _generationToken = 0;
     private bool _isDisposed = false;
+    private bool _eventsSubscribed = false;
 
     // Track metadata
     [ObservableProperty]
@@ -105,8 +106,13 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
         RefreshState();
     }
 
+    // CRIT-01: the constructor is the single subscription point; the guard keeps a
+    // stray second call (e.g. a page Loaded handler) from doubling every event.
     public void SubscribeEvents()
     {
+        if (_eventsSubscribed) return;
+        _eventsSubscribed = true;
+
         _queueService.PlaybackStateChanged += OnPlaybackStateChanged;
         _queueService.PositionChanged += OnPositionChanged;
         _queueService.QueueChanged += OnQueueChanged;
@@ -114,6 +120,9 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
 
     public void UnsubscribeEvents()
     {
+        if (!_eventsSubscribed) return;
+        _eventsSubscribed = false;
+
         _queueService.PlaybackStateChanged -= OnPlaybackStateChanged;
         _queueService.PositionChanged -= OnPositionChanged;
         _queueService.QueueChanged -= OnQueueChanged;
@@ -168,7 +177,11 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
             TrackTitle = state.CurrentTrack.Title;
             ArtistName = state.CurrentTrack.ArtistName;
             AlbumTitle = state.CurrentTrack.AlbumTitle;
-            CurrentArtworkUrl = CurrentAlbum?.ArtworkUrl;
+            // CRIT-04: CurrentAlbum lags one async hop behind (it loads in
+            // LoadCreditsAsync below), so deriving artwork from it here blanked the
+            // panel on every track change — the "artwork flash". Keep showing the
+            // previous album's art until the new album (and its art) resolves there;
+            // only a real stop clears it.
         }
         else
         {
@@ -178,7 +191,9 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
             CurrentArtworkUrl = null;
         }
 
-        RefreshUpNextQueue();
+        // VM-03: RefreshUpNextQueue used to run here AND in OnQueueChanged — the
+        // queue service emits PlaybackStateChanged + QueueChanged back-to-back, so
+        // every transition rebuilt the list twice. QueueChanged alone owns it now.
 
         if (trackChanged)
         {
@@ -287,8 +302,15 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
         ArtistsList.Clear();
         string rawArtistNames = !string.IsNullOrWhiteSpace(track.ArtistName) ? track.ArtistName : (artist?.Name ?? "Unknown Artist");
 
-        // If the primary artist matches the raw string exactly (e.g. "AC/DC", "Simon & Garfunkel"), preserve as single artist
-        bool isFullMatch = artist != null && artist.Name.Equals(rawArtistNames.Trim(), StringComparison.OrdinalIgnoreCase);
+        // NP-08: compare with collapsed whitespace + case-folding — a DB name like
+        // "Simon &  Garfunkel" or casing drift used to fail the strict equality, fall
+        // through to the split regex, and shred "Simon & Garfunkel" into two artists.
+        static string NormalizeArtistKey(string s) =>
+            System.Text.RegularExpressions.Regex.Replace(s.Trim().ToLowerInvariant(), @"\s+", " ");
+
+        // If the primary artist matches the raw string (e.g. "AC/DC", "Simon & Garfunkel"), preserve as single artist
+        bool isFullMatch = artist != null &&
+            NormalizeArtistKey(artist.Name).Equals(NormalizeArtistKey(rawArtistNames), StringComparison.Ordinal);
 
         if (!isFullMatch)
         {
@@ -417,10 +439,10 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
     private void RefreshUpNextQueue()
     {
         var fullQueue = _queueService.GetCurrentQueue();
-        UpNextQueue.Clear();
 
         if (fullQueue == null || fullQueue.Count == 0)
         {
+            UpNextQueue.Clear();
             IsQueuePanelVisible = false;
             return;
         }
@@ -436,6 +458,25 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
         }
 
         int startIdx = (playingIdx >= 0) ? playingIdx : 0;
+
+        // NP-09: only rebuild the ObservableCollection when the visible window
+        // actually changed — Clear()+re-add on every state pulse flickered the whole
+        // ListView even when the queue was untouched.
+        int newCount = fullQueue.Count - startIdx;
+        if (newCount == UpNextQueue.Count)
+        {
+            bool identical = true;
+            for (int i = 0; i < newCount; i++)
+            {
+                if (UpNextQueue[i].Id != fullQueue[startIdx + i].Id) { identical = false; break; }
+            }
+            if (identical)
+            {
+                return;
+            }
+        }
+
+        UpNextQueue.Clear();
         for (int i = startIdx; i < fullQueue.Count; i++)
         {
             UpNextQueue.Add(fullQueue[i]);
@@ -461,15 +502,9 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
     public void PlayQueueItem(QueueItem item)
     {
         if (item == null) return;
-        var fullQueue = _queueService.GetCurrentQueue();
-        for (int i = 0; i < fullQueue.Count; i++)
-        {
-            if (fullQueue[i].Id == item.Id)
-            {
-                _queueService.PlayIndex(i);
-                break;
-            }
-        }
+        // NP-10: resolve the index inside the queue service under its lock — the old
+        // copy-then-scan duplicated work per click and could act on a stale snapshot.
+        _queueService.PlayQueueItem(item.Id);
     }
 
     [RelayCommand]

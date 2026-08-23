@@ -26,7 +26,8 @@ public sealed partial class NowPlayingPage : Page
 
     private void NowPlayingPage_Loaded(object sender, RoutedEventArgs e)
     {
-        ViewModel.SubscribeEvents();
+        // CRIT-01: the ViewModel's constructor already subscribes to the queue
+        // service; re-subscribing here made every event fire twice.
         ViewModel.RefreshState();
 
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
