@@ -466,4 +466,102 @@ public class ArtworkRetrievalTests : IDisposable
         Assert.Equal(ValidJpegBytes.Length, readBackBytes.Length);
         Assert.Equal(ValidJpegBytes[0], readBackBytes[0]);
     }
+
+    // =================================================================
+    // 9. BATCH 7 — ENTITY-AWARE MBID ROUTING (CAA-01) & NO SPECULATIVE URLS (CAA-02)
+    // =================================================================
+
+    private static CoverArtArchiveArtworkProvider BuildDirectCaaProvider(HttpMessageHandler handler, ProviderRateLimiterRegistry rateRegistry)
+    {
+        var httpClient = new HttpClient(handler);
+        var httpService = new HttpService(rateRegistry, httpClient);
+        return new CoverArtArchiveArtworkProvider(httpService, null, rateRegistry);
+    }
+
+    [Fact]
+    public async Task CaaProvider_RecordingStampedMbid_NeverQueriedAsRelease()
+    {
+        int requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler
+        {
+            HandlerFunc = (req, ct) =>
+            {
+                Interlocked.Increment(ref requestCount);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            }
+        };
+        var provider = BuildDirectCaaProvider(mockHandler, new ProviderRateLimiterRegistry(TimeSpan.FromMilliseconds(10)));
+
+        // Track candidates carry a RECORDING mbid in MusicBrainzId (stamped by
+        // the MusicBrainz provider). The old code fed it to /release/{mbid}.
+        var extIds = new ExternalIds("rec-ambiguous",
+            AdditionalIds: new Dictionary<string, string> { [ExternalIdKinds.EntityKind] = ExternalIdKinds.KindRecording });
+
+        var urls = await provider.SearchAlbumArtworkUrlsAsync("Whatever Album", "Whatever Artist", extIds);
+
+        Assert.Empty(urls);
+        Assert.Equal(0, requestCount); // no /release/{recording} fetch may fire
+    }
+
+    [Fact]
+    public async Task CaaProvider_ReleaseStampedMbid_IsUsedForReleaseEndpoint()
+    {
+        int requestCount = 0;
+        string caaJson = @"{ ""images"": [ { ""front"": true, ""image"": ""https://images.example.com/art/stamped.jpg"",
+            ""thumbnails"": { ""500"": ""https://images.example.com/art/stamped-500.jpg"" } } ] }";
+
+        var mockHandler = new MockHttpMessageHandler
+        {
+            HandlerFunc = (req, ct) =>
+            {
+                Interlocked.Increment(ref requestCount);
+                string url = req.RequestUri!.ToString();
+                if (url.Contains("/release/rel-stamped"))
+                {
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(caaJson)
+                    });
+                }
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            }
+        };
+        var provider = BuildDirectCaaProvider(mockHandler, new ProviderRateLimiterRegistry(TimeSpan.FromMilliseconds(10)));
+
+        // Positive control: a RELEASE-stamped mbid still routes to the release endpoint.
+        var extIds = new ExternalIds("rel-stamped",
+            AdditionalIds: new Dictionary<string, string> { [ExternalIdKinds.EntityKind] = ExternalIdKinds.KindRelease });
+
+        var urls = await provider.SearchAlbumArtworkUrlsAsync("Some Album", "Some Artist", extIds);
+
+        Assert.Single(urls);
+        Assert.Contains("stamped-500.jpg", urls[0]);
+        Assert.Equal(1, requestCount);
+    }
+
+    [Fact]
+    public async Task CaaProvider_ReleaseJsonMissing_YieldsNoFabricatedFrontUrl()
+    {
+        int requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler
+        {
+            HandlerFunc = (req, ct) =>
+            {
+                Interlocked.Increment(ref requestCount);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            }
+        };
+        var provider = BuildDirectCaaProvider(mockHandler, new ProviderRateLimiterRegistry(TimeSpan.FromMilliseconds(10)));
+
+        var extIds = new ExternalIds("rel-missing",
+            AdditionalIds: new Dictionary<string, string> { [ExternalIdKinds.EntityKind] = ExternalIdKinds.KindRelease });
+
+        var urls = await provider.SearchAlbumArtworkUrlsAsync("Missing Album", "Missing Artist", extIds);
+
+        // CAA-02: a JSON-fetch failure is not evidence art exists — the old code
+        // fabricated "…/front" and handed downstream a URL that could only 404.
+        Assert.Empty(urls);
+        Assert.DoesNotContain(urls, u => u.Contains("/front"));
+        Assert.Equal(1, requestCount); // exactly one attempt; nothing speculative follows
+    }
 }

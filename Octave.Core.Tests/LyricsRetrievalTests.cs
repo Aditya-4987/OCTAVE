@@ -374,4 +374,103 @@ public class LyricsRetrievalTests : IDisposable
         // 0 network requests dispatched
         Assert.Equal(0, networkCallCount);
     }
+
+    // =================================================================
+    // N. BATCH 7 — FUZZY SEARCH FALLBACK (LRC-02) & SINGLE-FLIGHT KEYING (LRC-01)
+    // =================================================================
+
+    [Fact]
+    public async Task FetchLyricsAsync_ExactGetMisses_FallsBackToFuzzySearchEndpoint()
+    {
+        int searchCalls = 0;
+        int getCalls = 0;
+        string searchJson = @"[
+            {
+                ""id"": 9001,
+                ""trackName"": ""Bohemian Rhapsody"",
+                ""artistName"": ""Queen"",
+                ""syncedLyrics"": ""[00:01.00] Is this the real life?""
+            }
+        ]";
+
+        var mockHandler = new MockHttpMessageHandler
+        {
+            HandlerFunc = (req, ct) =>
+            {
+                string url = req.RequestUri!.ToString();
+                if (url.Contains("/get"))
+                {
+                    Interlocked.Increment(ref getCalls);
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+                }
+                if (url.Contains("/search"))
+                {
+                    Interlocked.Increment(ref searchCalls);
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(searchJson)
+                    });
+                }
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            }
+        };
+
+        var httpClient = new HttpClient(mockHandler);
+        var rateRegistry = new ProviderRateLimiterRegistry(TimeSpan.FromMilliseconds(10));
+        var httpService = new HttpService(rateRegistry, httpClient);
+        var provider = new LrcLibLyricsProvider(httpService, rateRegistry);
+
+        // No album/duration → a single constrained /get, then the fuzzy search.
+        // The old code's third attempt repeated the exact /get that already missed.
+        var result = await provider.FetchLyricsAsync("Bohemian Rhapsody", "Queen");
+
+        Assert.NotNull(result);
+        Assert.Equal(LyricsState.Synced, result.State);
+        Assert.Single(result.SyncedLines!);
+        Assert.Equal(1, getCalls);
+        Assert.Equal(1, searchCalls); // exactly one fuzzy attempt replaced the duplicate /get
+    }
+
+    [Fact]
+    public async Task FetchLyricsAsync_ConcurrentDifferentAlbums_DoNotShareInFlightResult()
+    {
+        int getCalls = 0;
+        var secondArrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var mockHandler = new MockHttpMessageHandler
+        {
+            HandlerFunc = async (req, ct) =>
+            {
+                string url = req.RequestUri!.ToString();
+                if (url.Contains("/get"))
+                {
+                    Interlocked.Increment(ref getCalls);
+                    secondArrived.TrySetResult();
+                    // Hold the first caller open until the second distinct lookup
+                    // arrives — a shared in-flight key would dedup to ONE call.
+                    await Task.WhenAny(secondArrived.Task, Task.Delay(1500, ct));
+                    return new HttpResponseMessage(HttpStatusCode.NotFound);
+                }
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+        };
+
+        var httpClient = new HttpClient(mockHandler);
+        var rateRegistry = new ProviderRateLimiterRegistry(TimeSpan.FromMilliseconds(10));
+        var httpService = new HttpService(rateRegistry, httpClient);
+        var provider = new LrcLibLyricsProvider(httpService, rateRegistry);
+
+        // LRC-01: same title/artist/duration on different albums are different
+        // releases — the old key (title+artist only) made the second caller
+        // receive whatever the first lookup returned.
+        var t1 = provider.FetchLyricsAsync("Same Song", "Same Artist", "Album One", 200.0);
+        var t2 = provider.FetchLyricsAsync("Same Song", "Same Artist", "Album Two", 200.0);
+
+        await Task.WhenAll(t1, t2);
+
+        // Each independent lookup tries the parameterized /get, misses, then the
+        // bare /get — 2 hits per lookup. Two distinct lookups ⇒ 4; under the old
+        // shared key the second caller joined the first's flight ⇒ only 2.
+        Assert.Equal(4, getCalls);
+    }
 }

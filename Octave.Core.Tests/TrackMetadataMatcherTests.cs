@@ -267,8 +267,11 @@ public class TrackMetadataMatcherTests
 
         var result = matcher.ScoreCandidate(localTrack, candidate, "MusicBrainz");
 
-        // Moderate confidence (not strong enough to be auto-applied blindly, but a viable candidate)
-        Assert.InRange(result.Confidence, 0.60, 0.80);
+        // Moderate confidence (not strong enough to be auto-applied blindly, but
+        // a viable candidate). MATCH-06 note: the ±17 s duration difference used
+        // to fall in the unscored 15–25 s dead zone; it now takes the explicit
+        // mismatch penalty (-0.15), landing this scenario at ~0.50 instead of ~0.65.
+        Assert.InRange(result.Confidence, 0.40, 0.70);
     }
 
     // =================================================================
@@ -439,6 +442,101 @@ public class TrackMetadataMatcherTests
             Assert.Equal(1.0, ranked[0].Confidence);
             Assert.Contains("Exact MusicBrainz ID match", ranked[0].MatchEvidence);
             Assert.True(ranked[0].Confidence > ranked[1].Confidence);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, true); } catch { }
+        }
+    }
+
+    // =================================================================
+    // 11. BATCH 7 — DURATION TIER PLACEMENT (MATCH-03) & DEAD ZONE (MATCH-06)
+    // =================================================================
+
+    // Baseline where title/artist/album/track all match exactly: 0.35 + 0.30 +
+    // 0.10 + 0.05 = 0.80 before the duration component, so each duration tier
+    // moves the confidence in isolation.
+    private static readonly Track ScoringBaselineTrack =
+        new("tr1", "Signal", "ar1", "Artist X", "al1", "Album Y", 300.0, "C:/music/signal.mp3", "Local", 3, 2020, DateTime.UtcNow);
+
+    private static ExternalTrackMetadata CandidateWithDuration(double? durationSeconds) =>
+        new("Signal", "Artist X", "Album Y", 2020, "Rock", 3, 1, durationSeconds, null, ExternalIds.Empty);
+
+    [Fact]
+    public void ScoreCandidate_MissingDuration_RanksBelowCloseAndAboveFarDurations()
+    {
+        var matcher = new TrackMetadataMatcher(new Mock<IExternalMetadataOrchestrator>().Object);
+
+        double exactConfidence = matcher.ScoreCandidate(ScoringBaselineTrack, CandidateWithDuration(300.0), "MB").Confidence;
+        double closeConfidence = matcher.ScoreCandidate(ScoringBaselineTrack, CandidateWithDuration(306.0), "MB").Confidence; // ±6s → +0.08
+        double missingConfidence = matcher.ScoreCandidate(ScoringBaselineTrack, CandidateWithDuration(null), "MB").Confidence;
+        double farConfidence = matcher.ScoreCandidate(ScoringBaselineTrack, CandidateWithDuration(312.0), "MB").Confidence;   // ±12s → +0.02
+
+        // MATCH-03: absent length must not outscore present-but-imperfect data.
+        // Neutral +0.05 places unknown between the ±8 s (+0.08) and ±15 s
+        // (+0.02) tiers — the old +0.10 beat every imperfect-but-real value.
+        Assert.True(exactConfidence > closeConfidence, $"exact {exactConfidence} should exceed ±6s-off {closeConfidence}");
+        Assert.True(closeConfidence > missingConfidence, $"±6s-off {closeConfidence} should exceed missing {missingConfidence}");
+        Assert.True(missingConfidence > farConfidence, $"missing {missingConfidence} should exceed ±12s-off {farConfidence}");
+    }
+
+    [Fact]
+    public void ScoreCandidate_TwentySecondDurationDiff_IsPenalizedNotIgnored()
+    {
+        var matcher = new TrackMetadataMatcher(new Mock<IExternalMetadataOrchestrator>().Object);
+
+        var tolerated = matcher.ScoreCandidate(ScoringBaselineTrack, CandidateWithDuration(315.0), "MB"); // ±15s → +0.02
+        var penalized = matcher.ScoreCandidate(ScoringBaselineTrack, CandidateWithDuration(320.0), "MB"); // ±20s → penalty
+
+        // MATCH-06: the old `diff > 25` tier left 15–25 s unscored — a ~20 s-off
+        // different edit escaped with the same credit as a near miss. It is now
+        // an explicit mismatch below the auto-apply gates.
+        Assert.True(penalized.Confidence < tolerated.Confidence,
+            $"±20s ({penalized.Confidence}) must score below ±15s ({tolerated.Confidence})");
+        Assert.True(penalized.Confidence < 0.70, $"Expected mismatch penalty to pull confidence < 0.70, got {penalized.Confidence}");
+        Assert.Contains("Mismatch", penalized.MatchEvidence);
+    }
+
+    // =================================================================
+    // 12. TAG-READ FAILURE TRACK NUMBER FALLBACK (MATCH-07)
+    // =================================================================
+
+    // fLaC magic followed by an invalid metadata-block header — TagLib's FLAC
+    // reader validates strictly and throws on open, simulating an unreadable
+    // tag payload while the FILENAME still carries the real position.
+    private static readonly byte[] UnreadableFlacBytes = { 0x66, 0x4C, 0x61, 0x43, 0xFF, 0x00, 0x00 };
+
+    [Fact]
+    public async Task FindMatchesForFileAsync_UnreadableTags_TrackNumberComesFromFilename()
+    {
+        var mockOrchestrator = new Mock<IExternalMetadataOrchestrator>();
+        string tempDir = Path.Combine(Path.GetTempPath(), "Octave_Match7_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            string filePath = Path.Combine(tempDir, "07 - Pink Floyd - Time.flac");
+            File.WriteAllBytes(filePath, UnreadableFlacBytes);
+
+            mockOrchestrator.Setup(o => o.SearchTrackCandidatesAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<double?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new[]
+                {
+                    new TrackMatchCandidate(
+                        "MusicBrainz", new ExternalIds("mb-time"), 0.5, "Initial",
+                        new ExternalTrackMetadata("Time", "Pink Floyd", Path.GetFileName(tempDir), 1973, "Rock", 7, 1, null, null, new ExternalIds("mb-time")))
+                });
+
+            var matcher = new TrackMetadataMatcher(mockOrchestrator.Object);
+            var ranked = await matcher.FindMatchesForFileAsync(filePath);
+
+            Assert.Single(ranked);
+
+            // MATCH-07: the old default of trackNum=1 survived the TagLib failure,
+            // so the filename fallback (`trackNum <= 0`) never fired and the #7
+            // bonus was silently lost. The evidence line only appears when the
+            // transient track actually carried TrackNumber 7.
+            Assert.Contains("Track #7 Match", ranked[0].MatchEvidence);
+            Assert.True(ranked[0].Confidence >= 0.85,
+                $"Expected >= 0.85 with the track-number bonus applied, got {ranked[0].Confidence}");
         }
         finally
         {

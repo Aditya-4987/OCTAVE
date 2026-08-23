@@ -93,7 +93,12 @@ public class TrackMetadataMatcher : ITrackMetadataMatcher
         string title = string.Empty;
         string artist = string.Empty;
         string album = string.Empty;
-        int trackNum = 1;
+
+        // MATCH-07: 0 means "unknown" here. The old default of 1 survived a
+        // TagLib failure, so the filename fallback (`trackNum <= 0`) never
+        // fired and a phantom TrackNumber=1 collected +0.05 against any
+        // track-1 candidate.
+        int trackNum = 0;
         int year = 0;
         double duration = 0;
 
@@ -216,16 +221,22 @@ public class TrackMetadataMatcher : ITrackMetadataMatcher
                 score += 0.02;
                 evidenceParts.Add($"Duration Diff ±{diff:0.#}s (0.02)");
             }
-            else if (diff > 25.0)
+            else
             {
-                score -= 0.15; // Duration mismatch penalty
-                evidenceParts.Add($"Duration Mismatch -{diff:0.#}s (-0.15 penalty)");
+                // MATCH-06: the old `else if (diff > 25)` left 15–25 s unscored
+                // — a ~20 s-off different edit escaped all penalty. Everything
+                // beyond the ±15 s tier is now an explicit mismatch.
+                score -= 0.15;
+                evidenceParts.Add($"Duration Mismatch ±{diff:0.#}s (-0.15 penalty)");
             }
         }
         else
         {
-            // Neutral duration signal
-            score += 0.10;
+            // MATCH-03: absent duration data used to earn +0.10 — MORE than
+            // present-but-off-by-6-15 s (+0.02/+0.08), rewarding candidates for
+            // omitting their length. Neutral +0.05 keeps unknown-length
+            // candidates viable without outscoring imperfect-but-real data.
+            score += 0.05;
         }
 
         // 5. Album Similarity (Weight: 0.10)

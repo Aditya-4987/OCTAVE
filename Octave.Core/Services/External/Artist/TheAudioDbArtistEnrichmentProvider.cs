@@ -52,7 +52,11 @@ public class TheAudioDbArtistEnrichmentProvider : IArtistEnrichmentProvider, IEx
 
         return await _singleFlight.ExecuteAsync(inFlightKey, async () =>
         {
-            string apiKey = _settingsService?.CurrentSettings.TheAudioDbApiKey?.Trim() ?? _options.ApiKey;
+            // ADB-01: `?? _options.ApiKey` only fired on NULL, so a
+            // whitespace/empty settings key survived .Trim() as "" and built a
+            // malformed double-slash URL. Treat blank exactly like absent.
+            string? settingsKey = _settingsService?.CurrentSettings.TheAudioDbApiKey;
+            string apiKey = !string.IsNullOrWhiteSpace(settingsKey) ? settingsKey.Trim() : _options.ApiKey;
             string url = $"{_options.BaseUrl}/{apiKey}/artist-mb.php?i={Uri.EscapeDataString(musicBrainzArtistId)}";
 
             var httpResult = await _httpService.GetJsonAsync<TadbArtistResponse>(
@@ -67,7 +71,12 @@ public class TheAudioDbArtistEnrichmentProvider : IArtistEnrichmentProvider, IEx
                 return null;
             }
 
-            var dto = httpResult.Data.Artists[0];
+            var dto = PickBestArtist(httpResult.Data, targetName: null, targetMbid: musicBrainzArtistId);
+            if (dto == null)
+            {
+                return null;
+            }
+
             return MapDtoToProfile(dto, musicBrainzArtistId);
         }).ConfigureAwait(false);
     }
@@ -83,7 +92,9 @@ public class TheAudioDbArtistEnrichmentProvider : IArtistEnrichmentProvider, IEx
 
         return await _singleFlight.ExecuteAsync(inFlightKey, async () =>
         {
-            string apiKey = _settingsService?.CurrentSettings.TheAudioDbApiKey?.Trim() ?? _options.ApiKey;
+            // ADB-01: same blank-vs-absent key handling as the MBID lookup.
+            string? settingsKey = _settingsService?.CurrentSettings.TheAudioDbApiKey;
+            string apiKey = !string.IsNullOrWhiteSpace(settingsKey) ? settingsKey.Trim() : _options.ApiKey;
             string url = $"{_options.BaseUrl}/{apiKey}/search.php?s={Uri.EscapeDataString(artistName.Trim())}";
 
             var httpResult = await _httpService.GetJsonAsync<TadbArtistResponse>(
@@ -98,7 +109,15 @@ public class TheAudioDbArtistEnrichmentProvider : IArtistEnrichmentProvider, IEx
                 return null;
             }
 
-            var dto = httpResult.Data.Artists[0];
+            // ADB-02: search.php can return several artists sharing a name —
+            // blindly binding Artists[0] attached the WRONG artist's
+            // bio/images. Pick the best normalized match instead.
+            var dto = PickBestArtist(httpResult.Data, targetName: artistName, targetMbid: null);
+            if (dto == null)
+            {
+                return null;
+            }
+
             return MapDtoToProfile(dto, dto.StrMusicBrainzID);
         }).ConfigureAwait(false);
     }
@@ -134,6 +153,36 @@ public class TheAudioDbArtistEnrichmentProvider : IArtistEnrichmentProvider, IEx
         }
 
         return Array.Empty<string>();
+    }
+
+    // ADB-02: prefer an exact MusicBrainz-ID hit when one is known (the MBID
+    // lookup path), else the first artist whose normalized name matches the
+    // query exactly; only fall back to the API's first row when nothing
+    // verifies. Normalization strips punctuation/diacritics so "AC/DC" vs
+    // "ACDC"-style variants still compare equal.
+    private static TadbArtistDto? PickBestArtist(TadbArtistResponse response, string? targetName, string? targetMbid)
+    {
+        var artists = response.Artists;
+        if (artists == null || artists.Count == 0) return null;
+        if (artists.Count == 1) return artists[0];
+
+        if (!string.IsNullOrWhiteSpace(targetMbid))
+        {
+            var byMbid = artists.FirstOrDefault(a =>
+                !string.IsNullOrWhiteSpace(a.StrMusicBrainzID) &&
+                a.StrMusicBrainzID.Trim().Equals(targetMbid.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (byMbid != null) return byMbid;
+        }
+
+        if (!string.IsNullOrWhiteSpace(targetName))
+        {
+            string normalized = MetadataTextNormalizer.Normalize(targetName);
+            var byName = artists.FirstOrDefault(a =>
+                string.Equals(MetadataTextNormalizer.Normalize(a.StrArtist), normalized, StringComparison.Ordinal));
+            if (byName != null) return byName;
+        }
+
+        return artists[0];
     }
 
     private static EnrichedArtistProfile MapDtoToProfile(TadbArtistDto dto, string? mbid)

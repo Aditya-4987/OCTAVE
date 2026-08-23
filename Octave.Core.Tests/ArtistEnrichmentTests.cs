@@ -315,4 +315,143 @@ public class ArtistEnrichmentTests : IDisposable
         // Zero additional network calls
         Assert.Equal(callsAfterFirst, networkCallCount);
     }
+
+    // =================================================================
+    // 6. BATCH 7 — API KEY RESOLUTION (ADB-01) & MULTI-RESULT PICKING (ADB-02)
+    // =================================================================
+
+    private sealed class FakeExternalDataSettingsService : Octave.Core.Services.External.Settings.IExternalDataSettingsService
+    {
+        public event EventHandler<ExternalDataSettings>? SettingsChanged { add { } remove { } }
+        public ExternalDataSettings CurrentSettings { get; set; } = new();
+        public Task LoadSettingsAsync() => Task.CompletedTask;
+        public Task UpdateSettingsAsync(ExternalDataSettings settings)
+        {
+            CurrentSettings = settings;
+            return Task.CompletedTask;
+        }
+        public Task<TestConnectionResult> TestTheAudioDbConnectionAsync(string apiKey, CancellationToken ct = default) =>
+            Task.FromResult(new TestConnectionResult(true, "fake"));
+    }
+
+    private static readonly string SingleArtistJson = @"
+    {
+        ""artists"": [
+            {
+                ""idArtist"": ""1"",
+                ""strArtist"": ""Key Check Artist"",
+                ""strMusicBrainzID"": ""mbid-target""
+            }
+        ]
+    }";
+
+    [Fact]
+    public async Task TadbProvider_PaddedSettingsKey_IsTrimmedAndPreferredOverOptionsKey()
+    {
+        string? capturedUrl = null;
+        var mockHandler = new MockHttpMessageHandler
+        {
+            HandlerFunc = (req, ct) =>
+            {
+                string url = req.RequestUri!.ToString();
+                if (url.Contains("artist-mb.php"))
+                {
+                    capturedUrl = url;
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(SingleArtistJson)
+                    });
+                }
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            }
+        };
+
+        var httpClient = new HttpClient(mockHandler);
+        var rateRegistry = new ProviderRateLimiterRegistry(TimeSpan.FromMilliseconds(10));
+        var httpService = new HttpService(rateRegistry, httpClient);
+
+        // ADB-01: the old `?.Trim() ?? _options.ApiKey` chain treated a blank
+        // settings key as PRESENT (Trim → ""), building "{base}//artist-mb.php".
+        // The resolution now treats blank exactly like absent, and trims padding.
+        var settings = new FakeExternalDataSettingsService
+        {
+            CurrentSettings = new ExternalDataSettings { TheAudioDbApiKey = "  settings-key-42  " }
+        };
+        var options = new TheAudioDbOptions { ApiKey = "options-fallback-key" };
+
+        var provider = new TheAudioDbArtistEnrichmentProvider(httpService, options, rateRegistry, settings);
+
+        var profile = await provider.GetArtistProfileByMbidAsync("mbid-target");
+
+        Assert.NotNull(profile);
+        Assert.NotNull(capturedUrl);
+        Assert.Contains("/settings-key-42/artist-mb.php", capturedUrl);
+        Assert.DoesNotContain("options-fallback-key", capturedUrl);
+        Assert.DoesNotContain("/api/v1/json//", capturedUrl); // the malformed double-slash shape
+    }
+
+    [Fact]
+    public async Task TadbProvider_NameSearchMultipleArtists_PicksExactNormalizedName()
+    {
+        string multiJson = @"
+        {
+            ""artists"": [
+                { ""idArtist"": ""10"", ""strArtist"": ""Queensryche"", ""strMusicBrainzID"": ""mbid-qr"" },
+                { ""idArtist"": ""11"", ""strArtist"": ""QUEEN!"", ""strMusicBrainzID"": ""mbid-real"" }
+            ]
+        }";
+
+        var mockHandler = new MockHttpMessageHandler
+        {
+            HandlerFunc = (req, ct) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(multiJson)
+            })
+        };
+
+        var httpClient = new HttpClient(mockHandler);
+        var rateRegistry = new ProviderRateLimiterRegistry(TimeSpan.FromMilliseconds(10));
+        var httpService = new HttpService(rateRegistry, httpClient);
+
+        var provider = new TheAudioDbArtistEnrichmentProvider(httpService, null, rateRegistry);
+
+        // ADB-02: search.php returns several artists sharing a name — binding
+        // Artists[0] attached the WRONG artist's bio/images ("Queensryche" here).
+        var profile = await provider.GetArtistProfileByNameAsync("queen!");
+
+        Assert.NotNull(profile);
+        Assert.Equal("QUEEN!", profile.Name);
+        Assert.Equal("mbid-real", profile.ExternalIds.MusicBrainzId);
+    }
+
+    [Fact]
+    public async Task TadbProvider_MbidSearchMultipleArtists_PicksMatchingMbidRow()
+    {
+        string multiJson = @"
+        {
+            ""artists"": [
+                { ""idArtist"": ""20"", ""strArtist"": ""Decoy Artist"", ""strMusicBrainzID"": ""mbid-decoy"" },
+                { ""idArtist"": ""21"", ""strArtist"": ""True Artist"", ""strMusicBrainzID"": ""mbid-true"" }
+            ]
+        }";
+
+        var mockHandler = new MockHttpMessageHandler
+        {
+            HandlerFunc = (req, ct) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(multiJson)
+            })
+        };
+
+        var httpClient = new HttpClient(mockHandler);
+        var rateRegistry = new ProviderRateLimiterRegistry(TimeSpan.FromMilliseconds(10));
+        var httpService = new HttpService(rateRegistry, httpClient);
+
+        var provider = new TheAudioDbArtistEnrichmentProvider(httpService, null, rateRegistry);
+
+        var profile = await provider.GetArtistProfileByMbidAsync("mbid-true");
+
+        Assert.NotNull(profile);
+        Assert.Equal("True Artist", profile.Name);
+    }
 }

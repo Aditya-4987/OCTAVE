@@ -82,7 +82,12 @@ public class MusicBrainzMetadataProvider : IExternalMetadataProvider
                 string? albumTitle = firstRelease?.Title ?? album;
                 int? year = ExtractYear(rec.FirstReleaseDate ?? firstRelease?.Date);
                 string? genre = rec.Genres?.FirstOrDefault()?.Name ?? rec.Tags?.FirstOrDefault()?.Name;
-                int? trackNumber = firstRelease?.Media?.FirstOrDefault()?.Tracks?.FirstOrDefault()?.Number is string numStr && int.TryParse(numStr, out int tn) ? tn : null;
+
+                // MB-03: the track#/disc# must describe THE MATCHED RECORDING's
+                // slot, not "first medium, first track of the first release"
+                // (which stamped every candidate with arbitrary numbers).
+                var (trackNumber, discNumber) = LocateTrackPosition(rec);
+
                 double? duration = rec.LengthMs.HasValue ? rec.LengthMs.Value / 1000.0 : null;
                 string? isrc = rec.Isrcs?.FirstOrDefault();
 
@@ -93,6 +98,7 @@ public class MusicBrainzMetadataProvider : IExternalMetadataProvider
                     additionalIds["MusicBrainzReleaseGroupId"] = firstRelease.ReleaseGroup.Id;
                 if (rec.ArtistCredit?.FirstOrDefault()?.Artist?.Id is string artMbid && !string.IsNullOrWhiteSpace(artMbid))
                     additionalIds["MusicBrainzArtistId"] = artMbid;
+                additionalIds[ExternalIdKinds.EntityKind] = ExternalIdKinds.KindRecording;
 
                 var externalIds = new ExternalIds(
                     MusicBrainzId: rec.Id,
@@ -106,7 +112,7 @@ public class MusicBrainzMetadataProvider : IExternalMetadataProvider
                     Year: year,
                     Genre: genre,
                     TrackNumber: trackNumber,
-                    DiscNumber: firstRelease?.Media?.FirstOrDefault()?.Position,
+                    DiscNumber: discNumber,
                     DurationSeconds: duration,
                     Isrc: isrc,
                     ExternalIds: externalIds);
@@ -176,6 +182,7 @@ public class MusicBrainzMetadataProvider : IExternalMetadataProvider
                     additionalIds["MusicBrainzReleaseGroupId"] = rel.ReleaseGroup.Id;
                 if (rel.ArtistCredit?.FirstOrDefault()?.Artist?.Id is string artMbid && !string.IsNullOrWhiteSpace(artMbid))
                     additionalIds["MusicBrainzArtistId"] = artMbid;
+                additionalIds[ExternalIdKinds.EntityKind] = ExternalIdKinds.KindRelease;
 
                 var externalIds = new ExternalIds(
                     MusicBrainzId: rel.Id,
@@ -295,6 +302,7 @@ public class MusicBrainzMetadataProvider : IExternalMetadataProvider
                 additionalIds["MusicBrainzReleaseGroupId"] = firstRelease.ReleaseGroup.Id;
             if (rec.ArtistCredit?.FirstOrDefault()?.Artist?.Id is string artMbid && !string.IsNullOrWhiteSpace(artMbid))
                 additionalIds["MusicBrainzArtistId"] = artMbid;
+            additionalIds[ExternalIdKinds.EntityKind] = ExternalIdKinds.KindRecording;
 
             var externalIds = new ExternalIds(
                 MusicBrainzId: rec.Id,
@@ -350,6 +358,7 @@ public class MusicBrainzMetadataProvider : IExternalMetadataProvider
                 additionalIds["MusicBrainzReleaseGroupId"] = rel.ReleaseGroup.Id;
             if (rel.ArtistCredit?.FirstOrDefault()?.Artist?.Id is string artMbid && !string.IsNullOrWhiteSpace(artMbid))
                 additionalIds["MusicBrainzArtistId"] = artMbid;
+            additionalIds[ExternalIdKinds.EntityKind] = ExternalIdKinds.KindRelease;
 
             var externalIds = new ExternalIds(
                 MusicBrainzId: rel.Id,
@@ -468,7 +477,11 @@ public class MusicBrainzMetadataProvider : IExternalMetadataProvider
 
             var externalIds = new ExternalIds(
                 MusicBrainzId: rg.Id,
-                AdditionalIds: new Dictionary<string, string> { ["PrimaryType"] = rg.PrimaryType ?? "Album" });
+                AdditionalIds: new Dictionary<string, string>
+                {
+                    ["PrimaryType"] = rg.PrimaryType ?? "Album",
+                    [ExternalIdKinds.EntityKind] = ExternalIdKinds.KindReleaseGroup
+                });
 
             return new ExternalAlbumMetadata(
                 Title: rg.Title,
@@ -524,6 +537,36 @@ public class MusicBrainzMetadataProvider : IExternalMetadataProvider
         return null;
     }
 
+    // MB-03: find the matched recording's real slot — the medium whose track
+    // list contains a track pointing at THIS recording id, scanning releases
+    // in listing order. Returns (null, null) when no media/track data names
+    // the recording, so callers leave the numbers unknown instead of
+    // inventing "first medium, first track".
+    private static (int? TrackNumber, int? DiscNumber) LocateTrackPosition(MbRecordingDto rec)
+    {
+        if (rec.Releases == null || string.IsNullOrWhiteSpace(rec.Id))
+            return (null, null);
+
+        foreach (var release in rec.Releases)
+        {
+            if (release.Media == null) continue;
+            foreach (var medium in release.Media)
+            {
+                var hit = medium.Tracks?.FirstOrDefault(t =>
+                    t.Recording != null &&
+                    string.Equals(t.Recording.Id, rec.Id, StringComparison.OrdinalIgnoreCase));
+
+                if (hit != null)
+                {
+                    int? number = int.TryParse(hit.Number, out int n) && n > 0 ? n : null;
+                    return (number, medium.Position);
+                }
+            }
+        }
+
+        return (null, null);
+    }
+
     private static double CalculateTrackConfidence(MbRecordingDto rec, string targetTitle, string targetArtist, string? targetAlbum, double? targetDuration)
     {
         double baseScore = (rec.Score ?? 50) / 100.0;
@@ -532,6 +575,34 @@ public class MusicBrainzMetadataProvider : IExternalMetadataProvider
         if (rec.Title.Equals(targetTitle, StringComparison.OrdinalIgnoreCase))
         {
             baseScore = Math.Max(baseScore, 0.85);
+        }
+
+        // MB-02: the search-engine score and a title hit say nothing about WHO
+        // performs the result. Fold the normalized artist comparison in so a
+        // same-titled recording by a different artist (cover/tribute) cannot
+        // ride its search score into an auto-apply tier.
+        string recArtist = FormatArtistCredit(rec.ArtistCredit) ?? string.Empty;
+        double artistSim = MetadataTextNormalizer.CalculateSimilarity(targetArtist, recArtist);
+        baseScore *= 0.5 + 0.5 * artistSim;
+        if (artistSim >= 0.95)
+        {
+            baseScore = Math.Min(1.0, baseScore + 0.05);
+        }
+
+        // MB-02: same guard for the release — matching title+artist on a
+        // clearly different album is more often a different edit than a hit.
+        string? recAlbum = rec.Releases?.FirstOrDefault()?.Title;
+        if (!string.IsNullOrWhiteSpace(targetAlbum) && !string.IsNullOrWhiteSpace(recAlbum))
+        {
+            double albumSim = MetadataTextNormalizer.CalculateSimilarity(targetAlbum, recAlbum);
+            if (albumSim >= 0.85)
+            {
+                baseScore = Math.Min(1.0, baseScore + 0.05);
+            }
+            else if (albumSim < 0.40)
+            {
+                baseScore -= 0.10;
+            }
         }
 
         // Duration check
@@ -559,6 +630,17 @@ public class MusicBrainzMetadataProvider : IExternalMetadataProvider
         if (rel.Title.Equals(targetAlbum, StringComparison.OrdinalIgnoreCase))
         {
             baseScore = Math.Max(baseScore, 0.85);
+        }
+
+        // MB-02: an album title is not unique across artists — weigh the
+        // performer in before a wrong-artist same-named release can reach
+        // auto-apply confidence.
+        string relArtist = FormatArtistCredit(rel.ArtistCredit) ?? string.Empty;
+        double artistSim = MetadataTextNormalizer.CalculateSimilarity(targetArtist, relArtist);
+        baseScore *= 0.5 + 0.5 * artistSim;
+        if (artistSim >= 0.95)
+        {
+            baseScore = Math.Min(1.0, baseScore + 0.05);
         }
 
         if (targetYear.HasValue && ExtractYear(rel.Date) == targetYear.Value)

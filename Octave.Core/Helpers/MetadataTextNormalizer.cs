@@ -70,18 +70,24 @@ public static class MetadataTextNormalizer
     }
 
     /// <summary>
-    /// Analyzes title and album for version identifiers (Live, Remix, Acoustic, Instrumental, Demo, Remaster).
+    /// Analyzes the TITLE for version identifiers (Live, Remix, Acoustic, Instrumental,
+    /// Demo, Remaster). MATCH-05: version markers describe the recording, so album
+    /// keywords are intentionally ignored — an album named "Live at Wembley" must not
+    /// brand every studio track on it as a live version and demote its candidates
+    /// through the version-mismatch gates.
     /// </summary>
     public static VersionInfo ExtractVersionInfo(string? title, string? album = null)
     {
-        string combined = $"{title ?? ""} {album ?? ""}";
+        // The album argument stays on the signature for call-site compatibility,
+        // but only the title may assert a version.
+        string source = title ?? "";
 
-        bool isLive = LiveRegex.IsMatch(combined);
-        bool isRemix = RemixRegex.IsMatch(combined);
-        bool isAcoustic = AcousticRegex.IsMatch(combined);
-        bool isInstrumental = InstrumentalRegex.IsMatch(combined);
-        bool isDemo = DemoRegex.IsMatch(combined);
-        bool isRemaster = RemasterRegex.IsMatch(combined);
+        bool isLive = LiveRegex.IsMatch(source);
+        bool isRemix = RemixRegex.IsMatch(source);
+        bool isAcoustic = AcousticRegex.IsMatch(source);
+        bool isInstrumental = InstrumentalRegex.IsMatch(source);
+        bool isDemo = DemoRegex.IsMatch(source);
+        bool isRemaster = RemasterRegex.IsMatch(source);
 
         string? specific = null;
         if (isLive) specific = "Live";
@@ -106,11 +112,19 @@ public static class MetadataTextNormalizer
         if (string.IsNullOrEmpty(normA) || string.IsNullOrEmpty(normB)) return 0.0;
         if (normA == normB) return 1.0;
 
-        // Containment check
-        if (normA.Contains(normB) || normB.Contains(normA))
+        // Containment check (MATCH-02): containment is only a strong signal when
+        // the shorter string is a substantial fraction of the longer one, or a
+        // WHOLE WORD inside it. A 2-character fragment like "go" inside
+        // "goodbye" used to floor the score at 0.85 and clear the auto-apply
+        // gates; weak containment now falls through to plain Levenshtein and
+        // scores on its own (low) merits.
+        if (normA.Contains(normB, StringComparison.Ordinal) || normB.Contains(normA, StringComparison.Ordinal))
         {
             double ratio = (double)Math.Min(normA.Length, normB.Length) / Math.Max(normA.Length, normB.Length);
-            return Math.Max(0.85, ratio);
+            if (ratio >= 0.5 || IsWholeWordInside(normA, normB))
+            {
+                return Math.Max(0.85, ratio);
+            }
         }
 
         // Levenshtein distance
@@ -119,6 +133,25 @@ public static class MetadataTextNormalizer
         if (maxLen == 0) return 1.0;
 
         return Math.Max(0.0, 1.0 - ((double)dist / maxLen));
+    }
+
+    // MATCH-02: true when <code>shorter</code> appears in <code>longer</code>
+    // delimited by string boundaries or spaces (normalized text is lowercase
+    // with single-space separators, so ' ' is the word delimiter).
+    private static bool IsWholeWordInside(string longer, string shorter)
+    {
+        if (shorter.Length == 0 || shorter.Length > longer.Length) return false;
+
+        int idx = longer.IndexOf(shorter, StringComparison.Ordinal);
+        while (idx >= 0)
+        {
+            bool leftOk = idx == 0 || longer[idx - 1] == ' ';
+            bool rightOk = idx + shorter.Length == longer.Length || longer[idx + shorter.Length] == ' ';
+            if (leftOk && rightOk) return true;
+            idx = longer.IndexOf(shorter, idx + 1, StringComparison.Ordinal);
+        }
+
+        return false;
     }
 
     private static int LevenshteinDistance(string s, string t)
@@ -164,8 +197,13 @@ public static class MetadataTextNormalizer
         string? title = null;
         string? album = !string.IsNullOrWhiteSpace(directoryName) ? directoryName : null;
 
-        // Pattern: "01 - Artist - Title" or "01. Artist - Title"
-        var matchThreePart = Regex.Match(fileName, @"^(?:(?<num>\d{1,3})[\s\.\-_]+)?(?<artist>[^-]+)\s*-\s*(?<title>.+)$");
+        // Pattern: "01 - Artist - Title" or "01. Artist - Title".
+        // MATCH-04: the artist/title separator must be a dash standing ALONE
+        // between spaces — any-hyphen splitting parsed "Spider-Man Theme" as
+        // artist "Spider", title "Man Theme". A leading track number still
+        // consumes its separator greedily so "01 - Artist - Title" works, and
+        // unspaced-hyphen names fall through to the number/filename patterns.
+        var matchThreePart = Regex.Match(fileName, @"^(?:(?<num>\d{1,3})[\s\.\-_]+)?(?<artist>.+?)\s+-\s+(?<title>.+)$");
         if (matchThreePart.Success)
         {
             if (int.TryParse(matchThreePart.Groups["num"].Value, out int n))

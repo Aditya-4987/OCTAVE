@@ -57,8 +57,18 @@ public class CoverArtArchiveArtworkProvider : IExternalAlbumArtworkProvider
         string? releaseMbid = externalIds?.GetId("MusicBrainzReleaseId");
         string? releaseGroupMbid = externalIds?.GetId("MusicBrainzReleaseGroupId");
 
-        // If externalIds has a direct MBID that might be a release or recording MBID
-        if (string.IsNullOrWhiteSpace(releaseMbid) && !string.IsNullOrWhiteSpace(externalIds?.MusicBrainzId))
+        // CAA-01: MusicBrainzId is entity-ambiguous — on track candidates it is
+        // a RECORDING mbid, which just 404s against /release/{mbid}. Producers
+        // stamp AdditionalIds[MusicBrainzEntityKind], and an explicit recording
+        // or release-group stamp routes AWAY from the release endpoint (toward
+        // the release-group endpoint or album search below). Unstamped ids
+        // (legacy cache entries predating the contract) keep release semantics
+        // so stored artwork lookups don't silently regress.
+        string? entityKind = externalIds?.GetId(ExternalIdKinds.EntityKind);
+        if (string.IsNullOrWhiteSpace(releaseMbid)
+            && !string.IsNullOrWhiteSpace(externalIds?.MusicBrainzId)
+            && !string.Equals(entityKind, ExternalIdKinds.KindRecording, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(entityKind, ExternalIdKinds.KindReleaseGroup, StringComparison.OrdinalIgnoreCase))
         {
             releaseMbid = externalIds.MusicBrainzId;
         }
@@ -119,8 +129,14 @@ public class CoverArtArchiveArtworkProvider : IExternalAlbumArtworkProvider
                     return found;
                 }
 
-                // Fallback direct front URL redirect
-                return new List<string> { $"{BaseUrl}/release/{Uri.EscapeDataString(releaseMbid)}/front" };
+                // CAA-02: never fabricate a /front URL here. A JSON-fetch
+                // failure is not evidence that art exists, and a guessed
+                // /front 404s downstream indistinguishably from a real
+                // result. 404 means art is definitively absent; anything
+                // else is transient and simply yields no candidates.
+                System.Diagnostics.Debug.WriteLine(
+                    $"[CoverArtArchive] No images for release '{releaseMbid}' (HTTP {(int?)httpResult.StatusCode}).");
+                return new List<string>();
             }).ConfigureAwait(false);
 
             if (releaseUrls != null && releaseUrls.Count > 0)
@@ -164,7 +180,11 @@ public class CoverArtArchiveArtworkProvider : IExternalAlbumArtworkProvider
                     return found;
                 }
 
-                return new List<string> { $"{BaseUrl}/release-group/{Uri.EscapeDataString(releaseGroupMbid)}/front" };
+                // CAA-02: same rule as the release endpoint — no speculative
+                // /front guesses on failure.
+                System.Diagnostics.Debug.WriteLine(
+                    $"[CoverArtArchive] No images for release-group '{releaseGroupMbid}' (HTTP {(int?)httpResult.StatusCode}).");
+                return new List<string>();
             }).ConfigureAwait(false);
 
             if (rgUrls != null && rgUrls.Count > 0)

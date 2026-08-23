@@ -52,7 +52,15 @@ public class LrcLibLyricsProvider : IExternalLyricsProvider
             return null;
         }
 
-        string inFlightKey = $"lrclib:{artist.Trim().ToLowerInvariant()}:{title.Trim().ToLowerInvariant()}";
+        // LRC-01: the dedup key must distinguish releases — same title+artist
+        // on different albums (or different-duration versions) must not share
+        // one in-flight result and receive each other's lyrics. Normalized
+        // album plus rounded seconds; 0 keeps "unknown" lookups sharing.
+        string albumPart = !string.IsNullOrWhiteSpace(album) ? MetadataTextNormalizer.Normalize(album) : "-";
+        int durationPart = durationSeconds.HasValue && durationSeconds.Value > 0
+            ? (int)Math.Round(durationSeconds.Value)
+            : 0;
+        string inFlightKey = $"lrclib:{artist.Trim().ToLowerInvariant()}:{title.Trim().ToLowerInvariant()}:{albumPart}:{durationPart}";
 
         return await _singleFlight.ExecuteAsync(inFlightKey, async () =>
         {
@@ -76,6 +84,19 @@ public class LrcLibLyricsProvider : IExternalLyricsProvider
                     null,
                     TimeSpan.FromSeconds(10),
                     ct).ConfigureAwait(false);
+            }
+
+            // LRC-02: both constrained /get attempts missed — the old third
+            // attempt repeated the same exact query. A fuzzy /api/search with
+            // a scored, duration-aware pick still finds slightly-off
+            // title/artist variants.
+            if ((!httpResult.IsSuccess || httpResult.Data == null))
+            {
+                var fuzzy = await FetchBestSearchMatchAsync(title, artist, durationSeconds, ct).ConfigureAwait(false);
+                if (fuzzy != null)
+                {
+                    httpResult = HttpResult<LrcLibGetDto>.Success(fuzzy);
+                }
             }
 
             if (!httpResult.IsSuccess || httpResult.Data == null)
@@ -145,5 +166,49 @@ public class LrcLibLyricsProvider : IExternalLyricsProvider
         }
 
         return $"{BaseUrl}/get?{string.Join("&", queryParams)}";
+    }
+
+    // LRC-02: /api/search is lrclib's fuzzy endpoint — query it and keep the
+    // best-scoring result instead of repeating the exact /get that already
+    // missed. Duration agreement breaks ties; a floor keeps garbage results
+    // out when nothing really matches.
+    private async Task<LrcLibGetDto?> FetchBestSearchMatchAsync(string title, string artist, double? durationSeconds, CancellationToken ct)
+    {
+        string searchUrl = $"{BaseUrl}/search?track_name={Uri.EscapeDataString(title.Trim())}&artist_name={Uri.EscapeDataString(artist.Trim())}";
+
+        var httpResult = await _httpService.GetJsonAsync<List<LrcLibGetDto>>(
+            searchUrl,
+            ProviderKey,
+            null,
+            TimeSpan.FromSeconds(10),
+            ct).ConfigureAwait(false);
+
+        if (!httpResult.IsSuccess || httpResult.Data == null || httpResult.Data.Count == 0)
+        {
+            return null;
+        }
+
+        LrcLibGetDto? best = null;
+        double bestScore = 0;
+
+        foreach (var r in httpResult.Data)
+        {
+            double score = 0.5 * MetadataTextNormalizer.CalculateSimilarity(title, r.TrackName) +
+                           0.5 * MetadataTextNormalizer.CalculateSimilarity(artist, r.ArtistName);
+
+            if (durationSeconds.HasValue && durationSeconds.Value > 0 && r.Duration is > 0)
+            {
+                double diff = Math.Abs(r.Duration.Value - durationSeconds.Value);
+                score += diff <= 2 ? 0.15 : diff <= 5 ? 0.05 : -0.10;
+            }
+
+            if (score > bestScore)
+            {
+                bestScore = score;
+                best = r;
+            }
+        }
+
+        return bestScore >= 0.60 ? best : null;
     }
 }
