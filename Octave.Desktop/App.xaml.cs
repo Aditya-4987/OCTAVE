@@ -53,7 +53,17 @@ public partial class App : Application
         UnhandledException += (s, e) =>
         {
             System.Diagnostics.Debug.WriteLine($"[App UnhandledException] {e.Message} (Handled={e.Handled})");
-            e.Handled = true;
+
+            // SH-10: only benign cancellations are swallowed. The old blanket
+            // e.Handled = true turned every failure - including fatal DB/engine
+            // corruption during startup - into silent wrong behavior: the
+            // process kept running in an undefined state with nothing surfaced.
+            // Everything else stays unhandled so the failure is loud and
+            // diagnosable instead of a zombie session.
+            if (e.Exception is OperationCanceledException)
+            {
+                e.Handled = true;
+            }
         };
 
         AppDomain.CurrentDomain.UnhandledException += (s, e) =>
@@ -125,8 +135,9 @@ public partial class App : Application
                 services.AddSingleton<Octave.Core.Services.Metadata.LyricsService>();
                 services.AddSingleton<ILyricsService, CompositeLyricsService>();
 
-                // ViewModels
-                services.AddSingleton<MainViewModel>();
+                // ViewModels (SHELL-02: the dead MainViewModel registration was
+                // removed - it flipped a local IsPlaying bool and never touched
+                // the audio service; nothing resolves it)
                 services.AddSingleton<ShellViewModel>();
                 services.AddTransient<HomeViewModel>();
                 services.AddTransient<LibraryViewModel>();
@@ -206,8 +217,17 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
+            // SYS-02: this throw sat inside async void OnLaunched, where the old
+            // blanket UI handler swallowed it - the process survived as an
+            // invisible zombie that held the DB file but showed no window. Fail
+            // visibly (no XamlRoot exists yet, so a native message box is the
+            // only reliable surface), then exit.
             System.Diagnostics.Debug.WriteLine($"[Startup Diagnostics] Database Initialization: FAILED - {ex}");
-            throw;
+            ShowFatalStartupError(
+                "OCTAVE could not initialize its local database and has to close.",
+                $"{ex.GetType().Name}: {ex.Message}\n\nDatabase path: {dbFile}");
+            Exit();
+            return;
         }
 
         _window = new MainWindow();
@@ -233,6 +253,25 @@ public partial class App : Application
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"[Startup Diagnostics] Queue restore failed: {ex.Message}");
+        }
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int MessageBoxW(IntPtr hWnd, string text, string caption, uint type);
+
+    private const uint MB_ICONERROR = 0x00000010;
+
+    // SYS-02: called before any Window exists - there is no XamlRoot for a
+    // ContentDialog, so a native message box is the only reliable surface.
+    private static void ShowFatalStartupError(string title, string details)
+    {
+        try
+        {
+            _ = MessageBoxW(IntPtr.Zero, details, $"OCTAVE - {title}", MB_ICONERROR);
+        }
+        catch
+        {
+            // Nothing left to do if even the box fails; Exit() still runs.
         }
     }
 

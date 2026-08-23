@@ -42,6 +42,17 @@ public sealed partial class MainWindow : Window
 
         // Real-time audio spectrum rendering tick
         CompositionTarget.Rendering += CompositionTarget_Rendering;
+
+        // SYS-05/NF-11: process-level hooks previously outlived the window they
+        // were bound to - the SMTC subscriptions kept the OS reacting to a dead
+        // hwnd, the comctl32 size-subclass stayed installed, and the
+        // per-frame rendering callback was never detached.
+        Closed += (s, e) =>
+        {
+            CompositionTarget.Rendering -= CompositionTarget_Rendering;
+            Octave_Desktop.Helpers.WindowMinSizeHelper.ClearMinSize(WinRT.Interop.WindowNative.GetWindowHandle(this));
+            App.Services.GetRequiredService<Octave_Desktop.Services.System.ISmtcService>().Dispose();
+        };
     }
 
     private void CompositionTarget_Rendering(object? sender, object e)

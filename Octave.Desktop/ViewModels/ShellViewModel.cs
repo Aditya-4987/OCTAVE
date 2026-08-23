@@ -408,16 +408,25 @@ public partial class ShellViewModel : ObservableObject
         }
 
         SleepTimerStatus = $"Pausing in {minutes} min";
-        _sleepTimer = new Timer(_ =>
+
+        // SHELL-01: capture the instance this callback belongs to. A stale
+        // timer's already-queued callback used to run against the FIELD - it
+        // paused playback and then disposed the user's freshly-set replacement
+        // timer. Only the still-current instance may act.
+        Timer? self = null;
+        self = new Timer(_ =>
         {
             _dispatcher.TryEnqueue(() =>
             {
+                if (!ReferenceEquals(self, _sleepTimer)) return;
+
                 _queueService.Pause();
                 SleepTimerStatus = "Off";
                 _sleepTimer?.Dispose();
                 _sleepTimer = null;
             });
         }, null, TimeSpan.FromMinutes(minutes), Timeout.InfiniteTimeSpan);
+        _sleepTimer = self;
     }
 
     // ---- Playback Resume Settings ------------------------------------------
@@ -851,15 +860,15 @@ public partial class ShellViewModel : ObservableObject
 
     public async Task UpdateSearchSuggestionsAsync(string query)
     {
-        if (_searchCts != null)
+        // SH-02: rapid TextChanged ticks run this concurrently - the old
+        // cancel/dispose/null sequence on the shared field interleaved into
+        // double-dispose crashes and one caller's fresh source being cancelled
+        // by the next. Atomically take ownership of whichever source is current.
+        var previous = Interlocked.Exchange(ref _searchCts, null);
+        if (previous != null)
         {
-            try
-            {
-                _searchCts.Cancel();
-            }
-            catch (ObjectDisposedException) { }
-            _searchCts.Dispose();
-            _searchCts = null;
+            try { previous.Cancel(); } catch (ObjectDisposedException) { }
+            try { previous.Dispose(); } catch (ObjectDisposedException) { }
         }
 
         if (string.IsNullOrWhiteSpace(query) || query.Length < 2)
@@ -869,7 +878,10 @@ public partial class ShellViewModel : ObservableObject
         }
 
         var cts = new CancellationTokenSource();
-        _searchCts = cts;
+
+        // Install ours; anything another caller slipped in between is older
+        // than this keystroke and gets superseded (newest-install-wins).
+        Interlocked.Exchange(ref _searchCts, cts)?.Cancel();
         var token = cts.Token;
 
         try
