@@ -393,21 +393,23 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
         }
 
         int? newYear = null;
-        if (considerMetadata && ShouldWriteField(track.Year <= 0, mayReplaceExisting, track.Year, meta.Year.GetValueOrDefault()) && meta.Year.HasValue && meta.Year.Value > 0)
+        // EDITOR-06: provider values must pass the same sanity clamps as user
+        // edits — a nonsense year/track number from a provider never reaches a tag.
+        if (considerMetadata && ShouldWriteField(track.Year <= 0, mayReplaceExisting, track.Year, meta.Year.GetValueOrDefault()) && meta.Year.HasValue && MetadataValueClamps.IsValidYear(meta.Year.Value))
         {
             newYear = meta.Year.Value;
             plannedActions |= EnrichmentActions.WriteYear;
         }
 
         int? newTrackNum = null;
-        if (considerMetadata && ShouldWriteField(track.TrackNumber <= 0, mayReplaceExisting, track.TrackNumber, meta.TrackNumber.GetValueOrDefault()) && meta.TrackNumber.HasValue && meta.TrackNumber.Value > 0)
+        if (considerMetadata && ShouldWriteField(track.TrackNumber <= 0, mayReplaceExisting, track.TrackNumber, meta.TrackNumber.GetValueOrDefault()) && meta.TrackNumber.HasValue && MetadataValueClamps.IsValidTrackNumber(meta.TrackNumber.Value))
         {
             newTrackNum = meta.TrackNumber.Value;
             plannedActions |= EnrichmentActions.WriteTrackNumber;
         }
 
         int? newDiscNum = null;
-        if (considerMetadata && ShouldWriteField(localDiscNumber <= 0, mayReplaceExisting, localDiscNumber, meta.DiscNumber.GetValueOrDefault()) && meta.DiscNumber.HasValue && meta.DiscNumber.Value > 0)
+        if (considerMetadata && ShouldWriteField(localDiscNumber <= 0, mayReplaceExisting, localDiscNumber, meta.DiscNumber.GetValueOrDefault()) && meta.DiscNumber.HasValue && MetadataValueClamps.IsValidTrackNumber(meta.DiscNumber.Value))
         {
             // Previously wrote whenever the candidate carried a disc number, with no
             // local-value check at all (Track has no DiscNumber column) — every scan

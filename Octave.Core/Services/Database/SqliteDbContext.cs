@@ -2,6 +2,7 @@ using Microsoft.Data.Sqlite;
 using Octave.Core.Models;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace Octave.Core.Services.Database;
@@ -868,6 +869,42 @@ public class SqliteDbContext
         // redundant (and ADO.NET throws on a second Open of an open connection).
         var conn = await CreateConnectionAsync();
         return (SqliteTransaction)await conn.BeginTransactionAsync();
+    }
+
+    // EDITOR-02: deletes artist/album rows that no track references anymore.
+    // MUST run inside the caller's transaction, after the re-pointing track
+    // upsert. The NOT EXISTS guards are load-bearing: both foreign keys are
+    // ON DELETE CASCADE, so an unguarded "DELETE FROM Artists" would take every
+    // still-referenced track down with the parent row.
+    public async Task DeleteOrphanedArtistsAndAlbumsAsync(
+        IEnumerable<string> artistIds,
+        IEnumerable<string> albumIds,
+        SqliteTransaction tx)
+    {
+        if (tx == null) throw new ArgumentNullException(nameof(tx));
+        var conn = tx.Connection ?? throw new InvalidOperationException("Transaction has no associated connection.");
+
+        foreach (string id in artistIds.Distinct(StringComparer.Ordinal))
+        {
+            if (string.IsNullOrEmpty(id)) continue;
+
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = "DELETE FROM Artists WHERE Id = @id AND NOT EXISTS (SELECT 1 FROM Tracks WHERE ArtistId = @id);";
+            cmd.Parameters.Add(new SqliteParameter("@id", id));
+            await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+        }
+
+        foreach (string id in albumIds.Distinct(StringComparer.Ordinal))
+        {
+            if (string.IsNullOrEmpty(id)) continue;
+
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = "DELETE FROM Albums WHERE Id = @id AND NOT EXISTS (SELECT 1 FROM Tracks WHERE AlbumId = @id);";
+            cmd.Parameters.Add(new SqliteParameter("@id", id));
+            await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+        }
     }
 
     public async Task<Track?> GetTrackByIdAsync(string trackId)

@@ -78,20 +78,28 @@ public class ManagedBassAudioServiceTests : IDisposable
     }
 
     [Fact]
-    public void CrossfadeSkip_InFinalStretch_OldTrackReportsItsOwnIdentity_NotIncoming()
+    public void CrossfadeSkip_SkippedTrackNeverReports_IncomingEndsOnceWithOwnIdentity()
     {
-        // AUDIO-07 regression: skipping (crossfade) inside a track's final
-        // stretch used to let the outgoing stream's still-registered End-sync
-        // fire and report the INCOMING track's global session/uri - which made
-        // QueueService believe the incoming track had already ended and skip it.
-        // Each stream must report its own (sessionId, uri): exactly two
-        // deliveries, in order - A first (its natural end during the fade),
-        // then B (its own natural end).
+        // AUDIO-07 regression: skipping (crossfade) used to leave the outgoing
+        // stream's End-sync registered against GLOBAL session/uri state, so a
+        // late sync fired reporting the INCOMING track's identity - which made
+        // QueueService believe the incoming track had already ended and skip
+        // it again. Post-fix contract pinned here: a skipped stream has its
+        // sync detached at skip time and must NEVER raise TrackEnded - not
+        // even when skipped inside its final stretch, where the old
+        // global-identity bug was likeliest to misfire - while the incoming
+        // track ends exactly once and reports its OWN (sessionId, uri).
+        //
+        // (NF-02: an earlier draft expected the SKIPPED track to deliver its
+        // own natural end "during the fade", but the fade always completes
+        // before that end and the detach makes silence the intended behavior -
+        // the old expectation only passed when the position poll overshot past
+        // the track's natural end before the skip landed.)
         using var service = new ManagedBassAudioService { CrossfadeDurationMs = 250 };
 
-        string fileA = Path.Combine(_dir, "a.wav"); // long enough that we can skip "in its final stretch"
+        string fileA = Path.Combine(_dir, "a.wav"); // long enough that skipping in its final stretch is unambiguous
         string fileB = Path.Combine(_dir, "b.wav"); // short so its own end arrives quickly after the skip
-        WriteWavFile(fileA, seconds: 3.0);
+        WriteWavFile(fileA, seconds: 8.0);
         WriteWavFile(fileB, seconds: 1.0);
 
         long sessionA = 0;
@@ -109,22 +117,30 @@ public class ManagedBassAudioServiceTests : IDisposable
         sessionA = service.Play(fileA);
         Assert.NotEqual(0, sessionA);
 
-        // Wait until A is comfortably inside its final stretch but not over.
+        // Land inside A's final stretch but comfortably clear of BOTH
+        // boundaries: deep enough that the old bug would have fired here, yet
+        // far from A's natural end that the fade (complete by ~5.9s) cannot be
+        // mistaken for A ending on its own. The 500ms-wide window dwarfs the
+        // 20ms poll step.
         Assert.True(
-            WaitFor(() => service.PositionSeconds >= 2.5, TimeSpan.FromSeconds(15)),
-            $"track A never approached its natural end (position: {service.PositionSeconds:0.00}s)");
+            WaitFor(() =>
+            {
+                double p = service.PositionSeconds;
+                return p >= 5.0 && p < 5.5;
+            }, TimeSpan.FromSeconds(15)),
+            $"track A never reached the skip window (position: {service.PositionSeconds:0.00}s)");
 
-        sessionB = service.Play(fileB); // manual crossfade-skip while A is near/past its end
+        sessionB = service.Play(fileB); // manual crossfade-skip inside A's final stretch
 
         Assert.True(
             WaitFor(() =>
             {
-                lock (endedLock) { return ended.Count >= 2; }
+                lock (endedLock) { return ended.Count >= 1; }
             }, TimeSpan.FromSeconds(10)),
-            $"expected two TrackEnded deliveries, saw {ended.Count}");
+            $"incoming track never reported its own end (deliveries: {ended.Count})");
 
-        // Let any straggler land before freezing expectations: a third delivery
-        // would mean a lingering End-sync survived the detach.
+        // Straggler window: any additional delivery would mean the skipped
+        // stream's End-sync survived the detach (the exact AUDIO-07 bug).
         Thread.Sleep(400);
 
         List<(long SessionId, string SourceUri)> snapshot;
@@ -133,9 +149,8 @@ public class ManagedBassAudioServiceTests : IDisposable
             snapshot = new List<(long, string)>(ended);
         }
 
-        Assert.Equal(2, snapshot.Count);
-        Assert.Equal((sessionA, fileA), snapshot[0]); // the SKIPPED track reports itself…
-        Assert.Equal((sessionB, fileB), snapshot[1]); // …and the incoming track ends exactly once.
+        Assert.Single(snapshot);                      // the SKIPPED track stays silent…
+        Assert.Equal((sessionB, fileB), snapshot[0]); // …and the incoming track ends exactly once, as itself.
     }
 
     [Fact]

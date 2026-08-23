@@ -270,6 +270,13 @@ public partial class MetadataEnrichmentViewModel : ObservableObject
                 ApplyArtist: ApplyArtist,
                 ApplyAlbum: ApplyAlbum,
                 ApplyAlbumArtist: ApplyAlbumArtist,
+                // ME-07: Composer/TrackCount/DiscCount have no UI binding and are
+                // never shown in the dialog - force-applying them (the record's
+                // default-true) wrote fields the user could neither see nor
+                // approve. Opt-out until real toggles ship with the VM/UI batch.
+                ApplyComposer: false,
+                ApplyTrackCount: false,
+                ApplyDiscCount: false,
                 ApplyGenre: ApplyGenre,
                 ApplyYear: ApplyYear,
                 ApplyTrackNumber: ApplyTrackNumber,

@@ -253,6 +253,24 @@ public partial class App : Application
             {
                 watcher.AddMonitoredPath(folder);
             }
+
+            // EDITOR-04: sweep stray .octave_bak/.octave_tmp artifacts left by a
+            // crash during a metadata edit. Both are always safe to delete (a
+            // backup only exists after a successful atomic replace; a temp means
+            // the replace never ran). Fire-and-forget so startup never waits on
+            // a large library walk.
+            _ = System.Threading.Tasks.Task.Run(() =>
+            {
+                foreach (var folder in folders)
+                {
+                    int removed = Octave.Core.Services.Metadata.TrackMetadataEditor.SweepStaleEditorArtifacts(folder);
+                    if (removed > 0)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[Startup Diagnostics] Editor artifact sweep removed {removed} stale file(s) under '{folder}'.");
+                    }
+                }
+            });
+
             System.Diagnostics.Debug.WriteLine("[Startup Diagnostics] Library Watcher Service: INITIALIZED");
         }
         catch (Exception ex)
