@@ -71,11 +71,6 @@ public sealed partial class NowPlayingPage : Page
         }
     }
 
-    private void TopStageGrid_SizeChanged(object sender, SizeChangedEventArgs e)
-    {
-        // Handled dynamically via Grid column widths
-    }
-
     private void AnimateLyricsTransition(bool showLyrics, bool immediate = false)
     {
         _currentLyricsAnimation?.Stop();
@@ -85,7 +80,6 @@ public sealed partial class NowPlayingPage : Page
 
         if (immediate)
         {
-            AlbumPanelTransform.X = 0;
             LyricsPanelTransform.X = targetLyricsX;
             LyricsPanelControl.Opacity = targetLyricsOpacity;
             LyricsPanelControl.Visibility = showLyrics ? Visibility.Visible : Visibility.Collapsed;
@@ -132,7 +126,8 @@ public sealed partial class NowPlayingPage : Page
                 LyricsPanelControl.Visibility = Visibility.Collapsed;
                 UpdateLyricsColumnWidth(false);
             }
-            AlbumPanelTransform.X = 0;
+            // NP-07: the unconditional `AlbumPanelTransform.X = 0` reset that lived
+            // here was removed with the never-animated transform itself.
         };
 
         _currentLyricsAnimation = sb;
@@ -232,9 +227,10 @@ public sealed partial class NowPlayingPage : Page
     {
         if (e.NewSize.Height > 0)
         {
+            // NP-05: only MaxHeight - also setting Height pinned the panel even
+            // when its content was shorter.
             double boundedHeight = Math.Clamp(e.NewSize.Height, 440, 560);
             LyricsPanelControl.MaxHeight = boundedHeight;
-            LyricsPanelControl.Height = boundedHeight;
         }
     }
 
@@ -257,8 +253,18 @@ public sealed partial class NowPlayingPage : Page
         ViewModel.PlayQueueItemCommand.Execute(item);
     }
 
+    // UI-NP-02: per-row remove from the Now Playing queue panel.
+    private void QueuePanelControl_RemoveItemRequested(object? sender, QueueItem item)
+    {
+        ViewModel.RemoveQueueItemCommand.Execute(item);
+    }
+
     private async void CreditsPanelControl_ArtistClicked(object sender, ArtistDisplayItem artist)
     {
+        // NP-06: skip the DB lookup entirely when there is nothing to navigate with -
+        // the old null-conditional let the async resolution run and then discard it.
+        if (Frame == null) return;
+
         string? artistId = await ViewModel.ResolveArtistIdAsync(artist);
         if (!string.IsNullOrWhiteSpace(artistId))
         {
@@ -268,11 +274,19 @@ public sealed partial class NowPlayingPage : Page
 
     private async void CreditsPanelControl_AlbumClicked(object sender, RoutedEventArgs e)
     {
+        if (Frame == null) return; // NP-06: same guard as the artist handler
+
         string? albumId = await ViewModel.ResolveAlbumIdAsync();
         if (!string.IsNullOrWhiteSpace(albumId))
         {
             Frame?.Navigate(typeof(EntityDetailPage), new EntityNavigationParameter(EntityType.Album, albumId));
         }
+    }
+
+    // UI-NP-06: forward the panel's +/- nudge to the view model that owns timing.
+    private void LyricsPanelControl_OffsetChangeRequested(object? sender, int deltaMs)
+    {
+        ViewModel.AdjustLyricsOffset(deltaMs);
     }
 
     private void QueuePanelControl_ClearQueueRequested(object sender, RoutedEventArgs e)

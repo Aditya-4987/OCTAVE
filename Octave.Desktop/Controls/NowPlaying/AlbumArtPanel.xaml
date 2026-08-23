@@ -23,7 +23,7 @@
                 UseSystemFocusVisuals="True"
                 ToolTipService.ToolTip="Click to Play/Pause">
             <Grid Width="380" Height="380" MaxWidth="440" MaxHeight="440" MinWidth="260" MinHeight="260">
-                <Border CornerRadius="16" Background="#1E1E1E">
+                <Border CornerRadius="16" Background="{ThemeResource LayerFillColorDefaultBrush}">
                     <Image Source="{x:Bind ArtworkUrl, Mode=OneWay, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=NowPlaying}"
                            Stretch="UniformToFill" />
                 </Border>

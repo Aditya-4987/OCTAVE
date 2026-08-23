@@ -438,33 +438,54 @@ public class QueueService : IQueueService, IDisposable
 
     public void RemoveAt(int index)
     {
-        PlaybackState? state = null;
+        PlaybackState? state;
         lock (_queueLock)
         {
-            if (index < 0 || index >= _activeQueue.Count)
-                return;
-
-            var itemToRemove = _activeQueue[index];
-
-            if (index == _currentIndex)
-            {
-                _audioPlayer.Stop();
-                itemToRemove.IsPlaying = false;
-                _currentIndex = -1;
-            }
-            else if (_currentIndex > index)
-            {
-                _currentIndex--;
-            }
-
-            _activeQueue.RemoveAt(index);
-            // Cross-list removals must match by Id: the two lists hold distinct
-            // instances of the same queue entry (same root cause as QUEUE-09).
-            _unshuffledQueue.RemoveAll(i => i.Id == itemToRemove.Id);
-
-            state = CaptureStateUnlocked();
+            state = RemoveAtUnlocked(index);
         }
         if (state != null) RaisePlaybackEvents(state);
+    }
+
+    // IQueueService.RemoveById: resolves the entry by surrogate Id under the lock,
+    // so a caller holding only an item reference (Now Playing panel rows) can't
+    // act on a stale window index.
+    public void RemoveById(string itemId)
+    {
+        if (string.IsNullOrEmpty(itemId)) return;
+
+        PlaybackState? state;
+        lock (_queueLock)
+        {
+            int index = _activeQueue.FindIndex(i => i.Id == itemId);
+            state = (index >= 0) ? RemoveAtUnlocked(index) : null;
+        }
+        if (state != null) RaisePlaybackEvents(state);
+    }
+
+    private PlaybackState? RemoveAtUnlocked(int index)
+    {
+        if (index < 0 || index >= _activeQueue.Count)
+            return null;
+
+        var itemToRemove = _activeQueue[index];
+
+        if (index == _currentIndex)
+        {
+            _audioPlayer.Stop();
+            itemToRemove.IsPlaying = false;
+            _currentIndex = -1;
+        }
+        else if (_currentIndex > index)
+        {
+            _currentIndex--;
+        }
+
+        _activeQueue.RemoveAt(index);
+        // Cross-list removals must match by Id: the two lists hold distinct
+        // instances of the same queue entry (same root cause as QUEUE-09).
+        _unshuffledQueue.RemoveAll(i => i.Id == itemToRemove.Id);
+
+        return CaptureStateUnlocked();
     }
 
     public void Clear(bool keepCurrentTrack = false)

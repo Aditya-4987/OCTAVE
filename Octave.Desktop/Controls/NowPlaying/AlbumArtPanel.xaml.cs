@@ -60,7 +60,27 @@ public sealed partial class AlbumArtPanel : UserControl
         ArtButton.PointerExited += (s, e) => AnimateHoverOverlay(0.0);
     }
 
+    // NP-12: the two hover storyboards are built once and reused - the old code
+    // allocated a fresh DoubleAnimation + Storyboard on every mouse enter/exit.
+    // Re-Begin() on a completed storyboard restarts it from the current value.
+    private Microsoft.UI.Xaml.Media.Animation.Storyboard? _hoverInStoryboard;
+    private Microsoft.UI.Xaml.Media.Animation.Storyboard? _hoverOutStoryboard;
+
     private void AnimateHoverOverlay(double targetOpacity)
+    {
+        if (targetOpacity > 0)
+        {
+            (_hoverInStoryboard ??= BuildHoverStoryboard(1.0)).Stop();
+            _hoverInStoryboard.Begin();
+        }
+        else
+        {
+            (_hoverOutStoryboard ??= BuildHoverStoryboard(0.0)).Stop();
+            _hoverOutStoryboard.Begin();
+        }
+    }
+
+    private Microsoft.UI.Xaml.Media.Animation.Storyboard BuildHoverStoryboard(double targetOpacity)
     {
         var anim = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
         {
@@ -72,7 +92,7 @@ public sealed partial class AlbumArtPanel : UserControl
         Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(anim, HoverOverlay);
         Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(anim, "Opacity");
         sb.Children.Add(anim);
-        sb.Begin();
+        return sb;
     }
 
     private void ArtButton_Click(object sender, RoutedEventArgs e)

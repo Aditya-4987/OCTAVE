@@ -77,6 +77,13 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     public partial int CurrentLyricIndex { get; set; } = -1;
 
+    // UI-NP-06: user-applied sync offset for out-of-sync LRC files, in ms.
+    // Positive values make lyric lines fire LATER (the effective position is
+    // shifted back before comparing against line timestamps). Per-track: reset
+    // on every track change, since drift differs per file.
+    [ObservableProperty]
+    public partial int LyricsOffsetMs { get; set; } = 0;
+
     [ObservableProperty]
     public partial bool IsLyricsPanelVisible { get; set; } = true;
 
@@ -198,6 +205,10 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
         if (trackChanged)
         {
             long genToken = ++_generationToken;
+
+            // UI-NP-06: lyric drift is a per-file property - a nudge applied to the
+            // previous track's LRC must not leak into this one.
+            LyricsOffsetMs = 0;
 
             // CRIT-02: cancel AND dispose the old sources - they were cancelled
             // but never disposed, leaking a native wait handle on every track
@@ -410,7 +421,9 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
             return;
         }
 
-        TimeSpan currentPos = TimeSpan.FromSeconds(currentSeconds);
+        // UI-NP-06: apply the user's sync offset before comparing against line
+        // timestamps. +500 ms => every line highlights 500 ms later.
+        TimeSpan currentPos = TimeSpan.FromSeconds(currentSeconds - (LyricsOffsetMs / 1000.0));
 
         // O(1) Boundary check for normal linear playback
         int idx = CurrentLyricIndex;
@@ -505,7 +518,69 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
             UpNextQueue.Add(fullQueue[i]);
         }
 
+        // NP-19: the visible window was rebuilt - resolve artwork for rows that
+        // don't have a token yet (Track itself carries none).
+        HydrateQueueArtwork();
+
         IsQueuePanelVisible = UpNextQueue.Count > 0;
+    }
+
+    private void HydrateQueueArtwork()
+    {
+        List<(QueueItem Item, string AlbumId)>? pending = null;
+        foreach (var item in UpNextQueue)
+        {
+            if (item.ArtworkUrl != null) continue;
+            string albumId = item.Track.AlbumId;
+            if (string.IsNullOrWhiteSpace(albumId)) continue;
+
+            pending ??= new List<(QueueItem, string)>();
+            pending.Add((item, albumId));
+        }
+        if (pending == null) return;
+
+        _ = HydrateQueueArtworkAsync(pending);
+    }
+
+    private async Task HydrateQueueArtworkAsync(List<(QueueItem Item, string AlbumId)> pending)
+    {
+        try
+        {
+            var tokens = new Dictionary<string, string?>(StringComparer.Ordinal);
+            foreach (string albumId in pending.Select(p => p.AlbumId).Distinct(StringComparer.Ordinal))
+            {
+                try
+                {
+                    var album = await _dbContext.GetAlbumByIdAsync(albumId);
+                    tokens[albumId] = album?.ArtworkUrl ?? "";
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[NowPlayingViewModel] Queue artwork lookup failed ({albumId}): {ex.Message}");
+                }
+            }
+
+            if (tokens.Count == 0) return;
+
+            // Empty-string tokens are cached too: they mean "album has no art",
+            // and re-querying every state pulse for the same answer is churn.
+            _dispatcher.TryEnqueue(() =>
+            {
+                if (_isDisposed) return;
+                foreach (var (item, albumId) in pending)
+                {
+                    if (item.ArtworkUrl != null) continue;
+                    if (tokens.TryGetValue(albumId, out string? token))
+                    {
+                        item.ArtworkUrl = token;
+                    }
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[NowPlayingViewModel] Queue artwork hydration failed: {ex.Message}");
+        }
     }
 
     [RelayCommand]
@@ -535,6 +610,33 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
     {
         _queueService.Clear(keepCurrentTrack: true);
     }
+
+    // UI-NP-02: per-row remove on the Now Playing queue panel. Id-based (not
+    // RemoveAt): the panel shows a *window* of the full queue, so a row's
+    // visible index is not the service-side index.
+    [RelayCommand]
+    public void RemoveQueueItem(QueueItem? item)
+    {
+        if (item == null) return;
+        _queueService.RemoveById(item.Id);
+    }
+
+    // UI-NP-06: lyric sync nudge. ±500 ms per tap, clamped to ±5 s so a stuck
+    // button can't walk the highlight into nonsense; re-evaluates the active
+    // line immediately so the change is visible without waiting for the next tick.
+    public void AdjustLyricsOffset(int deltaMs)
+    {
+        int clamped = Math.Clamp(LyricsOffsetMs + deltaMs, -5000, 5000);
+        if (clamped == LyricsOffsetMs) return;
+        LyricsOffsetMs = clamped;
+        UpdateLyricPosition(PositionSeconds);
+    }
+
+    [RelayCommand]
+    private void IncreaseLyricsOffset() => AdjustLyricsOffset(500);
+
+    [RelayCommand]
+    private void DecreaseLyricsOffset() => AdjustLyricsOffset(-500);
 
     public void Dispose()
     {

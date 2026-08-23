@@ -13,10 +13,16 @@
     <UserControl.Resources>
         <converters:ArtworkPathConverter x:Key="ArtworkPathConverter" />
         <converters:DurationFormatConverter x:Key="DurationFormatConverter" />
+        <!-- NP-20/NP-21: converters instead of x:Bind functions - the markup
+             compiler cannot compile function bindings inside a DataTemplate. -->
+        <converters:QueuePlayStateBrushConverter x:Key="QueuePlayStateBrushConverter" />
+        <converters:ConditionalValueConverter x:Key="PlayPauseGlyphConverter"
+                                              TrueValue="&#xE769;"
+                                              FalseValue="&#xE768;"/>
     </UserControl.Resources>
 
     <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
-            BorderBrush="#25FFFFFF"
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
             BorderThickness="1"
             CornerRadius="16"
             Padding="20"
@@ -26,7 +32,8 @@
             <Grid Grid.Row="0" Margin="0,0,0,16">
                 <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                     <FontIcon Glyph="&#xE90B;" FontFamily="Segoe MDL2 Assets" FontSize="18" Foreground="{ThemeResource SystemControlHighlightAccentBrush}"/>
-                    <TextBlock Text="Up Next Queue" FontSize="18" FontWeight="SemiBold" Foreground="White" VerticalAlignment="Center"/>
+                    <!-- MC-05: was hardcoded White -->
+                    <TextBlock Text="Up Next Queue" FontSize="18" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" VerticalAlignment="Center"/>
                 </StackPanel>
 
                 <Button x:Name="ClearQueueButton"
@@ -39,8 +46,9 @@
                         CornerRadius="6"
                         ToolTipService.ToolTip="Clear Queue (keeps current track)">
                     <StackPanel Orientation="Horizontal" Spacing="6">
-                        <FontIcon Glyph="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#888888"/>
-                        <TextBlock Text="Clear All" FontSize="12" Foreground="#CCCCCC" VerticalAlignment="Center"/>
+                        <FontIcon Glyph="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                        <!-- MC-06 family: were hardcoded #CCCCCC -->
+                        <TextBlock Text="Clear All" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Button>
             </Grid>
@@ -62,8 +70,14 @@
 
                 <ListView.ItemTemplate>
                     <DataTemplate x:DataType="models:QueueItem">
-                        <Grid Padding="8,8,8,8" ColumnDefinitions="Auto,Auto,*,Auto" CornerRadius="10">
-                            <!-- Play Button -->
+                        <!-- NP-20: the playing row gets a translucent accent tint and the
+                             play button flips to a pause glyph (NP-21). Both re-evaluate
+                             live because QueueItem.IsPlaying raises PropertyChanged. -->
+                        <Grid Padding="8,8,4,8"
+                              ColumnDefinitions="Auto,Auto,*,Auto,Auto"
+                              CornerRadius="10"
+                              Background="{Binding IsPlaying, Converter={StaticResource QueuePlayStateBrushConverter}, ConverterParameter=Background}">
+                            <!-- Play / Pause Button (NP-21) -->
                             <Button Grid.Column="0"
                                     Click="ItemPlayButton_Click"
                                     Background="Transparent"
@@ -71,30 +85,43 @@
                                     Padding="4"
                                     Margin="0,0,12,0"
                                     VerticalAlignment="Center">
-                                <FontIcon Glyph="&#xE768;"
+                                <FontIcon Glyph="{Binding IsPlaying, Converter={StaticResource PlayPauseGlyphConverter}}"
                                           FontFamily="Segoe MDL2 Assets"
                                           FontSize="14"
-                                          Foreground="White"/>
+                                          Foreground="{Binding IsPlaying, Converter={StaticResource QueuePlayStateBrushConverter}, ConverterParameter=Foreground}"/>
                             </Button>
 
-                            <!-- Artwork -->
-                            <Border Grid.Column="1" CornerRadius="6" Width="40" Height="40" Margin="0,0,12,0" Background="#1E1E1E">
-                                <Image Source="{x:Bind Track.SourceUri, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=40}" Stretch="UniformToFill"/>
+                            <!-- Artwork (NP-19: binds the album artwork token resolved by
+                                 the view model - NOT Track.SourceUri, which is the audio
+                                 file path and always rendered as placeholder). -->
+                            <Border Grid.Column="1" CornerRadius="6" Width="40" Height="40" Margin="0,0,12,0" Background="{ThemeResource LayerFillColorDefaultBrush}">
+                                <Image Source="{x:Bind ArtworkUrl, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=40, Mode=OneWay}" Stretch="UniformToFill"/>
                             </Border>
 
                             <!-- Track Info -->
                             <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="2">
-                                <TextBlock Text="{x:Bind Track.Title}" FontSize="14" FontWeight="Medium" Foreground="White" TextTrimming="CharacterEllipsis"/>
-                                <TextBlock Text="{x:Bind Track.ArtistName}" FontSize="12" Foreground="#888888" TextTrimming="CharacterEllipsis"/>
+                                <!-- MC-06: were hardcoded White / #888888 -->
+                                <TextBlock Text="{x:Bind Track.Title}" FontSize="14" FontWeight="Medium" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis"/>
+                                <TextBlock Text="{x:Bind Track.ArtistName}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis"/>
                             </StackPanel>
 
                             <!-- Duration -->
                             <TextBlock Grid.Column="3"
                                        Text="{x:Bind Track.DurationSeconds, Converter={StaticResource DurationFormatConverter}}"
                                        FontSize="12"
-                                       Foreground="#888888"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                        VerticalAlignment="Center"
                                        Margin="12,0,4,0"/>
+
+                            <!-- UI-NP-02: per-row remove, mirroring the sidebar queue -->
+                            <Button Grid.Column="4"
+                                    Click="ItemRemoveButton_Click"
+                                    Style="{StaticResource GhostIconButtonStyle}"
+                                    ToolTipService.ToolTip="Remove from queue"
+                                    VerticalAlignment="Center">
+                                <FontIcon Glyph="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                          Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                            </Button>
                         </Grid>
                     </DataTemplate>
                 </ListView.ItemTemplate>

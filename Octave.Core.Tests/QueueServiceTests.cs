@@ -391,4 +391,58 @@ public class QueueServiceTests : IDisposable
         _audioPlayerMock.Verify(a => a.Play(It.Is<string>(p => p.Contains("2.mp3")), It.IsAny<double>()), Times.Once);
         await Task.CompletedTask;
     }
+
+    [Fact]
+    public void RemoveById_RemovesEntry_AndPreservesCurrentTrack()
+    {
+        // UI-NP-02: the Now Playing panel removes rows by item Id (its visible
+        // window is NOT the full-queue index). Removing a non-current entry must
+        // leave the playing track and its IsPlaying flag untouched.
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
+        var t2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", "web", 2, 2024, DateTime.UtcNow);
+        var t3 = new Track("t3", "Track 3", "ar1", "Artist", "al1", "Album", 180, "http://test/3.mp3", "web", 3, 2024, DateTime.UtcNow);
+        queueService.EnqueueRange(new[] { t1, t2, t3 });
+
+        string thirdItemId = queueService.GetCurrentQueue()[2].Id;
+        queueService.PlayIndex(0);
+
+        queueService.RemoveById(thirdItemId);
+
+        var queue = queueService.GetCurrentQueue();
+        Assert.Equal(2, queue.Count);
+        Assert.DoesNotContain(queue, i => i.Track.Id == "t3");
+        Assert.Equal("t1", queueService.CurrentState.CurrentTrack?.Id);
+        Assert.True(queue[0].IsPlaying);
+    }
+
+    [Fact]
+    public void RemoveById_RemovingCurrentTrack_StopsPlayback()
+    {
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
+        var t2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", "web", 2, 2024, DateTime.UtcNow);
+        queueService.EnqueueRange(new[] { t1, t2 });
+        queueService.PlayIndex(0);
+
+        string currentItemId = queueService.GetCurrentQueue()[0].Id;
+        queueService.RemoveById(currentItemId);
+
+        Assert.Null(queueService.CurrentState.CurrentTrack);
+        _audioPlayerMock.Verify(a => a.Stop(), Times.Once);
+    }
+
+    [Fact]
+    public void RemoveById_UnknownOrEmptyId_IsANoOp()
+    {
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
+        queueService.EnqueueRange(new[] { t1 });
+
+        queueService.RemoveById("does-not-exist");
+        queueService.RemoveById("");
+
+        Assert.Single(queueService.GetCurrentQueue());
+        _audioPlayerMock.Verify(a => a.Stop(), Times.Never);
+    }
 }

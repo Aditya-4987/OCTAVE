@@ -17,6 +17,13 @@ public sealed partial class SpectrumVisualizerControl : UserControl
 
     public double BaselineOffset { get; set; } = 10;
 
+    // HLP-01: UpdateSpectrum mutates UI-thread-affine properties (bar.Height,
+    // Canvas.SetTop, bar.Fill) but its data source (FFT frames) can arrive from a
+    // background thread. The control now owns the marshaling contract itself
+    // instead of trusting each call site to remember.
+    private readonly Microsoft.UI.Dispatching.DispatcherQueue _dispatcher =
+        Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+
     public SpectrumVisualizerControl()
     {
         InitializeComponent();
@@ -91,6 +98,18 @@ public sealed partial class SpectrumVisualizerControl : UserControl
     }
 
     public void UpdateSpectrum(float[] fftData, double progressRatio)
+    {
+        if (_dispatcher.HasThreadAccess)
+        {
+            RenderSpectrum(fftData, progressRatio);
+        }
+        else
+        {
+            _dispatcher.TryEnqueue(() => RenderSpectrum(fftData, progressRatio));
+        }
+    }
+
+    private void RenderSpectrum(float[] fftData, double progressRatio)
     {
         if (Visibility != Visibility.Visible) return;
         double canvasHeight = WaveformCanvas.ActualHeight;

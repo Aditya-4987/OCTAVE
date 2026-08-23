@@ -6,20 +6,9 @@
     Background="Transparent">
 
     <Grid>
-        <VisualStateManager.VisualStateGroups>
-            <VisualStateGroup x:Name="AdaptiveLayoutGroup">
-                <VisualState x:Name="WideLayout">
-                    <VisualState.StateTriggers>
-                        <AdaptiveTrigger MinWindowWidth="800" />
-                    </VisualState.StateTriggers>
-                </VisualState>
-                <VisualState x:Name="NarrowLayout">
-                    <VisualState.StateTriggers>
-                        <AdaptiveTrigger MinWindowWidth="0" />
-                    </VisualState.StateTriggers>
-                </VisualState>
-            </VisualStateGroup>
-        </VisualStateManager.VisualStateGroups>
+        <!-- NP-01: the "AdaptiveLayoutGroup" visual-state group was deleted - both
+             states had no setters and their AdaptiveTriggers did nothing, while the
+             real adaptive behavior lives in the SizeChanged column-width code below. -->
 
         <ScrollViewer x:Name="PageScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled" IsVerticalScrollChainingEnabled="True">
             <Grid Padding="24,16,24,32" RowSpacing="28">
@@ -30,8 +19,10 @@
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <!-- TOP MAIN STAGE (Row 0) -->
-                <Grid Grid.Row="0" x:Name="TopStageGrid" ColumnSpacing="24" SizeChanged="TopStageGrid_SizeChanged">
+                <!-- TOP MAIN STAGE (Row 0). NP-02: the empty TopStageGrid_SizeChanged
+                     binding was removed - column adaptation already happens in
+                     UpdateLyricsColumnWidth/UpdateQueueColumnWidth. -->
+                <Grid Grid.Row="0" x:Name="TopStageGrid" ColumnSpacing="24">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition x:Name="AlbumColumn" Width="*"/>
                         <ColumnDefinition x:Name="LyricsColumn" Width="*"/>
@@ -48,13 +39,11 @@
                                   AlbumTitle="{x:Bind ViewModel.AlbumTitle, Mode=OneWay}"
                                   ArtworkUrl="{x:Bind ViewModel.CurrentArtworkUrl, Mode=OneWay}"
                                   IsPlaying="{x:Bind ViewModel.IsPlaying, Mode=OneWay}"
-                                  PlayPauseRequested="AlbumPanelControl_PlayPauseRequested">
-                    <np:AlbumArtPanel.RenderTransform>
-                        <TranslateTransform x:Name="AlbumPanelTransform" />
-                    </np:AlbumArtPanel.RenderTransform>
-                </np:AlbumArtPanel>
+                                  PlayPauseRequested="AlbumPanelControl_PlayPauseRequested"/>
 
-                <!-- Lyrics Panel -->
+                <!-- Lyrics Panel. NP-07: the AlbumPanelTransform TranslateTransform was
+                     deleted - it was never animated to a non-zero value, and the
+                     Completed-callback reset to X=0 was dead code on top of dead code. -->
                 <np:LyricsPanel Grid.Column="1"
                                 x:Name="LyricsPanelControl"
                                 VerticalAlignment="Stretch"
@@ -63,7 +52,9 @@
                                 State="{x:Bind ViewModel.LyricsState, Mode=OneWay}"
                                 SyncedLines="{x:Bind ViewModel.SyncedLines, Mode=OneWay}"
                                 UnsyncedText="{x:Bind ViewModel.UnsyncedText, Mode=OneWay}"
-                                CurrentLyricIndex="{x:Bind ViewModel.CurrentLyricIndex, Mode=OneWay}">
+                                CurrentLyricIndex="{x:Bind ViewModel.CurrentLyricIndex, Mode=OneWay}"
+                                OffsetMs="{x:Bind ViewModel.LyricsOffsetMs, Mode=OneWay}"
+                                OffsetChangeRequested="LyricsPanelControl_OffsetChangeRequested">
                     <np:LyricsPanel.RenderTransform>
                         <TranslateTransform x:Name="LyricsPanelTransform" />
                     </np:LyricsPanel.RenderTransform>
@@ -98,6 +89,7 @@
                                VerticalAlignment="Stretch"
                                ItemsSource="{x:Bind ViewModel.UpNextQueue, Mode=OneWay}"
                                PlayItemRequested="QueuePanelControl_PlayItemRequested"
+                               RemoveItemRequested="QueuePanelControl_RemoveItemRequested"
                                ClearQueueRequested="QueuePanelControl_ClearQueueRequested">
                     <np:QueuePanel.RenderTransform>
                         <TranslateTransform x:Name="QueuePanelTransform" />

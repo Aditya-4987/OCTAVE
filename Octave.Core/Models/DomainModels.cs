@@ -64,11 +64,50 @@ public record PlaylistTrackEntry(
 // 2. RUNTIME / STATE MODELS (Never saved to SQL directly)
 // =================================================================
 
-public class QueueItem
+public class QueueItem : System.ComponentModel.INotifyPropertyChanged
 {
+    private bool _isPlaying;
+    private string? _artworkUrl;
+
     public required string Id { get; init; }
     public required Track Track { get; init; }
-    public bool IsPlaying { get; set; }
+
+    // NP-20/NP-21: QueueService mutates this flag as playback advances. Raising
+    // PropertyChanged lets the queue row templates ({x:Bind ..., Mode=OneWay})
+    // move the playing highlight and glyph without a full list rebuild.
+    public bool IsPlaying
+    {
+        get => _isPlaying;
+        set
+        {
+            if (_isPlaying != value)
+            {
+                _isPlaying = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    // NP-19: the album artwork token for the queue-row thumbnail. Resolved
+    // lazily by the view model (the track record itself carries no artwork),
+    // then pushed to the already-rendered row through PropertyChanged.
+    public string? ArtworkUrl
+    {
+        get => _artworkUrl;
+        set
+        {
+            if (!string.Equals(_artworkUrl, value, StringComparison.Ordinal))
+            {
+                _artworkUrl = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+
+    private void OnPropertyChanged([System.Runtime.CompilerServices.CallerMemberName] string? propertyName = null) =>
+        PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(propertyName ?? ""));
 }
 
 public enum PlaybackStatus { Stopped, Playing, Paused, Buffering }

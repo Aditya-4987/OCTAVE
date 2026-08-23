@@ -12,6 +12,8 @@ public sealed partial class QueuePanel : UserControl
         DependencyProperty.Register(nameof(ItemsSource), typeof(IEnumerable), typeof(QueuePanel), new PropertyMetadata(null, OnItemsSourceChanged));
 
     public event EventHandler<QueueItem>? PlayItemRequested;
+    // UI-NP-02: per-row remove request.
+    public event EventHandler<QueueItem>? RemoveItemRequested;
     public event RoutedEventHandler? ClearQueueRequested;
 
     public IEnumerable? ItemsSource
@@ -46,6 +48,14 @@ public sealed partial class QueuePanel : UserControl
         if (sender is Button b && b.DataContext is QueueItem item)
         {
             PlayItemRequested?.Invoke(this, item);
+        }
+    }
+
+    private void ItemRemoveButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button b && b.DataContext is QueueItem item)
+        {
+            RemoveItemRequested?.Invoke(this, item);
         }
     }
 

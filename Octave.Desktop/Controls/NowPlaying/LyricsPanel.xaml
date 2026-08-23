@@ -9,58 +9,107 @@
     VerticalAlignment="Stretch">
 
     <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
-            BorderBrush="#25FFFFFF"
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
             BorderThickness="1"
             CornerRadius="16"
-            Padding="24"
+            Padding="24,16,24,20"
             VerticalAlignment="Stretch">
-        <Grid VerticalAlignment="Stretch">
-            <!-- Loading State -->
-            <StackPanel x:Name="LoadingContainer" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="12" Visibility="Collapsed">
-                <ProgressRing IsActive="True" Width="36" Height="36" />
-                <TextBlock Text="Searching lyrics..." Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="14" HorizontalAlignment="Center"/>
-            </StackPanel>
+        <Grid RowDefinitions="Auto,*" VerticalAlignment="Stretch">
+            <!-- Toolbar (UI-NP-06): lyric sync nudge + copy. Shown only when
+                 there are lyrics on screen to act on. -->
+            <Grid Grid.Row="0" x:Name="ToolbarRow" Margin="-8,0,-8,10" Visibility="Collapsed">
+                <TextBlock x:Name="OffsetLabel"
+                           HorizontalAlignment="Left"
+                           VerticalAlignment="Center"
+                           FontSize="11"
+                           CharacterSpacing="60"
+                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <Button x:Name="DecreaseOffsetButton"
+                            Click="DecreaseOffsetButton_Click"
+                            Background="Transparent"
+                            BorderBrush="Transparent"
+                            Padding="7,3,7,3"
+                            CornerRadius="6"
+                            ToolTipService.ToolTip="Shift lyrics 500 ms earlier">
+                        <FontIcon Glyph="&#xE738;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    </Button>
+                    <Button x:Name="IncreaseOffsetButton"
+                            Click="IncreaseOffsetButton_Click"
+                            Background="Transparent"
+                            BorderBrush="Transparent"
+                            Padding="7,3,7,3"
+                            CornerRadius="6"
+                            ToolTipService.ToolTip="Shift lyrics 500 ms later">
+                        <FontIcon Glyph="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    </Button>
+                    <Button x:Name="CopyLyricsButton"
+                            Click="CopyLyricsButton_Click"
+                            Background="Transparent"
+                            BorderBrush="Transparent"
+                            Padding="7,3,7,3"
+                            CornerRadius="6"
+                            Margin="6,0,0,0"
+                            ToolTipService.ToolTip="Copy lyrics to clipboard">
+                        <FontIcon Glyph="&#xE8C8;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    </Button>
+                </StackPanel>
+            </Grid>
 
-            <!-- Unavailable State -->
-            <StackPanel x:Name="UnavailableContainer" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8" Visibility="Collapsed">
-                <FontIcon Glyph="&#xE8D6;" FontFamily="Segoe MDL2 Assets" FontSize="32" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Center"/>
-                <TextBlock Text="Lyrics unavailable" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-            </StackPanel>
+            <Grid Grid.Row="1" VerticalAlignment="Stretch">
+                <!-- Loading State -->
+                <StackPanel x:Name="LoadingContainer" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="12" Visibility="Collapsed">
+                    <ProgressRing IsActive="True" Width="36" Height="36" />
+                    <TextBlock Text="Searching lyrics..." Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="14" HorizontalAlignment="Center"/>
+                </StackPanel>
 
-            <!-- Unsynced Lyrics View -->
-            <ScrollViewer x:Name="UnsyncedScrollViewer"
-                          VerticalScrollBarVisibility="Auto"
-                          VerticalScrollMode="Enabled"
-                          HorizontalScrollMode="Disabled"
-                          Visibility="Collapsed">
-                <TextBlock x:Name="UnsyncedTextBlock"
-                           FontSize="18"
-                           LineHeight="30"
-                           Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                           TextWrapping="Wrap"/>
-            </ScrollViewer>
+                <!-- Unavailable State -->
+                <StackPanel x:Name="UnavailableContainer" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8" Visibility="Collapsed">
+                    <FontIcon Glyph="&#xE8D6;" FontFamily="Segoe MDL2 Assets" FontSize="32" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Lyrics unavailable" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                </StackPanel>
 
-            <!-- Synced Lyrics View (Virtualized via ListView with bounded scrolling) -->
-            <ListView x:Name="SyncedListView"
-                      SelectionMode="None"
-                      IsItemClickEnabled="False"
-                      Padding="0,20,0,20"
-                      ShowsScrollingPlaceholders="False"
-                      ScrollViewer.VerticalScrollBarVisibility="Auto"
-                      ScrollViewer.VerticalScrollMode="Enabled"
-                      ScrollViewer.HorizontalScrollMode="Disabled"
-                      Visibility="Collapsed">
-                <ListView.ItemTemplate>
-                    <DataTemplate x:DataType="models:LyricLine">
-                        <TextBlock Text="{x:Bind Text}"
-                                   FontSize="20"
-                                   FontWeight="Medium"
-                                   Margin="0,8,0,8"
-                                   TextWrapping="Wrap"
-                                   Loaded="LyricLineTextBlock_Loaded"/>
-                    </DataTemplate>
-                </ListView.ItemTemplate>
-            </ListView>
+                <!-- Unsynced Lyrics View -->
+                <ScrollViewer x:Name="UnsyncedScrollViewer"
+                              VerticalScrollBarVisibility="Auto"
+                              VerticalScrollMode="Enabled"
+                              HorizontalScrollMode="Disabled"
+                              Visibility="Collapsed">
+                    <TextBlock x:Name="UnsyncedTextBlock"
+                               FontSize="18"
+                               LineHeight="30"
+                               Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                               TextWrapping="Wrap"/>
+                </ScrollViewer>
+
+                <!-- Synced Lyrics View.
+                     CRIT-05: a virtualizing ListView recycled these containers and left
+                     _lineElements pointing at dead elements. Lyrics lists are small (<200
+                     lines), so a plain non-virtualized ItemsControl keeps every container
+                     alive for its whole lifetime - the element list can never go stale. -->
+                <ScrollViewer x:Name="SyncedScrollViewer"
+                              VerticalScrollBarVisibility="Auto"
+                              VerticalScrollMode="Enabled"
+                              HorizontalScrollMode="Disabled"
+                              Padding="0,12,0,12"
+                              Visibility="Collapsed">
+                    <ItemsControl x:Name="SyncedItemsControl">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="models:LyricLine">
+                                <TextBlock Text="{x:Bind Text}"
+                                           FontSize="18"
+                                           FontWeight="Medium"
+                                           Margin="0,8,0,8"
+                                           TextWrapping="Wrap"
+                                           Loaded="LyricLineTextBlock_Loaded"/>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Grid>
         </Grid>
     </Border>
 </UserControl>

@@ -26,6 +26,11 @@ public interface IQueueService
     // without snapshotting + linearly rescanning the whole queue).
     void PlayQueueItem(string itemId);
     void RemoveAt(int index);
+    // Removes a queued entry by its surrogate item Id (NP-10 pattern, same as
+    // PlayQueueItem): the Now Playing panel shows a *window* of the queue, so a
+    // visible row index is not the full-queue index — resolving under the lock
+    // by Id is the only safe removal for that surface.
+    void RemoveById(string itemId);
     void Clear(bool keepCurrentTrack = false);
     void Reorder(int oldIndex, int newIndex);
     void SetShuffle(bool enable);
