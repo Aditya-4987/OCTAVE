@@ -454,4 +454,38 @@ public class ArtistEnrichmentTests : IDisposable
         Assert.NotNull(profile);
         Assert.Equal("True Artist", profile.Name);
     }
+
+    [Fact]
+    public async Task TadbProvider_DisabledImageSearch_MakesZeroHttpCalls()
+    {
+        int networkCallCount = 0;
+        var mockHandler = new MockHttpMessageHandler
+        {
+            HandlerFunc = (req, ct) =>
+            {
+                Interlocked.Increment(ref networkCallCount);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(SingleArtistJson)
+                });
+            }
+        };
+
+        var httpClient = new HttpClient(mockHandler);
+        var rateRegistry = new ProviderRateLimiterRegistry(TimeSpan.FromMilliseconds(10));
+        var httpService = new HttpService(rateRegistry, httpClient);
+
+        // No settings service → the settable IsEnabled path is authoritative.
+        var provider = new TheAudioDbArtistEnrichmentProvider(httpService, null, rateRegistry)
+        {
+            IsEnabled = false
+        };
+
+        // ADB-03: the image path previously skipped the enabled check entirely.
+        var urls = await provider.SearchArtistImageUrlsAsync("Some Artist",
+            new ExternalIds(MusicBrainzId: "mbid-some-artist"));
+
+        Assert.Empty(urls);
+        Assert.Equal(0, networkCallCount);
+    }
 }

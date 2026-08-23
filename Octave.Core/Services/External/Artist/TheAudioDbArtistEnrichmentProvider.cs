@@ -127,7 +127,10 @@ public class TheAudioDbArtistEnrichmentProvider : IArtistEnrichmentProvider, IEx
         ExternalIds? externalIds = null,
         CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(artistName) && string.IsNullOrWhiteSpace(externalIds?.MusicBrainzId))
+        // ADB-03: the image path previously skipped the enabled check entirely —
+        // the inner profile lookups each re-checked, but an orchestrator that
+        // pre-checked the WRONG provider (or none) still drove HTTP traffic.
+        if (!IsEnabled || (string.IsNullOrWhiteSpace(artistName) && string.IsNullOrWhiteSpace(externalIds?.MusicBrainzId)))
             return Array.Empty<string>();
 
         EnrichedArtistProfile? profile = null;

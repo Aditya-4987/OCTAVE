@@ -327,7 +327,9 @@ public class MusicBrainzMetadataProvider : IExternalMetadataProvider
         string providerEntityId,
         CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(providerEntityId))
+        // MB-01: the lookup paths must honor IsEnabled like the search paths —
+        // a disabled provider must never touch the network.
+        if (!IsEnabled || string.IsNullOrWhiteSpace(providerEntityId))
             return null;
 
         string requestUrl = $"{BaseUrl}/release/{Uri.EscapeDataString(providerEntityId)}?inc=artist-credits+recordings+genres+tags+release-groups+media&fmt=json";
@@ -411,7 +413,8 @@ public class MusicBrainzMetadataProvider : IExternalMetadataProvider
         string providerEntityId,
         CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(providerEntityId))
+        // MB-01: same disabled-provider guard as the other lookups.
+        if (!IsEnabled || string.IsNullOrWhiteSpace(providerEntityId))
             return null;
 
         string requestUrl = $"{BaseUrl}/artist/{Uri.EscapeDataString(providerEntityId)}?inc=genres+tags&fmt=json";
@@ -450,7 +453,8 @@ public class MusicBrainzMetadataProvider : IExternalMetadataProvider
         string releaseGroupId,
         CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(releaseGroupId))
+        // MB-01: same disabled-provider guard as the other lookups.
+        if (!IsEnabled || string.IsNullOrWhiteSpace(releaseGroupId))
             return null;
 
         string requestUrl = $"{BaseUrl}/release-group/{Uri.EscapeDataString(releaseGroupId)}?inc=artist-credits+releases+genres+tags&fmt=json";

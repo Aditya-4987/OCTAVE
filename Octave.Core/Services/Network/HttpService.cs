@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
@@ -11,9 +12,27 @@ namespace Octave.Core.Services.Network;
 
 public class HttpService : IHttpService, IDisposable
 {
+    // PROV-01: MusicBrainz and CoverArtArchive require an identifying
+    // User-Agent with real contact information; a bare "OCTAVE/2.0" product
+    // token risks throttling/blocks under their usage policies.
+    public const string UserAgentString = "OCTAVE/2.0 (https://github.com/Aditya-4987/OCTAVE)";
+
+    // PROV-02: authoritative per-provider minimum spacing enforced at THIS
+    // layer. The shared registry's 500 ms default can lose to construction
+    // order — a provider ctor calling registry.GetOrCreate(key, 1 s) only wins
+    // if it is FIRST for that key, so the stricter floor must not depend on it.
+    // MusicBrainz: max 1 req/s average (serially 1/s). CoverArtArchive: same
+    // limit, mirrored from the CAA provider's own intent.
+    private static readonly Dictionary<string, TimeSpan> ProviderMinIntervals = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["musicbrainz"] = TimeSpan.FromSeconds(1),
+        ["coverartarchive"] = TimeSpan.FromSeconds(1),
+    };
+
     private readonly HttpClient _httpClient;
     private readonly bool _disposeClient;
     private readonly IProviderRateLimiterRegistry _rateLimiterRegistry;
+    private readonly ConcurrentDictionary<string, IProviderRateLimiter> _policyLimiters = new(StringComparer.OrdinalIgnoreCase);
     private readonly TimeSpan _defaultTimeout;
     private readonly int _maxRetries;
     private static readonly JsonSerializerOptions DefaultJsonOptions = new()
@@ -50,8 +69,10 @@ public class HttpService : IHttpService, IDisposable
 
         if (!_httpClient.DefaultRequestHeaders.Contains("User-Agent"))
         {
-            _httpClient.DefaultRequestHeaders.UserAgent.Add(
-                new ProductInfoHeaderValue("OCTAVE", "2.0"));
+            // PROV-01: product + contact-comment form (RFC 7231). Set without
+            // validation because ProductInfoHeaderValue cannot represent the
+            // "(contact)" comment in one token pair.
+            _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", UserAgentString);
         }
     }
 
@@ -168,7 +189,8 @@ public class HttpService : IHttpService, IDisposable
     {
         if (request == null) throw new ArgumentNullException(nameof(request));
 
-        var rateLimiter = _rateLimiterRegistry.GetOrCreate(providerKey ?? request.RequestUri?.Host ?? "default");
+        string limiterKey = providerKey ?? request.RequestUri?.Host ?? "default";
+        IProviderRateLimiter rateLimiter = GetAuthoritativeLimiter(limiterKey);
         TimeSpan effectiveTimeout = timeout ?? _defaultTimeout;
 
         int attempt = 0;
@@ -249,6 +271,86 @@ public class HttpService : IHttpService, IDisposable
         code == HttpStatusCode.BadGateway ||       // 502
         code == HttpStatusCode.ServiceUnavailable || // 503
         code == HttpStatusCode.GatewayTimeout;    // 504
+
+    // PROV-02: resolve the limiter for a provider key, upgrading the registry's
+    // instance when this layer's policy floor is stricter. Decorators are cached
+    // per key — their spacing state must survive across calls; creating one per
+    // request would reset it and permit bursts.
+    private IProviderRateLimiter GetAuthoritativeLimiter(string key)
+    {
+        IProviderRateLimiter registryLimiter = _rateLimiterRegistry.GetOrCreate(key);
+
+        if (!ProviderMinIntervals.TryGetValue(key, out TimeSpan minInterval) ||
+            minInterval <= registryLimiter.MinInterval)
+        {
+            return registryLimiter;
+        }
+
+        return _policyLimiters.GetOrAdd(
+            key,
+            static (_, args) => new MinIntervalRateLimiter(args.Inner, args.Interval),
+            (Inner: registryLimiter, Interval: minInterval));
+    }
+
+    // PROV-02: serializing decorator that guarantees a minimum gap between
+    // consecutive sends for its key, regardless of what the shared registry's
+    // default is. Retry-After signals extend the floor on both layers.
+    private sealed class MinIntervalRateLimiter : IProviderRateLimiter
+    {
+        private readonly IProviderRateLimiter _inner;
+        private readonly TimeSpan _minInterval;
+        private readonly SemaphoreSlim _gate = new(1, 1);
+        private long _nextAllowedTicks;
+
+        public string ProviderKey => _inner.ProviderKey;
+        public TimeSpan MinInterval => _minInterval;
+
+        public MinIntervalRateLimiter(IProviderRateLimiter inner, TimeSpan minInterval)
+        {
+            _inner = inner;
+            _minInterval = minInterval;
+            // First call passes immediately.
+            _nextAllowedTicks = Environment.TickCount64 - (long)minInterval.TotalMilliseconds;
+        }
+
+        public async Task WaitAsync(CancellationToken ct = default)
+        {
+            await _gate.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                long waitMs = Interlocked.Read(ref _nextAllowedTicks) - Environment.TickCount64;
+                if (waitMs > 0)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(waitMs), ct).ConfigureAwait(false);
+                }
+
+                // The inner (registry) limiter keeps its own bookkeeping in sync;
+                // its interval is never longer than ours here by construction.
+                await _inner.WaitAsync(ct).ConfigureAwait(false);
+
+                Interlocked.Exchange(ref _nextAllowedTicks, Environment.TickCount64 + (long)_minInterval.TotalMilliseconds);
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+
+        public void NotifyRetryAfter(TimeSpan retryAfter)
+        {
+            _inner.NotifyRetryAfter(retryAfter);
+
+            long extensionMs = (long)retryAfter.TotalMilliseconds;
+            if (extensionMs <= 0) return;
+
+            long target = Environment.TickCount64 + extensionMs;
+            long current = Interlocked.Read(ref _nextAllowedTicks);
+            if (target > current)
+            {
+                Interlocked.Exchange(ref _nextAllowedTicks, target);
+            }
+        }
+    }
 
     private static TimeSpan CalculateBackoff(int attempt, TimeSpan? retryAfter, Random rng)
     {

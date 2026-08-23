@@ -527,4 +527,160 @@ public class MusicBrainzProviderTests
         // consumers (CoverArtArchive routing) never mistake them for releases.
         Assert.Equal(ExternalIdKinds.KindRecording, results[0].ExternalIds.GetId(ExternalIdKinds.EntityKind));
     }
+
+    // =================================================================
+    // 10. BATCH 8 — DISABLED PROVIDER MAKES ZERO HTTP CALLS (MB-01),
+    //     COMPLIANT USER-AGENT (PROV-01), 1 REQ/S FLOOR (PROV-02)
+    // =================================================================
+
+    [Fact]
+    public async Task DisabledProvider_LookupMethods_MakeZeroHttpCalls()
+    {
+        int networkCallCount = 0;
+        var mockHandler = new MockHttpMessageHandler
+        {
+            HandlerFunc = (req, ct) =>
+            {
+                Interlocked.Increment(ref networkCallCount);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(@"{ ""id"": ""x"" }")
+                });
+            }
+        };
+
+        var httpClient = new HttpClient(mockHandler);
+        var rateRegistry = new ProviderRateLimiterRegistry(TimeSpan.FromMilliseconds(10));
+        var httpService = new HttpService(rateRegistry, httpClient);
+        var provider = new MusicBrainzMetadataProvider(httpService, rateRegistry)
+        {
+            IsEnabled = false
+        };
+
+        // MB-01: the search paths already honored IsEnabled — the lookup paths
+        // did NOT, so a disabled provider still drove release/artist/release-
+        // group fetches through orchestrator fallbacks.
+        Assert.Null(await provider.GetAlbumMetadataAsync("rel-any"));
+        Assert.Null(await provider.GetArtistMetadataAsync("art-any"));
+        Assert.Null(await provider.GetReleaseGroupMetadataAsync("rg-any"));
+
+        Assert.Equal(0, networkCallCount);
+    }
+
+    [Fact]
+    public async Task Requests_CarryCompliantUserAgentWithContact()
+    {
+        string? userAgent = null;
+        string jsonResponse = @"{ ""count"": 0, ""recordings"": [] }";
+
+        var mockHandler = new MockHttpMessageHandler
+        {
+            HandlerFunc = (req, ct) =>
+            {
+                if (req.Headers.TryGetValues("User-Agent", out var values))
+                {
+                    userAgent = string.Join(" ", values);
+                }
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(jsonResponse)
+                });
+            }
+        };
+
+        var httpClient = new HttpClient(mockHandler);
+        var rateRegistry = new ProviderRateLimiterRegistry(TimeSpan.FromMilliseconds(10));
+        var httpService = new HttpService(rateRegistry, httpClient);
+        var provider = new MusicBrainzMetadataProvider(httpService, rateRegistry);
+
+        await provider.SearchTrackCandidatesAsync("Anything", "Anyone");
+
+        // PROV-01: MusicBrainz usage policy requires an identifying UA with
+        // contact info — a bare product token risks throttling/blocks.
+        Assert.NotNull(userAgent);
+        Assert.Contains("OCTAVE/2.0", userAgent);
+        Assert.Contains("github.com/Aditya-4987/OCTAVE", userAgent);
+    }
+
+    [Fact]
+    public async Task MusicBrainzRequests_AreSpacedAtLeastOneSecondApart_AtHttpLayer()
+    {
+        var timestamps = new List<long>();
+        string jsonResponse = @"{ ""count"": 0, ""recordings"": [] }";
+
+        var mockHandler = new MockHttpMessageHandler
+        {
+            HandlerFunc = (req, ct) =>
+            {
+                lock (timestamps) { timestamps.Add(Environment.TickCount64); }
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(jsonResponse)
+                });
+            }
+        };
+
+        var httpClient = new HttpClient(mockHandler);
+        // Default-interval registry, and the limiter for this key is created
+        // HERE first with the plain default — exactly the construction order in
+        // which a provider ctor's own stricter registration loses. The 1 s/s
+        // floor must hold anyway (PROV-02's authoritative layer).
+        var rateRegistry = new ProviderRateLimiterRegistry(TimeSpan.FromMilliseconds(500));
+        rateRegistry.GetOrCreate("musicbrainz");
+        var httpService = new HttpService(rateRegistry, httpClient);
+        var provider = new MusicBrainzMetadataProvider(httpService, rateRegistry);
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        await provider.SearchTrackCandidatesAsync("Q1", "A");
+        await provider.SearchTrackCandidatesAsync("Q2", "A");
+        await provider.SearchTrackCandidatesAsync("Q3", "A");
+        stopwatch.Stop();
+
+        long[] sorted;
+        lock (timestamps) { sorted = timestamps.ToArray(); }
+        Assert.Equal(3, sorted.Length);
+
+        long gap1 = sorted[1] - sorted[0];
+        long gap2 = sorted[2] - sorted[1];
+
+        // PROV-02: MusicBrainz allows max 1 req/s. Generous lower bound keeps
+        // the test stable while still proving sub-second bursts are impossible.
+        Assert.True(gap1 >= 900, $"First gap {gap1}ms below the 1000ms policy floor");
+        Assert.True(gap2 >= 900, $"Second gap {gap2}ms below the 1000ms policy floor");
+        Assert.True(stopwatch.ElapsedMilliseconds >= 1800, $"Total {stopwatch.ElapsedMilliseconds}ms for 3 rate-limited calls");
+    }
+
+    [Fact]
+    public async Task UnmappedProviderKeys_KeepRegistryDefaultSpacing()
+    {
+        var timestamps = new List<long>();
+
+        var mockHandler = new MockHttpMessageHandler
+        {
+            HandlerFunc = (req, ct) =>
+            {
+                lock (timestamps) { timestamps.Add(Environment.TickCount64); }
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{}")
+                });
+            }
+        };
+
+        var httpClient = new HttpClient(mockHandler);
+        var rateRegistry = new ProviderRateLimiterRegistry(TimeSpan.FromMilliseconds(50));
+        var httpService = new HttpService(rateRegistry, httpClient);
+
+        // Control for the PROV-02 policy map: keys without a configured floor
+        // keep the registry's (shorter) default — no accidental global slowdown.
+        await httpService.GetStringAsync("https://example.com/a", "some-unmapped-provider");
+        await httpService.GetStringAsync("https://example.com/b", "some-unmapped-provider");
+
+        long[] sorted;
+        lock (timestamps) { sorted = timestamps.ToArray(); }
+        Assert.Equal(2, sorted.Length);
+
+        long gap = sorted[1] - sorted[0];
+        Assert.True(gap < 900, $"Unmapped-key gap {gap}ms should stay near the registry default, not the 1s policy floor");
+    }
 }
