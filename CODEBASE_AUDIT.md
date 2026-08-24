@@ -1257,6 +1257,35 @@ None of these break behavior or lose data; they are intentionally **not** assign
 
 *(Appended at the end of the document per the user's instruction: every resolved issue is recorded here as it lands. Newest session first. Format: batch → commit → per-ID status → acceptance evidence → notes/behavior changes. IDs marked ✅ should be treated as fixed; later batches must not re-fix them.)*
 
+### Session 2026-08-24 — Crash hardening + artwork hi-res sources + DPI refresh *(commits `ce83916`, `7301e64`)*
+
+**Scope**: user-reported runtime crash (exit `0xC000027B` stowed exception during playback), playback-bar album art not refreshing on monitor drag, and album/artist art *still* low-res/pixelated after NF-28..30.
+
+Ground truth first: inspecting the user's actual `ArtworkCache` showed most covers are **500×500 / 700×700** files — no decode-side setting can fix a source that small being stretched to ~660 physical px (NowPlaying at 150%) or across a maximized window (backdrop). The pixelation was upstream, in what we download and cache.
+
+#### New findings discovered & fixed on the go *(this session)*
+
+| # | Severity | Location | Finding & Fix |
+|---|----------|----------|---------------|
+| NF-32a | 🔴 Chronic failure since inception + diagnostic flood | `WindowsAudioDeviceHelper` | The `MMDeviceEnumerator` ComImport carried a **fabricated CLSID** (`{BCDE0385-4944-4EA6-82B2-9D67097C93FE}`); the real `CLSID_MMDeviceEnumerator` is `{BCDE0395-E52F-467C-844D-A560C580CB51}`. Every device query ever made failed `REGDB_E_CLASSNOTREG (0x80040154)`, flooding the debug log with first-chance COMExceptions at every 3s TTL expiry (the storm visible in the crash log) and forcing OutputDeviceName/Quality onto BASS fallback strings forever. Fixed the GUID; failed queries now also cache under the TTL and log once per streak so a broken COM environment cannot flood output. |
+| NF-32b | 🔴 Crash class | `ManagedBassAudioService` | An exception escaping a native BASS sync callback cannot unwind the pinvoke boundary — it surfaces as a fatal **stowed exception** (`0xC000027B`). `OnTrackEndedCallback` is now fully guarded, and all cross-thread event raises (TrackStarted, TrackEnded pool items, position-timer PositionChanged) wrap their handlers so one throwing subscriber can never kill the engine thread or process. |
+| NF-32c | ⚠️ Crash class | `MainWindow` rendering tick | `CompositionTarget_Rendering` runs every frame for the app lifetime; any transient throw (crossfade state, visualizer teardown) was fatal. Guarded per-frame. |
+| NF-32d | ⚠️ Diagnosability | `Octave.Desktop/Helpers/CrashLog.cs` | The stowed-exception crash left zero usable diagnostics. All three global handlers (XAML UnhandledException / AppDomain.UnhandledException / UnobservedTaskException) now append timestamped full exception detail to `LocalState/logs/diagnostics-*.log`. Handled-policy unchanged (SH-10 intact). |
+| NF-31a | 🔴 Root cause of pixelation | `CoverArtArchiveArtworkProvider` | Candidate order preferred **Thumb500 over everything** — and candidate order IS final quality (the orchestrator downloads until the first URL succeeds). Preference is now Thumb1200 → full-resolution image → Large → Thumb500, in both release and release-group paths. |
+| NF-31b | 🔴 Permanence of the defect | `ExternalArtworkOrchestrator` (+ new `ImageDimensionReader`) | Even after NF-31a, the 90-day resolved-token cache would serve old 500px entries forever — rescans could never heal them. `ResolveAndCacheAlbumArtworkAsync` gained opt-in `preferHighResolutionUpgrade`: when the cached file's encoded width probes below 1000px, an upgrade-requesting caller re-sweeps providers once per 7-day cooldown memo; "nothing better found" falls back to the old token. Playback-time callers keep the plain cache-hit-no-network contract. Width probing is pure-managed header parsing (JPEG SOF scan / PNG IHDR) — no decoder dependency in Core. The smart-enrichment scan passes `upgrade:true`, so running Scan & Enrich self-heals pre-fix covers. |
+| NF-33 | ⚠️ Visible defect | `ArtworkPathConverter` / both windows | XamlRoot.Changed alone missed some cross-monitor drags (playback-bar art stayed stale). Windows now also subscribe `AppWindow.Changed` (`DidPositionChange`) — the deterministic "crossed a display boundary" signal — re-evaluating the live RasterizationScale through a shared per-scope baseline; either trigger applies one clear-cache + tree re-decode pass. Monitor state dedupes wiring (a re-Loaded scope can no longer stack duplicate handlers); the Changed lambda and every walk step are guarded so a mid-walk tree mutation can neither abort the refresh nor escape as another stowed exception. |
+
+#### Notes & deliberate trade-offs
+
+- A failed hi-res upgrade retries after the 7-day cooldown memo lapses — providers that genuinely have no better art aren't hammered per scan.
+- Artist images still come from TheAudioDB's single thumb size per artist; nothing higher exists there to prefer.
+- Existing low-res covers upgrade only when something calls resolve for them again — practically: run Scan & Enrich (or open the album's detail page).
+- If a crash recurs, `LocalState/logs/diagnostics-yyyyMMdd.log` now names the site.
+
+**Acceptance verified**: build `dotnet build Octave.Desktop` = 0 warnings / 0 errors · `dotnet test Octave.Core.Tests` = **324/324** (7 new tests: upgrade swap, hi-res-hit-no-network, fallback+cooldown, no-flag contract, PNG/JPEG width parse, garbage-input safety).
+
+---
+
 ### Session 2026-08-24 — Artwork scaling + DPI-change safety audit *(commit `aee3d67`)*
 
 **Scope**: user follow-up after the enrichment batch — "how the images (album art, artist art and others) are being displayed… not scaled properly… over-sharpening or pixelated effect… also make sure there should be no errors/bug caused by dpi change (dragging the window from one monitor to another of different DPI)."
