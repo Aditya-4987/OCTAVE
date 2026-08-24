@@ -1257,6 +1257,122 @@ None of these break behavior or lose data; they are intentionally **not** assign
 
 *(Appended at the end of the document per the user's instruction: every resolved issue is recorded here as it lands. Newest session first. Format: batch → commit → per-ID status → acceptance evidence → notes/behavior changes. IDs marked ✅ should be treated as fixed; later batches must not re-fix them.)*
 
+### Session 2026-08-24 — Settings page remake — user-directed full rework *(commit `70eda90`)*
+
+**Scope**: "remake the whole settings page." The single cramped 600 px column became a 980 px stack of Windows-11-style cards (`SettingsCard` Border style + shared `RowTitle/RowDesc/CapsHeader` styles; rows are `*,Auto` grids — title+description left, control right). Cards: Playback · Equalizer · Music Library · Online & External Data (launcher / privacy / providers / credentials / write policy / caching / scan prefs) · Engine Diagnostics. All existing commands, handlers and `ExternalDataSettings` bindings preserved.
+
+| ID | Status | Evidence |
+|----|--------|----------|
+| UI-ST-03 | ✅ Fixed | EQ presets now show which one is active. `ShellViewModel.PresetGains` is the single source of truth (the same table `EqPreset` applies); `ActivePresetName` is DERIVED by comparing actual band gains against it on every band `PropertyChanged`, so a restored session reports its true state without extra plumbing and any hand-tuned slider flips the label to "Custom". Preset buttons show a check glyph + a caption names the active preset. |
+| UI-ST-04 | ✅ Fixed | New `IAudioPlayerService.IsEqEngineAvailable`, probed once during `ManagedBassAudioService.Init` from `BassFx.Version` (native DLL absence = P/Invoke failure). The Equalizer card shows an "EQ engine ready" success pill or "bass_fx.dll missing — Equalizer unavailable" danger pill instead of sliders that silently did nothing. |
+| UI-ST-05 | ✅ Fixed | ToolTips added: Add Folder ("scanning runs in the background"), Rescan All, folder Remove (imported tracks stay), duplicate **Move** ("moves the physical audio file AND updates its path in the library database" — the audit's exact complaint), duplicate Delete. |
+| UI-ST-06 | ✅ Fixed | The API-key section now states the public test key "2" is shared and strictly rate-limited (slower artist enrichment) and says where to get a free supporter key (theaudiodb.com → API Registration); PasswordBox header reduced to just "TheAudioDB API Key". |
+
+#### New findings discovered & fixed on the go *(this session)*
+
+| # | Severity | Location | Finding & Fix |
+|---|----------|----------|---------------|
+| NF-20 | ⚠️ Perf / UX bug | `SettingsPage.xaml.cs` | TheAudioDB `PasswordChanged` called `SaveCommand.ExecuteAsync(null)` — every typed character serialized and persisted the ENTIRE `ExternalDataSettings` object (and raised its `SettingsChanged` event back into the VM, re-hydrating all ~30 observable properties mid-typing). Now the handler only syncs `TheAudioDbApiKey`; persistence happens once on `LostFocus`. Test Connection still reads the live VM value, so testing an uncommitted key works unchanged. |
+
+#### Notes & deliberate trade-offs
+
+- **Semantic status colors**: the danger button's hardcoded `#EF5350` and the flyout's `#AAAAAA` moved onto new Light/Dark theme dictionaries (`OCTAVE_StatusDanger` etc.) — same values as the LibraryEnrichmentDialog set from the previous commit.
+- **Sleep timer**: five loose buttons replaced by ONE ComboBox (Off/15/30/45/60) with a `SelectionChanged` mapping to the existing `SetSleepTimerCommand`; the status line hides while Off.
+- **Console look preserved**: `#111111` background + green Consolas text stays exactly as sanctioned in the B14 entry; only the ScrollViewer gained a proper corner radius and scrollbar visibility.
+- **XAML resource rule learned twice now**: a `<ResourceDictionary.ThemeDictionaries>` block inside `Page.Resources`/`ContentDialog.Resources` requires wrapping EVERYTHING in one explicit `<ResourceDictionary>` child (keyed items cannot sit beside a keyless nested dictionary).
+
+**Acceptance verified**: build `dotnet build Octave.Desktop` = 0 warnings / 0 errors · `dotnet test Octave.Core.Tests` = **313/313** (Core change limited to the new interface member + probe). Every control from the old page exists in the remake with the same binding target; no setting was dropped.
+
+---
+
+### Session 2026-08-24 — Smart-enrichment metadata UI pass *(commit `d65cc6e`)*
+
+**Scope**: user-directed follow-up to B16 — "fix smart enrichment metadata ui and all related code." Audited `MetadataEnrichmentDialog.xaml(.cs)` + `MetadataEnrichmentViewModel` + `LibraryEnrichmentDialog.xaml(.cs)` + `LibraryEnrichmentViewModel` + `ExternalDataSettingsViewModel`.
+
+| ID | Status | Evidence |
+|----|--------|----------|
+| ENR-02 | ✅ Wired end-to-end | B16 built `ITrackEnrichmentWorkflow.HydrateCandidateAsync` but NOTHING called it: switching candidates in the review dialog left artwork bytes and lyrics comparisons permanently empty for any non-top candidate. `MetadataEnrichmentViewModel` now tracks `_hydratedCandidateIds` (the plan pre-hydrates its top candidate — the set starts from `plan.BestCandidate.CandidateId` after each search); selecting an unhydrated candidate kicks off a detached hydration under its own CTS with a stale-run guard (`ReferenceEquals(cts, _hydrateCts)` checked before AND after the dispatcher hop), swaps the hydrated record into `Candidates[idx]` and re-points `SelectedCandidate` (id added to the set BEFORE reassignment so the `OnSelectedCandidateChanged` hook can't recurse). Failed hydrations are deliberately NOT cached so re-selecting retries. `Cleanup()` disposes the third CTS. |
+| Theme sweep | ✅ Fixed | MetadataEnrichmentDialog: `#25FFFFFF`×4 borders → CardStrokeColorDefault, table header `#20FFFFFF` → DividerStrokeColorDefault, current-value `#CCCCCC`×8 → TextFillColorSecondary, proposed `White`×8 → TextFillColorPrimary, headers `#888888` → Tertiary, artwork tile `#1E1E1E` → LayerFillColorDefault, lyrics box `#18FFFFFF` override removed (default themed TextBox chrome). LibraryEnrichmentDialog: neon-on-dark metric colors (#00FF66/#FFAA00/#FF4444/#888888) + panel tints moved into Light/Dark `OCTAVE_Status*` theme dictionaries; accent-filled buttons use `AccentButtonStyle` instead of hardcoded White foreground. |
+| Dialog logic | ✅ Fixed | Primary button gated `CanApply(HasCandidates && !IsApplying)` — "Apply Selected Changes" was offered even for a No-Match result. New "Proposed Cover" preview tile shows the bytes that WILL be written (custom local pick wins over hydrated online cover) via an `EffectiveProposedArtwork` byte[]→BitmapImage helper — x:Bind function bindings REJECT Converters (WMC1121), so the conversion lives in code-behind. |
+
+#### New findings discovered & fixed on the go *(this session)*
+
+| # | Severity | Location | Finding & Fix |
+|---|----------|----------|---------------|
+| NF-19 | ⚠️ Data-integrity race | `LibraryEnrichmentViewModel.ReviewItemViewModel` | Apply/Skip/Never-Ask-Again buttons disabled only via `IsResolved`, so a rapid double-tap stacked TWO concurrent `ApplySinglePlanAsync` runs writing the SAME audio file before the first flipped `IsResolved`. All three commands now carry `[RelayCommand(CanExecute = nameof(IsNotProcessing))]` with `NotifyCanExecuteChanged` wired through `OnIsProcessingChanged`. |
+
+#### Notes & tooling discovery
+
+- **WMC9999 masks real XAML errors**: this WinUI XamlCompiler crashes loading its own localized error strings when it hits certain SEMANTIC errors, printing only "Could not find any resources … ErrorMessages.resources". Bisected twice via targeted stashing; root causes found were WMC1121-class issues (converter-on-function-binding; page-function-with-DataType-args inside a DataTemplate — unsupported). Practical lesson: when WMC9999 appears, suspect a semantic binding error in the most recently edited XAML and bisect file-by-file; `VSLANG=1033` does NOT unwrap it.
+
+**Acceptance verified**: build 0 warnings / 0 errors · tests **313/313** · hydration contract pinned against `TrackEnrichmentWorkflow.CreateEnrichmentPlanAsync` (metadata-only previews + top-candidate hydration confirmed at source).
+
+---
+
+### Session 2026-08-24 — Batch 15 — Test-suite hardening *(commit `b215e6f`)*
+
+**Files opened**: per batch letter — the named TEST-03..20 surfaces across `Octave.Core.Tests/*` plus the production seams extraction forced open: `DurationFormatter` (NEW), `LyricsService`, `AudioPlayerServiceTests`, `ManagedBassAudioService`, `WindowsAudioDeviceHelper`, `QueueService`, `MusicBrainzProviderTests`, `LocalLibraryScannerTests`, `OnlineLyricsOrchestrator`, NEW `LibraryServiceTests`, NEW `PlaylistServiceTests`, `FormattingTests`.
+
+| ID | Status | Evidence |
+|----|--------|----------|
+| TEST-03 | ✅ | New `DurationFormatter` owns m:ss/h:mm:ss formatting; Desktop converter + MiniPlayerWindow delegate. FormattingTests drives NaN/±Infinity/59.9/60/600/3599.99 rows. |
+| TEST-04 | ✅ | `LyricsService.FindActiveLineIndex` extracted from `NowPlayingViewModel` as THE production binary search; boundary tests pin exact-start hits, null/empty guards, unsorted-input safety. |
+| TEST-05 | ✅ | Device-detail shape assertions on the parsed blob output. |
+| TEST-06 | ✅ | `AggregateFftBins` made internal; exact math pinned: zero-input first frame 0.014, full-scale spike 0.7, decay-from-0.7 = 0.5776, monotonic non-decreasing bin mapping. |
+| TEST-07 | ✅ | `WindowsAudioDeviceHelper.ParseDeviceFormatBlob` pure parser over WAVEFORMATEX (18 B) / EXTENSIBLE (40 B, cbSize≥22 honors wValidBitsPerSample); `ReadBlobStruct<T>` always frees its HGLOBAL; garbage-blob theories. |
+| TEST-08 | ✅ | QueueService shuffle RNG injectable — two instances seeded Random(42) produce identical true permutations ≠ identity. |
+| TEST-09 | ✅ | CallCount-instrumented handlers prove pre-cancelled tokens never reach HTTP (MusicBrainz / Artwork / Lyrics). This test EXPOSED NF-17. |
+| TEST-10 | ✅ | Fractional-timestamp variants ([00:04.5]→4.5 etc.), multi-timestamp shared chorus lines, offset clamp-to-zero. Exposed NF-18. |
+| TEST-11 | ✅ | Resume-on-startup seeks to the saved position exactly ONCE (Verify Seek(90.0) Times.Once). |
+| TEST-12 | ✅ | Single-flight: empty key bypasses dedup while still honoring tokens (genuinely-async factory — completed tasks return before WaitAsync consults a token); concurrent throwing factory delivers the fault to ALL waiters, runs once, evicts the entry. |
+| TEST-13 | ✅ | Scanner: zero-byte files skipped without aborting the run; pre-cancelled token throws OCE at the write semaphore BEFORE enumeration; mid-scan cancel raises ≥1 progress event then OCE and leaves no ghost rows. |
+| TEST-14 | ✅ | NEW `LibraryServiceTests`: folder add/remove/rescan wiring driven against the real `SqliteDbContext` with mocked scanner/watcher. |
+| TEST-15 | ✅ | Similarity table rows extended (& fold, direct Levenshtein bands). |
+| TEST-16 | ✅ | NEW `PlaylistServiceTests`: create/rename/delete round-trips raise PlaylistsChanged each step; reorder-by-track-id survives DUPLICATE entries (DB-08 one-position-per-entry contract, first-unpositioned-copy consumption); entry removal removes exactly one copy; delete cascades entries but not tracks. |
+| TEST-17 | ✅ | AudioPlayerServiceTests dispose the shared player via fixture. |
+| TEST-18 | ✅ | GUID-isolated temp dir for the filename-parse test. |
+| TEST-19 | ✅ | Deterministic async: ProviderRateLimiter takes an injectable clock (+ `NextAllowedUtcForTests`) — Retry-After windows extend atomically and never shorten; outstanding-reservation behavior proven via stopwatch lower bound + frozen-clock no-double-extension assertion; queue events use `TaskCompletionSource(RunContinuationsAsynchronously)` instead of sleeps. |
+| TEST-20 | ✅ | Canonical Sqlite in-memory fixture recorded for the suite: uniquely-named shared-cache DB (`name_{Guid:N}`; Mode=Memory;Cache=Shared) + keeper connection held for the fixture lifetime; unnamed `":memory:"` shares ONE pool keyed by connection string across parallel fixtures and was the root cause of 12 "no such table" failures. |
+
+#### New findings discovered & fixed on the go *(this session)*
+
+| # | Severity | Location | Finding & Fix |
+|---|----------|----------|---------------|
+| NF-17 | ⚠️ Wasted-work / semantics | `OnlineLyricsOrchestrator.FetchLyricsAsync` | A caller whose token was ALREADY cancelled still triggered the full provider sweep — SF-01 deliberately detaches the shared fetch from per-caller tokens, and the orchestrator passes CancellationToken.None INTO the sweep, so the entire HTTP fan-out ran solely for a caller who was gone (surfaced by TEST-09's CallCount==1). Entry gate added before cache/single-flight: cancelled callers get `Unavailable` immediately; the shared-flight semantics are untouched. |
+| NF-18 | ⚠️ Parser gap | `LyricsService` LRC regexes | Timestamp fraction required `\d{2,3}`, so single-digit files like `[00:04.5]` silently degraded Synced→Unsynced. Both `LrcTimestampRegex` and `TagRegex` widened to `\d{1,3}`; the ms normalizer already scaled length-1 (×100)/length-2 (×10)/length-3 (as-is). |
+
+**Final state**: `dotnet build Octave.Desktop` = 0 warnings / 0 errors · `dotnet test Octave.Core.Tests` = **313/313** (up from 265).
+
+---
+
+### Session 2026-08-24 — Batch 16 — Enrichment pipeline *(commit `ea79962`)*
+
+**Files opened**: per batch letter — `SmartLibraryEnrichmentService`, `TrackEnrichmentWorkflow`, `ITrackEnrichmentWorkflow`, `EnrichmentModels`, provider/cache plumbing for PROV-04/NF-16.
+
+| ID | Status | Evidence |
+|----|--------|----------|
+| SLE-03 | ✅ Fixed | Artist enrichment awaited (was fire-and-forget); bio/photo persist to the Artist record BEFORE flagging `EnrichArtistBioAndPhoto`, so `IsArtistComplete` flips true and later scans stop re-fetching the same artists. Dry-run suppresses the record write. |
+| SLE-04 | ✅ Fixed | Faulted artwork-resolution tasks are EVICTED from the dedup cache instead of poisoning every other track of that album for the whole session. |
+| SLE-05 | ✅ Fixed | Eager `allTracks.Select(async…)+WhenAll` (a state machine per track up front) replaced with lazy `Parallel.ForEachAsync(MaxDegreeOfParallelism)`. |
+| SLE-06 | ✅ Fixed | Concurrent scans rejected via `SemaphoreSlim(1)` gate; superseded scan CTS disposed; dedup caches effectively scoped to one scan. |
+| SLE-07 | ✅ Fixed | Tracks that throw during planning persist a Failed execution plan carrying the exception message — previously they vanished from the review queue/state entirely. |
+| SLE-09 | ✅ Fixed | `metadataUpdated` counts Genre/Year/TrackNumber/DiscNumber/ExternalIds writes, not only Title/Artist/Album. |
+| ENR-01 | ✅ Fixed *(landed within this batch's workflow work)* | `ExternalIds` gained value-based equality — dictionary members compared by reference flagged IDs as perpetually different and rewrote them on every apply. Null proposed = nothing to apply. |
+| ENR-02 | ✅ Fixed *(Core half; UI wiring follows in the next session entry)* | Plan previews are metadata-only; artwork+lyrics hydrate for the TOP candidate at plan time and for any other candidate via new public `HydrateCandidateAsync` (re-reads local tag state so baselines match the plan). N candidates used to mean N sequential HTTP chains before the dialog even opened. |
+| ENR-03 | ✅ Fixed | "Album Artist" comparison no longer proposes the candidate's TRACK artist (wrong for compilations/features); row shows local value and proposes nothing. |
+| ENR-04 | ✅ Fixed | Field comparisons compare Ordinal so capitalization-only corrections surface as offered changes. |
+| PROV-04 | ✅ Fixed | Imageless artist profiles cached 6 h (was pinned 30 days) so a failed photo download retries on the next enrichment pass. |
+
+#### New findings discovered & fixed on the go *(this session)*
+
+| # | Severity | Location | Finding & Fix |
+|---|----------|----------|---------------|
+| NF-16 | ⚠️ Race | Single-flight caches using `ConcurrentDictionary.GetOrAdd` with async factories | GetOrAdd may invoke the value factory several times CONCURRENTLY (it doesn't lock), so "dedup" still fired duplicate provider calls under contention. Caches now hold `Lazy<Task<T>>` created with `ExecutionAndPublication`, guaranteeing one factory execution per key generation. |
+
+**Final state**: `dotnet build Octave.Desktop` = 0 warnings / 0 errors · `dotnet test Octave.Core.Tests` = **265/265** (test-count growth lands in Batch 15).
+
+---
+
 ### Session 2026-08-23 — Batch 14 — Theme sweep & UX safeguards *(commit `b57fabd`)*
 
 **Files opened**: worked strictly **page-by-page** as the batch letter prescribes — `MainWindow.xaml`(.cs) → `HomePage.xaml`(.cs) → `AlbumsPage.xaml`(.cs) → `ArtistsPage.xaml`(.cs) → `EntityDetailPage.xaml` → `PlaylistDetailPage.xaml`(.cs) → `PlaylistsPage.xaml`(.cs) → `MiniPlayerWindow.xaml`(.cs) → `SettingsPage.xaml` — plus `App.xaml`, whose shared card style turned out to be the root cause feeding three of this batch's named surfaces (NF-14; drift justified in notes).
