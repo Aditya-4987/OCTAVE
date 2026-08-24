@@ -24,6 +24,7 @@ public sealed partial class LibraryEnrichmentDialog : ContentDialog
     public bool IsQueueEmpty(int count) => count == 0;
     public string FormatProgressPercent(double pct) => $"{pct:0.#}%";
     public string FormatQueueCount(int count) => count > 0 ? $"({count} items)" : "";
+    public bool IsNotResolvedAndNotProcessing(bool isResolved, bool isProcessing) => !isResolved && !isProcessing;
 
     public static string FormatLocalSummary(string title, string artist, string album, int year)
     {

@@ -90,6 +90,41 @@ public sealed partial class MetadataEnrichmentDialog : ContentDialog
 
     public string FormatNullableInt(int? value) => value.HasValue && value.Value > 0 ? value.Value.ToString() : "-";
 
+    // Primary button gate: nothing selected (or an apply in flight) means there
+    // is nothing to commit - the dialog used to offer "Apply Selected Changes"
+    // even for a No-Match result.
+    public bool CanApply(bool hasCandidates, bool isApplying) => hasCandidates && !isApplying;
+
+    // ENR-02 preview: the cover that WILL be written - a locally picked file
+    // wins over the hydrated candidate's online bytes. x:Bind function bindings
+    // don't support Converter, so the bytes→bitmap step lives here.
+    public Microsoft.UI.Xaml.Media.ImageSource? EffectiveProposedArtwork(byte[]? customBytes, byte[]? proposedBytes)
+    {
+        byte[]? bytes = customBytes is { Length: > 0 } ? customBytes
+                      : proposedBytes is { Length: > 0 } ? proposedBytes
+                      : null;
+        if (bytes == null) return null;
+
+        try
+        {
+            var image = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage();
+            // Decode asynchronously - the Image element fills in when this lands.
+            // BitmapImage holds the stream reference for the decode's lifetime.
+            _ = image.SetSourceAsync(new MemoryStream(bytes).AsRandomAccessStream());
+            return image;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[MetadataEnrichmentDialog] Proposed artwork decode failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    public Visibility ProposedArtworkTileVisibility(byte[]? customBytes, byte[]? proposedBytes)
+        => (customBytes is { Length: > 0 } || proposedBytes is { Length: > 0 })
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
     public SolidColorBrush GetConfidenceBadgeBackground(MatchConfidenceTier tier)
     {
         return tier switch

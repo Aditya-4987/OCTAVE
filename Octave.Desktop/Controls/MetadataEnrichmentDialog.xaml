@@ -13,6 +13,7 @@
     CloseButtonText="Cancel"
     DefaultButton="Primary"
     PrimaryButtonClick="ContentDialog_PrimaryButtonClick"
+    IsPrimaryButtonEnabled="{x:Bind CanApply(ViewModel.HasCandidates, ViewModel.IsApplying), Mode=OneWay}"
     FullSizeDesired="False">
 
     <ContentDialog.Resources>
@@ -29,7 +30,7 @@
 
         <!-- 1. Search Bar -->
         <Border Grid.Row="0" Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
-                BorderBrush="#25FFFFFF" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,12">
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,12">
             <Grid ColumnDefinitions="*,*,*,Auto" RowDefinitions="Auto,Auto">
                 <TextBox Grid.Column="0" Header="Track Title" Text="{x:Bind ViewModel.SearchTitle, Mode=TwoWay}" Margin="0,0,8,0" />
                 <TextBox Grid.Column="1" Header="Artist" Text="{x:Bind ViewModel.SearchArtist, Mode=TwoWay}" Margin="0,0,8,0" />
@@ -68,85 +69,85 @@
 
                 <!-- Comparison Table -->
                 <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
-                        BorderBrush="#25FFFFFF" BorderThickness="1" CornerRadius="8" Padding="14">
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="14">
                     <StackPanel Spacing="10">
                         <!-- Table Header -->
-                        <Grid ColumnDefinitions="110,*,*,50" Padding="0,0,0,6" BorderBrush="#20FFFFFF" BorderThickness="0,0,0,1">
+                        <Grid ColumnDefinitions="110,*,*,50" Padding="0,0,0,6" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="0,0,0,1">
                             <TextBlock Grid.Column="0" Text="FIELD" FontWeight="Bold" FontSize="11" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" />
-                            <TextBlock Grid.Column="1" Text="CURRENT VALUE" FontWeight="Bold" FontSize="11" Foreground="#888888" Margin="4,0" />
+                            <TextBlock Grid.Column="1" Text="CURRENT VALUE" FontWeight="Bold" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" Margin="4,0" />
                             <TextBlock Grid.Column="2" Text="PROPOSED ONLINE VALUE" FontWeight="Bold" FontSize="11" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" Margin="4,0" />
-                            <TextBlock Grid.Column="3" Text="APPLY" FontWeight="Bold" FontSize="11" Foreground="#888888" HorizontalAlignment="Center" />
+                            <TextBlock Grid.Column="3" Text="APPLY" FontWeight="Bold" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Center" />
                         </Grid>
 
                         <!-- Title -->
                         <Grid ColumnDefinitions="110,*,*,50">
                             <TextBlock Grid.Column="0" Text="Title" FontWeight="SemiBold" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.SelectedCandidate.Title.CurrentValue, Mode=OneWay}" TextTrimming="CharacterEllipsis" Foreground="#CCCCCC" VerticalAlignment="Center" Margin="4,0"/>
-                            <TextBlock Grid.Column="2" Text="{x:Bind ViewModel.SelectedCandidate.Title.ProposedValue, Mode=OneWay}" FontWeight="SemiBold" Foreground="White" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="4,0"/>
+                            <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.SelectedCandidate.Title.CurrentValue, Mode=OneWay}" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Margin="4,0"/>
+                            <TextBlock Grid.Column="2" Text="{x:Bind ViewModel.SelectedCandidate.Title.ProposedValue, Mode=OneWay}" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="4,0"/>
                             <CheckBox Grid.Column="3" IsChecked="{x:Bind ViewModel.ApplyTitle, Mode=TwoWay}" HorizontalAlignment="Center" />
                         </Grid>
 
                         <!-- Artist -->
                         <Grid ColumnDefinitions="110,*,*,50">
                             <TextBlock Grid.Column="0" Text="Artist" FontWeight="SemiBold" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.SelectedCandidate.Artist.CurrentValue, Mode=OneWay}" TextTrimming="CharacterEllipsis" Foreground="#CCCCCC" VerticalAlignment="Center" Margin="4,0"/>
-                            <TextBlock Grid.Column="2" Text="{x:Bind ViewModel.SelectedCandidate.Artist.ProposedValue, Mode=OneWay}" FontWeight="SemiBold" Foreground="White" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="4,0"/>
+                            <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.SelectedCandidate.Artist.CurrentValue, Mode=OneWay}" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Margin="4,0"/>
+                            <TextBlock Grid.Column="2" Text="{x:Bind ViewModel.SelectedCandidate.Artist.ProposedValue, Mode=OneWay}" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="4,0"/>
                             <CheckBox Grid.Column="3" IsChecked="{x:Bind ViewModel.ApplyArtist, Mode=TwoWay}" HorizontalAlignment="Center" />
                         </Grid>
 
                         <!-- Album -->
                         <Grid ColumnDefinitions="110,*,*,50">
                             <TextBlock Grid.Column="0" Text="Album" FontWeight="SemiBold" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.SelectedCandidate.Album.CurrentValue, Mode=OneWay}" TextTrimming="CharacterEllipsis" Foreground="#CCCCCC" VerticalAlignment="Center" Margin="4,0"/>
-                            <TextBlock Grid.Column="2" Text="{x:Bind ViewModel.SelectedCandidate.Album.ProposedValue, Mode=OneWay}" FontWeight="SemiBold" Foreground="White" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="4,0"/>
+                            <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.SelectedCandidate.Album.CurrentValue, Mode=OneWay}" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Margin="4,0"/>
+                            <TextBlock Grid.Column="2" Text="{x:Bind ViewModel.SelectedCandidate.Album.ProposedValue, Mode=OneWay}" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="4,0"/>
                             <CheckBox Grid.Column="3" IsChecked="{x:Bind ViewModel.ApplyAlbum, Mode=TwoWay}" HorizontalAlignment="Center" />
                         </Grid>
 
                         <!-- Album Artist -->
                         <Grid ColumnDefinitions="110,*,*,50">
                             <TextBlock Grid.Column="0" Text="Album Artist" FontWeight="SemiBold" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.SelectedCandidate.AlbumArtist.CurrentValue, Mode=OneWay}" TextTrimming="CharacterEllipsis" Foreground="#CCCCCC" VerticalAlignment="Center" Margin="4,0"/>
-                            <TextBlock Grid.Column="2" Text="{x:Bind ViewModel.SelectedCandidate.AlbumArtist.ProposedValue, Mode=OneWay}" FontWeight="SemiBold" Foreground="White" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="4,0"/>
+                            <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.SelectedCandidate.AlbumArtist.CurrentValue, Mode=OneWay}" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Margin="4,0"/>
+                            <TextBlock Grid.Column="2" Text="{x:Bind ViewModel.SelectedCandidate.AlbumArtist.ProposedValue, Mode=OneWay}" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="4,0"/>
                             <CheckBox Grid.Column="3" IsChecked="{x:Bind ViewModel.ApplyAlbumArtist, Mode=TwoWay}" HorizontalAlignment="Center" />
                         </Grid>
 
                         <!-- Genre -->
                         <Grid ColumnDefinitions="110,*,*,50">
                             <TextBlock Grid.Column="0" Text="Genre" FontWeight="SemiBold" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.SelectedCandidate.Genre.CurrentValue, Mode=OneWay}" TextTrimming="CharacterEllipsis" Foreground="#CCCCCC" VerticalAlignment="Center" Margin="4,0"/>
-                            <TextBlock Grid.Column="2" Text="{x:Bind ViewModel.SelectedCandidate.Genre.ProposedValue, Mode=OneWay}" FontWeight="SemiBold" Foreground="White" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="4,0"/>
+                            <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.SelectedCandidate.Genre.CurrentValue, Mode=OneWay}" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Margin="4,0"/>
+                            <TextBlock Grid.Column="2" Text="{x:Bind ViewModel.SelectedCandidate.Genre.ProposedValue, Mode=OneWay}" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="4,0"/>
                             <CheckBox Grid.Column="3" IsChecked="{x:Bind ViewModel.ApplyGenre, Mode=TwoWay}" HorizontalAlignment="Center" />
                         </Grid>
 
                         <!-- Year -->
                         <Grid ColumnDefinitions="110,*,*,50">
                             <TextBlock Grid.Column="0" Text="Year" FontWeight="SemiBold" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="1" Text="{x:Bind FormatNullableInt(ViewModel.SelectedCandidate.Year.CurrentValue), Mode=OneWay}" Foreground="#CCCCCC" VerticalAlignment="Center" Margin="4,0"/>
-                            <TextBlock Grid.Column="2" Text="{x:Bind FormatNullableInt(ViewModel.SelectedCandidate.Year.ProposedValue), Mode=OneWay}" FontWeight="SemiBold" Foreground="White" VerticalAlignment="Center" Margin="4,0"/>
+                            <TextBlock Grid.Column="1" Text="{x:Bind FormatNullableInt(ViewModel.SelectedCandidate.Year.CurrentValue), Mode=OneWay}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Margin="4,0"/>
+                            <TextBlock Grid.Column="2" Text="{x:Bind FormatNullableInt(ViewModel.SelectedCandidate.Year.ProposedValue), Mode=OneWay}" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" VerticalAlignment="Center" Margin="4,0"/>
                             <CheckBox Grid.Column="3" IsChecked="{x:Bind ViewModel.ApplyYear, Mode=TwoWay}" HorizontalAlignment="Center" />
                         </Grid>
 
                         <!-- Track # -->
                         <Grid ColumnDefinitions="110,*,*,50">
                             <TextBlock Grid.Column="0" Text="Track #" FontWeight="SemiBold" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="1" Text="{x:Bind FormatNullableInt(ViewModel.SelectedCandidate.TrackNumber.CurrentValue), Mode=OneWay}" Foreground="#CCCCCC" VerticalAlignment="Center" Margin="4,0"/>
-                            <TextBlock Grid.Column="2" Text="{x:Bind FormatNullableInt(ViewModel.SelectedCandidate.TrackNumber.ProposedValue), Mode=OneWay}" FontWeight="SemiBold" Foreground="White" VerticalAlignment="Center" Margin="4,0"/>
+                            <TextBlock Grid.Column="1" Text="{x:Bind FormatNullableInt(ViewModel.SelectedCandidate.TrackNumber.CurrentValue), Mode=OneWay}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Margin="4,0"/>
+                            <TextBlock Grid.Column="2" Text="{x:Bind FormatNullableInt(ViewModel.SelectedCandidate.TrackNumber.ProposedValue), Mode=OneWay}" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" VerticalAlignment="Center" Margin="4,0"/>
                             <CheckBox Grid.Column="3" IsChecked="{x:Bind ViewModel.ApplyTrackNumber, Mode=TwoWay}" HorizontalAlignment="Center" />
                         </Grid>
 
                         <!-- Disc # -->
                         <Grid ColumnDefinitions="110,*,*,50">
                             <TextBlock Grid.Column="0" Text="Disc #" FontWeight="SemiBold" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="1" Text="{x:Bind FormatNullableInt(ViewModel.SelectedCandidate.DiscNumber.CurrentValue), Mode=OneWay}" Foreground="#CCCCCC" VerticalAlignment="Center" Margin="4,0"/>
-                            <TextBlock Grid.Column="2" Text="{x:Bind FormatNullableInt(ViewModel.SelectedCandidate.DiscNumber.ProposedValue), Mode=OneWay}" FontWeight="SemiBold" Foreground="White" VerticalAlignment="Center" Margin="4,0"/>
+                            <TextBlock Grid.Column="1" Text="{x:Bind FormatNullableInt(ViewModel.SelectedCandidate.DiscNumber.CurrentValue), Mode=OneWay}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Margin="4,0"/>
+                            <TextBlock Grid.Column="2" Text="{x:Bind FormatNullableInt(ViewModel.SelectedCandidate.DiscNumber.ProposedValue), Mode=OneWay}" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" VerticalAlignment="Center" Margin="4,0"/>
                             <CheckBox Grid.Column="3" IsChecked="{x:Bind ViewModel.ApplyDiscNumber, Mode=TwoWay}" HorizontalAlignment="Center" />
                         </Grid>
 
                         <!-- MusicBrainz ID -->
                         <Grid ColumnDefinitions="110,*,*,50">
                             <TextBlock Grid.Column="0" Text="MusicBrainz ID" FontWeight="SemiBold" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.SelectedCandidate.ExternalIds.CurrentValue.MusicBrainzId, Mode=OneWay}" TextTrimming="CharacterEllipsis" Foreground="#CCCCCC" VerticalAlignment="Center" Margin="4,0"/>
-                            <TextBlock Grid.Column="2" Text="{x:Bind ViewModel.SelectedCandidate.ExternalIds.ProposedValue.MusicBrainzId, Mode=OneWay}" FontWeight="SemiBold" Foreground="White" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="4,0"/>
+                            <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.SelectedCandidate.ExternalIds.CurrentValue.MusicBrainzId, Mode=OneWay}" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Margin="4,0"/>
+                            <TextBlock Grid.Column="2" Text="{x:Bind ViewModel.SelectedCandidate.ExternalIds.ProposedValue.MusicBrainzId, Mode=OneWay}" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="4,0"/>
                             <CheckBox Grid.Column="3" IsChecked="{x:Bind ViewModel.ApplyExternalIds, Mode=TwoWay}" HorizontalAlignment="Center" />
                         </Grid>
                     </StackPanel>
@@ -154,23 +155,37 @@
 
                 <!-- Artwork Preview Section -->
                 <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
-                        BorderBrush="#25FFFFFF" BorderThickness="1" CornerRadius="8" Padding="14">
-                    <Grid ColumnDefinitions="Auto,*,Auto">
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="14">
+                    <Grid ColumnDefinitions="Auto,Auto,*,Auto">
                         <StackPanel Grid.Column="0" Spacing="6" HorizontalAlignment="Center">
                             <TextBlock Text="ALBUM ARTWORK" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" />
-                            <Grid Width="100" Height="100" CornerRadius="6" Background="#1E1E1E">
+                            <Grid Width="100" Height="100" CornerRadius="6" Background="{ThemeResource LayerFillColorDefaultBrush}">
                                 <Image Source="{x:Bind ViewModel.CurrentTrack.AlbumId, Mode=OneWay, Converter={StaticResource ArtworkPathConverter}}" Stretch="UniformToFill" />
                             </Grid>
-                            <TextBlock Text="Current" FontSize="11" Foreground="#888888" HorizontalAlignment="Center" />
+                            <TextBlock Text="Current" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Center" />
                         </StackPanel>
 
-                        <StackPanel Grid.Column="1" Margin="24,0" VerticalAlignment="Center" Spacing="8">
+                        <!-- ENR-02 companion UI: preview of the cover that WILL be written -
+                             the hydrated candidate's bytes, overridden by a local pick. -->
+                        <StackPanel Grid.Column="1" Spacing="6" Margin="16,0,0,0" HorizontalAlignment="Center"
+                                    Visibility="{x:Bind ProposedArtworkTileVisibility(ViewModel.CustomArtworkBytes, ViewModel.SelectedCandidate.ProposedArtworkBytes), Mode=OneWay}">
+                            <TextBlock Text="PROPOSED COVER" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" />
+                            <Border Width="100" Height="100" CornerRadius="6"
+                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                                    Background="{ThemeResource LayerFillColorDefaultBrush}">
+                                <Image Source="{x:Bind EffectiveProposedArtwork(ViewModel.CustomArtworkBytes, ViewModel.SelectedCandidate.ProposedArtworkBytes), Mode=OneWay}"
+                                       Stretch="UniformToFill" />
+                            </Border>
+                            <TextBlock Text="Will Be Written" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Center" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="2" Margin="24,0" VerticalAlignment="Center" Spacing="8">
                             <TextBlock Text="Online Cover Art Archive / Local File" FontWeight="SemiBold" />
-                            <TextBlock Text="{x:Bind GetArtworkStatusText(ViewModel.SelectedCandidate, ViewModel.CustomArtworkPath), Mode=OneWay}" Foreground="#888888" FontSize="12" TextWrapping="Wrap" />
+                            <TextBlock Text="{x:Bind GetArtworkStatusText(ViewModel.SelectedCandidate, ViewModel.CustomArtworkPath), Mode=OneWay}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="12" TextWrapping="Wrap" />
                             <Button Click="BrowseArtworkButton_Click" Content="Browse Local Image..." />
                         </StackPanel>
 
-                        <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Center">
+                        <StackPanel Grid.Column="3" VerticalAlignment="Center" HorizontalAlignment="Center">
                             <CheckBox Content="Apply Cover" IsChecked="{x:Bind ViewModel.ApplyArtwork, Mode=TwoWay}" />
                         </StackPanel>
                     </Grid>
@@ -181,7 +196,7 @@
                     <StackPanel Spacing="8">
                         <TextBlock Text="Proposed Online Lyrics:" FontWeight="SemiBold" FontSize="12" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" />
                         <TextBox Text="{x:Bind ViewModel.SelectedCandidate.Lyrics.ProposedValue, Mode=OneWay}"
-                                 IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" MaxHeight="160" Background="#18FFFFFF" />
+                                 IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" MaxHeight="160" />
                         <CheckBox Content="Apply Proposed Lyrics" IsChecked="{x:Bind ViewModel.ApplyLyrics, Mode=TwoWay}" Margin="0,4,0,0"/>
                     </StackPanel>
                 </Expander>

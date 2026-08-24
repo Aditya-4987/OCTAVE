@@ -38,14 +38,28 @@ public partial class ReviewItemViewModel : ObservableObject
     public IReadOnlyList<string> Warnings => Plan.SafetyGates.Warnings;
     public IReadOnlyList<TrackMatchCandidate> Alternatives => Plan.AlternativeCandidates;
 
+    // NF-19: the three commands below are CanExecute-guarded on this flag. The
+    // buttons only disabled themselves via IsResolved, so a rapid double-tap on
+    // "Apply Candidate" stacked two concurrent ApplySinglePlanAsync runs writing
+    // the SAME audio file before IsResolved flipped.
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsNotProcessing))]
     public partial bool IsProcessing { get; set; }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsNotResolved))]
     public partial bool IsResolved { get; set; }
 
+    public bool IsNotProcessing => !IsProcessing;
+
     public bool IsNotResolved => !IsResolved;
+
+    partial void OnIsProcessingChanged(bool value)
+    {
+        ApplyCandidateCommand.NotifyCanExecuteChanged();
+        SkipCommand.NotifyCanExecuteChanged();
+        NeverAskAgainCommand.NotifyCanExecuteChanged();
+    }
 
     public string FormattedLocalSummary
     {
@@ -76,7 +90,7 @@ public partial class ReviewItemViewModel : ObservableObject
         _enrichmentService = enrichmentService ?? throw new ArgumentNullException(nameof(enrichmentService));
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(IsNotProcessing))]
     public async Task ApplyCandidateAsync()
     {
         IsProcessing = true;
@@ -96,7 +110,7 @@ public partial class ReviewItemViewModel : ObservableObject
         }
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(IsNotProcessing))]
     public async Task SkipAsync()
     {
         IsProcessing = true;
@@ -118,7 +132,7 @@ public partial class ReviewItemViewModel : ObservableObject
         }
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(IsNotProcessing))]
     public async Task NeverAskAgainAsync()
     {
         IsProcessing = true;

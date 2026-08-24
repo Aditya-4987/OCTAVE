@@ -27,6 +27,12 @@ public partial class MetadataEnrichmentViewModel : ObservableObject
     private CancellationTokenSource? _searchCts;
     private CancellationTokenSource? _applyCts;
 
+    // ENR-02: candidate ids whose artwork/lyrics comparisons are already filled.
+    // The plan hydrates only its top candidate up front; every other candidate is
+    // hydrated lazily here when the user selects it in the ComboBox.
+    private readonly HashSet<string> _hydratedCandidateIds = new(StringComparer.Ordinal);
+    private CancellationTokenSource? _hydrateCts;
+
     [ObservableProperty]
     public partial string SearchTitle { get; set; } = string.Empty;
 
@@ -184,6 +190,15 @@ public partial class MetadataEnrichmentViewModel : ObservableObject
                     Candidates.Add(c);
                 }
 
+                // ENR-02: the new plan's top candidate arrives pre-hydrated by
+                // CreateEnrichmentPlanAsync; everything else must re-hydrate on
+                // selection, so the per-plan tracking set starts over.
+                _hydratedCandidateIds.Clear();
+                if (plan.BestCandidate != null)
+                {
+                    _hydratedCandidateIds.Add(plan.BestCandidate.CandidateId);
+                }
+
                 HasCandidates = Candidates.Count > 0;
                 ConfidenceTier = plan.TopConfidenceTier;
 
@@ -225,6 +240,75 @@ public partial class MetadataEnrichmentViewModel : ObservableObject
         if (value != null)
         {
             UpdateFieldSelectionDefaults(value);
+            BeginHydrateCandidate(value);
+        }
+    }
+
+    // ENR-02: switching to a candidate the plan did NOT pre-hydrate used to leave
+    // its artwork/lyrics comparisons permanently empty ("-" rows and no cover
+    // preview) even though HydrateCandidateAsync existed for exactly this. Kick
+    // off a detached hydration whenever an unhydrated candidate is selected.
+    private void BeginHydrateCandidate(CandidatePreview candidate)
+    {
+        if (_track == null || _hydratedCandidateIds.Contains(candidate.CandidateId))
+        {
+            return;
+        }
+
+        // VM-05 pattern: cancel AND dispose the superseded source. A newer
+        // selection always wins; its result swaps into Candidates when it lands.
+        _hydrateCts?.Cancel();
+        _hydrateCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _hydrateCts = cts;
+
+        var track = _track;
+        _ = HydrateCandidateAsyncCore(track, candidate, cts, cts.Token);
+    }
+
+    private async Task HydrateCandidateAsyncCore(
+        Track track,
+        CandidatePreview candidate,
+        CancellationTokenSource cts,
+        CancellationToken ct)
+    {
+        try
+        {
+            var hydrated = await Task.Run(() => _workflow.HydrateCandidateAsync(track, candidate, ct), ct);
+
+            // A re-selection or dialog close owns the state now - drop this run.
+            if (!ReferenceEquals(cts, _hydrateCts)) return;
+
+            _dispatcher.TryEnqueue(() =>
+            {
+                if (!ReferenceEquals(cts, _hydrateCts)) return;
+
+                // Mark BEFORE re-pointing SelectedCandidate: assigning below raises
+                // OnSelectedCandidateChanged again, which must see the id as done.
+                _hydratedCandidateIds.Add(hydrated.CandidateId);
+
+                int idx = Candidates.IndexOf(candidate);
+                if (idx >= 0)
+                {
+                    Candidates[idx] = hydrated;
+                }
+
+                if (ReferenceEquals(SelectedCandidate, candidate))
+                {
+                    SelectedCandidate = hydrated;
+                }
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            // Superseded by a newer selection or dialog close.
+        }
+        catch (Exception ex)
+        {
+            // Deliberately NOT marked hydrated so picking the candidate again
+            // retries (e.g. a transient provider/network failure).
+            System.Diagnostics.Debug.WriteLine(
+                $"[MetadataEnrichmentViewModel] Candidate hydration failed for '{candidate.CandidateId}': {ex.Message}");
         }
     }
 
@@ -362,6 +446,11 @@ public partial class MetadataEnrichmentViewModel : ObservableObject
         _applyCts?.Cancel();
         _applyCts?.Dispose();
         _applyCts = null;
+
+        // ENR-02: an in-flight candidate hydration must not swap into a closed dialog.
+        _hydrateCts?.Cancel();
+        _hydrateCts?.Dispose();
+        _hydrateCts = null;
     }
 
     public void SetCustomArtwork(string filePath, byte[] bytes)
