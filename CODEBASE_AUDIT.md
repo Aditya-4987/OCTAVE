@@ -1257,6 +1257,31 @@ None of these break behavior or lose data; they are intentionally **not** assign
 
 *(Appended at the end of the document per the user's instruction: every resolved issue is recorded here as it lands. Newest session first. Format: batch → commit → per-ID status → acceptance evidence → notes/behavior changes. IDs marked ✅ should be treated as fixed; later batches must not re-fix them.)*
 
+### Session 2026-08-24 — Smart-enrichment review apply + expanding settings card *(commit `3770479`)*
+
+**Scope**: user report on the Settings "Scan & Enrich Library..." flow — (1) button text truncated, (2) replace the modal popup with an in-card vertical expansion showing everything the popup did, (3) "make sure that this feature works perfectly": popup elements stretched out of view, "Preview Changes (D…" cut off, review-card Apply Candidate button next to an invisible button, and clicking Apply Candidate showed **"apply failed" in green**.
+
+#### New findings discovered & fixed on the go *(this session)*
+
+| # | Severity | Location | Finding & Fix |
+|---|----------|----------|---------------|
+| NF-27 | 🔴 Total feature failure + ⚠️ UI defects | `SmartLibraryEnrichmentService.BuildPlanForTrackAsync` / `ReviewItemViewModel` / `LibraryEnrichmentDialog→Panel` | **Apply could never succeed**: NeedsReview plans returned from `BuildPlanForTrackAsync` at the gates/confidence check — BEFORE the block that constructs `ProposedUpdate` — so `ApplySinglePlanInternalAsync` rejected every one with "No proposed changes in plan." Review plans now fall through the same action-building code (status set, no early return); nothing auto-applies them since the scan's apply pass filters on `SafeReadyToApply`. Manual-review plans bypass the automatic write-policy switches (`AutoFillMissingMetadata`/`NeverWriteAutomatically`/`ReplaceExistingMetadata`) because the side-by-side card plus the Apply click ARE the consent — minimal-diff and value clamps still apply, identical values are never restamped, and artist bio/photo enrichment is skipped for review plans (it writes the shared Artist record before approval). UI side: failures keep the card actionable and surface `EnrichmentApplyResult.ErrorMessage` ("Apply failed: \<reason\>"), color-coded via three stacked ThemeResource TextBlocks (success green / failure red / idle accent) instead of always-accent-green. |
+
+| ID | Status | Evidence |
+|----|--------|----------|
+| ENR-05 | ✅ Fixed | Launcher button truncated to "Scan & Enrich Libr…" when the window narrowed: the `*,Auto` header grid squeezed the Auto column once the wrapped description consumed all space. Button now has MinWidth 190 + no-wrap text; the description column absorbs narrow widths by wrapping. |
+| ENR-06 | ✅ Fixed | The ContentDialog (fixed 720×620 box) is gone entirely. New `LibraryEnrichmentPanel` UserControl hosts the same content inline in the settings card; clicking the launcher expands the card vertically with a standard fade + slide-up implicit composition animation (hide animates out). Fresh transient view model per expansion; `Cleanup()` detaches singleton-service events on collapse AND page unload (VM-02 discipline). Panel layout repairs vs the dialog: action buttons own a full-width row so "Preview Changes (Dry Run)" renders whole at any width; metrics moved from six squeezed columns to a 3×2 grid; review-card status text sits on its own wrapping row ABOVE a right-aligned Apply/Skip/Never-Ask row (the old single `*,Auto` row clipped the rightmost button whenever StatusText grew); gate warnings now render above the comparison panels so the user sees WHY a track needs review; a run-summary line reports metadata fields/artwork/lyrics/artists written and elapsed time after each scan. |
+
+#### Notes & deliberate trade-offs
+
+- Review plans now fetch artwork/lyrics during planning like safe plans do, so persisted `PlanJson` can carry base64 artwork bytes for later-session applies (review queues are small — low-confidence tracks only). Accepted size cost for correctness of the round trip.
+- `ReviewQueue_PersistedPlans_RoundTripProposedUpdate` pins the serialized-plan round trip; existing gates tests (`MandatoryGates_RejectsHighScoringVersionMismatch_RoutesToReview`) double as proof that proposals are never auto-applied.
+- The two CS1503s from a wrong `ElementCompositionPreview.SetImplicitShowAnimation` signature (takes UIElement, not Visual) masked as the familiar WMC0909/WMC0001/WMC9999 pass-2 cascade across unrelated files — fixed at the C# source and everything cleared.
+
+**Acceptance verified**: build `dotnet build Octave.Desktop` = 0 warnings / 0 errors · `dotnet test Octave.Core.Tests` = **317/317** (+2 new SmartLibraryEnrichment regression tests).
+
+---
+
 ### Session 2026-08-24 — Now Playing UX + queue auto-advance — user-reported batch *(commit `ef5ce27`)*
 
 **Scope**: six user reports in one pass — EQ status chips, Up Next panel empty on load, whole-page scroll yanked by lyric ticks, lyrics auto-follow/sync button, offset reset button, playback not advancing at track end.
