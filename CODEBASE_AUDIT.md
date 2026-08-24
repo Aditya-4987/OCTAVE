@@ -1257,6 +1257,45 @@ None of these break behavior or lose data; they are intentionally **not** assign
 
 *(Appended at the end of the document per the user's instruction: every resolved issue is recorded here as it lands. Newest session first. Format: batch → commit → per-ID status → acceptance evidence → notes/behavior changes. IDs marked ✅ should be treated as fixed; later batches must not re-fix them.)*
 
+### Session 2026-08-24 — Now Playing UX + queue auto-advance — user-reported batch *(commit `ef5ce27`)*
+
+**Scope**: six user reports in one pass — EQ status chips, Up Next panel empty on load, whole-page scroll yanked by lyric ticks, lyrics auto-follow/sync button, offset reset button, playback not advancing at track end.
+
+#### New findings discovered & fixed on the go *(this session)*
+
+| # | Severity | Location | Finding & Fix |
+|---|----------|----------|---------------|
+| NF-22 | 🔴 Total feature failure | `QueueService.HandleTrackEndedAsync` | Batch 4's QUEUE-02 guard restructured the repeat-mode switch into if/else-if/else where the HEALTHY end branch (position ≥ 0.75 s) only reset the failure counter and NEVER advanced — every track that played to its end silently stopped the queue. The existing advance test passed by accident: its mocked `PositionSeconds` defaulted to 0.0, exercising the FAILURE branch (which still advances while under the cap). Fixed: healthy ends advance AND reset the streak; failure ends count toward the cap as before. Two regression tests pin both behaviors (`TrackEnded_NaturalHealthyEnd_AdvancesToNextTrack`, `TrackEnded_HealthyEnd_ResetsConsecutiveLoadFailureStreak`). |
+| NF-23 | ⚠️ UX polish | `SettingsPage.xaml` EQ card | User asked for the ready/unavailable pill chips to go; replaced with plain colored text "Ready"/"Error" (`OCTAVE_StatusSuccess/Danger`) + explanatory ToolTips; unused SuccessSoft/DangerSoft theme tokens removed. |
+| NF-24 | ⚠️ Feature broken on load | `NowPlayingViewModel.RefreshState` | The Up Next panel was always EMPTY when the page opened: `RefreshUpNextQueue` ran only on `QueueChanged`, but that event fires from the SINGLETON queue service and had already happened before the TRANSIENT view model subscribed. `RefreshState` now hydrates the mirror once per page load; NP-09's identical-window early-return keeps repeat Loaded calls cheap. |
+| NF-25 | 🔴 Page unusable while synced lyrics play | `LyricsPanel.xaml.cs` | Active-line scrolling used `StartBringIntoView`, which bubbles through EVERY ancestor ScrollViewer — each lyric tick yanked the whole Now Playing page back (user could not scroll at all). Replaced with a `ChangeView` computed against the panel's OWN viewer only (target = line Y + top padding − 40 % viewport), after `UpdateLayout()` so the 18→22 px active-line resize is reflected. Auto-follow additions requested by the user ride the same fix: any non-auto view movement (`ViewChanged` guarded by an `_autoScrollInFlight` flag + `PointerWheelChanged`) suspends following and shows a SYNC button left of the −/+ offset buttons; clicking it re-centers the active line and resumes following; new lyric sheets reset to following. |
+| NF-26 | ⚠️ UX gap | `LyricsPanel` toolbar | Offset RESET button added after the + button: raises the inverse delta (−OffsetMs) through the existing nudge pipeline, returning to exactly 0 in one click. |
+
+#### Notes & deliberate trade-offs
+
+- Wheel suspension fires on `PointerWheelChanged` because `ViewChanged` alone cannot distinguish a wheel tick from the tail of our own scroll animation; touch panning is caught by the flag-guarded ViewChanged path.
+- If the user grabs the scrollbar DURING an auto-scroll animation, intermediate events stay suppressed until that animation completes — accepted; the next manual movement suspends again.
+
+**Acceptance verified**: build `dotnet build Octave.Desktop` = 0 warnings / 0 errors · `dotnet test Octave.Core.Tests` = **315/315** (+2 new QueueService regression tests). Desktop-only changes are structural-reasoning verified (XAML bindings, DP callbacks, DI lifetimes); the queue fix is covered by deterministic tests.
+
+---
+
+### Session 2026-08-24 — Equalizer dead-band fix *(commit `f61bed4`)*
+
+**Scope**: user report "equaliser is not working" after the Settings remake. Diagnosed the full chain — XAML bindings (slider/preset/toggle all wired), ShellViewModel EQ region, engine attach/detach lifecycle across stream swaps — all correct. The deployed bass_fx.dll was verified x64 and present.
+
+#### New findings discovered & fixed on the go *(this session)*
+
+| # | Severity | Location | Finding & Fix |
+|---|----------|----------|---------------|
+| NF-21 | 🔴 Total feature failure | `ManagedBassAudioService.ApplyBandUnlocked` | Every EQ band was configured correctly and STILL processed zero audio: `PeakEQParameters` was built via object initializer without `lChannel`, which defaults to `FXChannelFlags.None` (0). Native `BASS_BFX_PEAKEQ.lChannel` takes `BASS_BFX_CHANxxx` flag/s with `BASS_BFX_CHANALL = -1`; a 0 mask matches no channel. Sliders, presets, enable-toggle and per-track re-attach all worked — the sound never changed. Fixed by setting `lChannel = FXChannelFlags.All` plus a debug log when `Bass.FXSetParameters` fails. The limiter was unaffected (no explicit params → native defaults initialize to CHANALL). |
+
+**Acceptance verified**: offline decode-channel DSP probe against the shipped binaries (bass.dll 2.4.15 / bass_fx 2.4.12.6): a pure 125 Hz sine pushed through the exact production parameter shape measured **1.00× (0.0 dB)** vs bypass (bug reproduced); with `lChannel = All` it measured **3.21× (+10.1 dB)** at the band center. Engine read-back (`FXGetParameters`) confirmed every other field had been stored correctly all along.
+
+**Final state**: `dotnet build Octave.Desktop` = 0 warnings / 0 errors · `dotnet test Octave.Core.Tests` = **313/313**.
+
+---
+
 ### Session 2026-08-24 — Settings page remake — user-directed full rework *(commit `70eda90`)*
 
 **Scope**: "remake the whole settings page." The single cramped 600 px column became a 980 px stack of Windows-11-style cards (`SettingsCard` Border style + shared `RowTitle/RowDesc/CapsHeader` styles; rows are `*,Auto` grids — title+description left, control right). Cards: Playback · Equalizer · Music Library · Online & External Data (launcher / privacy / providers / credentials / write policy / caching / scan prefs) · Engine Diagnostics. All existing commands, handlers and `ExternalDataSettings` bindings preserved.
