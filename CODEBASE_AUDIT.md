@@ -1257,6 +1257,16 @@ None of these break behavior or lose data; they are intentionally **not** assign
 
 *(Appended at the end of the document per the user's instruction: every resolved issue is recorded here as it lands. Newest session first. Format: batch → commit → per-ID status → acceptance evidence → notes/behavior changes. IDs marked ✅ should be treated as fixed; later batches must not re-fix them.)*
 
+### Session 2026-08-25 — Playback-bar artwork binding + Settings backend wiring + library art *(commits `559e05b`, …)*
+
+**Scope**: three user-reported gaps — (1) playback-bar album art freezing (never updating on track change) *after* the window is dragged between monitors of different DPI; (2) several Settings sections whose controls persist but have **no backend reading them**, so they feel dead; (3) no album thumbnail next to the play/pause button in the library song list.
+
+#### New findings discovered & fixed on the go *(this session)*
+
+| # | Severity | Location | Finding & Fix |
+|---|----------|----------|---------------|
+| NF-34 | 🔴 Visible defect (latent in the NF-28 refresh path, made reliably reproducible by NF-33) | `ArtworkPathConverter.WalkAndRefresh` | The transport-bar cover, sidebar art and ambient backdrop are driven by a OneWay `{Binding CurrentArtworkUrl, Converter=ArtworkPathConverter}`. The cross-monitor scale-change walk re-decoded each `Image` by assigning `image.Source` directly — but a direct assignment writes a **local value**, and per XAML dependency-property precedence a local value **removes the binding**. So the first drag onto a different-DPI monitor detached the binding, and thereafter `CurrentArtworkUrl` changes (i.e. changing track) had nothing to flow through: the art froze on whatever was playing at drag time. Fix: when an `Image`'s `Source` still carries a binding expression, refresh it by **re-applying that binding** (`GetBindingExpression().ParentBinding` → `SetBinding`), which re-runs the converter at the new scale *and* keeps the binding live for later track changes; only genuinely source-assigned images (no binding expression) keep the direct-swap fallback. Shape/Border/Panel `ImageBrush` fills are never bound here, so those branches are unchanged. |
+
 ### Session 2026-08-24 — Crash hardening + artwork hi-res sources + DPI refresh *(commits `ce83916`, `7301e64`)*
 
 **Scope**: user-reported runtime crash (exit `0xC000027B` stowed exception during playback), playback-bar album art not refreshing on monitor drag, and album/artist art *still* low-res/pixelated after NF-28..30.
