@@ -30,8 +30,11 @@ public partial class LibraryViewModel : ObservableObject
     [ObservableProperty]
     public partial int SortIndex { get; set; }
 
-    public ObservableCollection<Track> Items { get; } = new();
+    public ObservableCollection<LibraryTrackItem> Items { get; } = new();
     private List<Track> _allTracks = new();
+    // NF-37: albumId -> album artwork token, resolved once per library load and
+    // reapplied when the list is re-sorted (sorting rebuilds the row wrappers).
+    private readonly Dictionary<string, string?> _albumArtTokens = new(StringComparer.Ordinal);
 
     private readonly EventHandler _libraryUpdatedHandler;
     private readonly EventHandler<PlaybackState> _playbackStateChangedHandler;
@@ -78,9 +81,17 @@ public partial class LibraryViewModel : ObservableObject
         try
         {
             var tracks = await _libraryService.GetAllTracksAsync();
+            // NF-37: album art tokens for the per-row thumbnails, fetched in one
+            // batch alongside the tracks (Track carries no artwork of its own).
+            var albums = await _libraryService.GetAllAlbumsAsync();
             _dispatcher.TryEnqueue(() =>
             {
                 _allTracks = tracks;
+                _albumArtTokens.Clear();
+                foreach (var album in albums)
+                {
+                    _albumArtTokens[album.Id] = album.ArtworkUrl ?? "";
+                }
                 ApplySort();
                 IsLoading = false;
             });
@@ -110,13 +121,23 @@ public partial class LibraryViewModel : ObservableObject
             _ => _allTracks.OrderBy(t => t.Title, StringComparer.OrdinalIgnoreCase)
         }).ToList();
 
-        if (Items.Count == sorted.Count && Items.SequenceEqual(sorted))
+        if (Items.Count == sorted.Count && Items.Select(i => i.Track).SequenceEqual(sorted))
         {
             return;
         }
 
         Items.Clear();
-        foreach (var track in sorted) Items.Add(track);
+        foreach (var track in sorted)
+        {
+            var item = new LibraryTrackItem(track);
+            // NF-37: apply the already-resolved album token so the thumbnail is
+            // present on first render; unknown albums fall back to the placeholder.
+            if (_albumArtTokens.TryGetValue(track.AlbumId, out var token))
+            {
+                item.ArtworkUrl = token;
+            }
+            Items.Add(item);
+        }
     }
 
     [RelayCommand]
@@ -125,7 +146,7 @@ public partial class LibraryViewModel : ObservableObject
         if (targetedTrack == null) return;
 
         _queueService.Clear();
-        _queueService.EnqueueRange(Items);
+        _queueService.EnqueueRange(Items.Select(i => i.Track));
 
         int selectedIndex = -1;
         for (int i = 0; i < Items.Count; i++)

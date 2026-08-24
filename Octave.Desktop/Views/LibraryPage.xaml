@@ -5,11 +5,14 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:models="using:Octave.Core.Models"
+    xmlns:vm="using:Octave_Desktop.ViewModels"
+    xmlns:converters="using:Octave_Desktop.Converters"
     xmlns:local="using:Octave_Desktop.Views"
     mc:Ignorable="d"
     Background="Transparent">
 
     <Page.Resources>
+        <converters:ArtworkPathConverter x:Key="ArtworkPathConverter" />
         <Storyboard x:Key="SkeletonPulse" RepeatBehavior="Forever" AutoReverse="True">
             <DoubleAnimation Storyboard.TargetName="SkeletonPanel" Storyboard.TargetProperty="Opacity"
                              From="0.35" To="0.85" Duration="0:0:0.9" />
@@ -41,10 +44,11 @@
                   SelectionMode="None"
                   Padding="32,0,32,32">
             <ListView.ItemTemplate>
-                <DataTemplate x:DataType="models:Track">
+                <DataTemplate x:DataType="vm:LibraryTrackItem">
                     <Grid Padding="16,8" Background="Transparent" Height="56" RightTapped="TrackRow_RightTapped" CornerRadius="4" Margin="0,0,0,4">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="40" />
+                            <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="2*" />
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="1*" />
@@ -68,31 +72,40 @@
                                       Foreground="White"/>
                         </Button>
 
+                        <!-- Album Art (NF-37: token resolved by the view model from the
+                             track's album; Track carries no artwork, so binding SourceUri
+                             would always render the placeholder). Sits immediately right
+                             of the play/pause button. -->
+                        <Border Grid.Column="1" CornerRadius="4" Width="40" Height="40" Margin="0,0,4,0"
+                                Background="{ThemeResource LayerFillColorDefaultBrush}">
+                            <Image Source="{x:Bind ArtworkUrl, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=40, Mode=OneWay}" Stretch="UniformToFill"/>
+                        </Border>
+
                         <!-- Title -->
-                        <TextBlock Grid.Column="1" Text="{x:Bind Title}" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="White" TextTrimming="CharacterEllipsis" Margin="8,0,0,0"/>
+                        <TextBlock Grid.Column="2" Text="{x:Bind Title}" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="White" TextTrimming="CharacterEllipsis" Margin="8,0,0,0"/>
 
                         <!-- Local/Cloud Provider Status -->
-                        <FontIcon Grid.Column="2" 
-                                  Glyph="{x:Bind local:LibraryPage.GetProviderGlyph(Provider)}" 
-                                  FontFamily="Segoe MDL2 Assets" 
-                                  FontSize="14" 
-                                  Foreground="#888888" 
-                                  Margin="12,0" 
+                        <FontIcon Grid.Column="3"
+                                  Glyph="{x:Bind local:LibraryPage.GetProviderGlyph(Provider)}"
+                                  FontFamily="Segoe MDL2 Assets"
+                                  FontSize="14"
+                                  Foreground="#888888"
+                                  Margin="12,0"
                                   VerticalAlignment="Center"/>
 
                         <!-- Artist -->
-                        <TextBlock Grid.Column="3" Text="{x:Bind ArtistName}" VerticalAlignment="Center" Foreground="#888888" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Grid.Column="4" Text="{x:Bind ArtistName}" VerticalAlignment="Center" Foreground="#888888" TextTrimming="CharacterEllipsis"/>
 
                         <!-- Duration -->
-                        <TextBlock Grid.Column="4" Text="{x:Bind local:LibraryPage.FormatDuration(DurationSeconds)}" VerticalAlignment="Center" Foreground="#888888" HorizontalAlignment="Right" Margin="0,0,8,0"/>
+                        <TextBlock Grid.Column="5" Text="{x:Bind local:LibraryPage.FormatDuration(DurationSeconds)}" VerticalAlignment="Center" Foreground="#888888" HorizontalAlignment="Right" Margin="0,0,8,0"/>
 
                         <!-- More Menu -->
-                        <Button Grid.Column="5" 
-                                Background="Transparent" 
-                                BorderBrush="Transparent" 
+                        <Button Grid.Column="6"
+                                Background="Transparent"
+                                BorderBrush="Transparent"
                                 Padding="4"
                                 Click="MoreMenuButton_Click"
-                                HorizontalAlignment="Center" 
+                                HorizontalAlignment="Center"
                                 VerticalAlignment="Center">
                             <FontIcon Glyph="&#xE712;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#888888"/>
                         </Button>

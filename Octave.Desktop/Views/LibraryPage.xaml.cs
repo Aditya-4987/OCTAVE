@@ -32,18 +32,18 @@ public sealed partial class LibraryPage : Page
 
     private async void TrackRow_RightTapped(object sender, RightTappedRoutedEventArgs e)
     {
-        if (sender is not FrameworkElement fe || fe.DataContext is not Track track) return;
+        if (sender is not FrameworkElement fe || fe.DataContext is not LibraryTrackItem item) return;
 
         var queueService = App.Services.GetRequiredService<IQueueService>();
-        await Helpers.TrackContextMenu.ShowAsync(fe, track, _libraryService, _playlistService, queueService, this.XamlRoot);
+        await Helpers.TrackContextMenu.ShowAsync(fe, item.Track, _libraryService, _playlistService, queueService, this.XamlRoot);
     }
 
     private async void MoreMenuButton_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not FrameworkElement fe || fe.DataContext is not Track track) return;
+        if (sender is not FrameworkElement fe || fe.DataContext is not LibraryTrackItem item) return;
 
         var queueService = App.Services.GetRequiredService<IQueueService>();
-        await Helpers.TrackContextMenu.ShowAsync(fe, track, _libraryService, _playlistService, queueService, this.XamlRoot);
+        await Helpers.TrackContextMenu.ShowAsync(fe, item.Track, _libraryService, _playlistService, queueService, this.XamlRoot);
     }
 
     // Old CreatePlaylistWithTrackAsync moved to helper
@@ -83,9 +83,9 @@ public sealed partial class LibraryPage : Page
 
     private void ListView_ItemClick(object sender, ItemClickEventArgs e)
     {
-        if (e.ClickedItem is Octave.Core.Models.Track track)
+        if (e.ClickedItem is LibraryTrackItem item)
         {
-            ViewModel.PlayTrackCommand.Execute(track);
+            ViewModel.PlayTrackCommand.Execute(item.Track);
         }
     }
 
@@ -108,9 +108,9 @@ public sealed partial class LibraryPage : Page
 
     private void UpdatePlayButtonIcon(Button btn)
     {
-        if (btn.Content is FontIcon fontIcon && btn.DataContext is Octave.Core.Models.Track track)
+        if (btn.Content is FontIcon fontIcon && btn.DataContext is LibraryTrackItem item)
         {
-            bool isCurrent = track.Id == ViewModel.CurrentPlayingTrackId;
+            bool isCurrent = item.Track.Id == ViewModel.CurrentPlayingTrackId;
             bool isPlaying = ViewModel.IsCurrentlyPlaying;
             fontIcon.Glyph = (isCurrent && isPlaying) ? "\uE769" : "\uE768";
         }
@@ -118,9 +118,9 @@ public sealed partial class LibraryPage : Page
 
     private void PlayButton_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button btn && btn.DataContext is Octave.Core.Models.Track track)
+        if (sender is Button btn && btn.DataContext is LibraryTrackItem item)
         {
-            if (track.Id == ViewModel.CurrentPlayingTrackId)
+            if (item.Track.Id == ViewModel.CurrentPlayingTrackId)
             {
                 if (ViewModel.IsCurrentlyPlaying)
                 {
@@ -133,7 +133,7 @@ public sealed partial class LibraryPage : Page
             }
             else
             {
-                ViewModel.PlayTrackCommand.Execute(track);
+                ViewModel.PlayTrackCommand.Execute(item.Track);
             }
         }
     }
