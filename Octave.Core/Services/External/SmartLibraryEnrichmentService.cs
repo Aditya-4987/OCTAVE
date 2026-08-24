@@ -416,14 +416,15 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
         plan.SafetyGates = gates;
 
         // 4. Generate Actions & Updates
-        if (!gates.Passed || topCandidate.Confidence < HighConfidenceThreshold)
-        {
-            plan.Status = EnrichmentTrackStatus.NeedsReview;
-            return plan;
-        }
-
-        // Gates passed & score is high -> safe to plan automatic enrichment
-        plan.Status = EnrichmentTrackStatus.SafeReadyToApply;
+        // NF-27: low-confidence / gate-failed matches land in the manual review
+        // queue, where "Apply Candidate" is the user's explicit consent to write.
+        // These plans used to return HERE - before any proposal existed - so every
+        // Apply attempt died with "No proposed changes in plan." They now fall
+        // through the same action-building code below; nothing auto-applies them
+        // (the scan's apply pass filters on SafeReadyToApply), so building the
+        // proposal is purely preparatory.
+        bool manualReview = !gates.Passed || topCandidate.Confidence < HighConfidenceThreshold;
+        plan.Status = manualReview ? EnrichmentTrackStatus.NeedsReview : EnrichmentTrackStatus.SafeReadyToApply;
 
         var plannedActions = EnrichmentActions.None;
         var meta = topCandidate.Metadata;
@@ -435,19 +436,23 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
         //  - needsMetadata (ScanOnlyMissingMetadata) decides whether complete tracks
         //    are considered at all.
         //  - NeverWriteAutomatically disables every automatic metadata write.
+        //  - NF-27: a manually-reviewed candidate bypasses all three — the review
+        //    card shows current vs proposed side by side and Apply is the consent,
+        //    so every field the candidate can improve is proposed for that one click.
         // External-ids writing stays governed solely by WriteExternalIdsToTags: ids are
         // not user-visible metadata, and writing them is what enables future exact-ID
         // matching (MATCH-01).
-        bool considerMetadata = settings.AutoFillMissingMetadata &&
-                                settings.WritePolicy != MetadataWritePolicy.NeverWriteAutomatically &&
-                                needsMetadata;
+        bool considerMetadata = manualReview || (
+            settings.AutoFillMissingMetadata &&
+            settings.WritePolicy != MetadataWritePolicy.NeverWriteAutomatically &&
+            needsMetadata);
         // Replacing a real (non-generic) local value additionally requires the explicit
-        // replace permission AND an overwrite-capable policy. Only SafeReadyToApply
-        // plans reach this code, so every write is already high-confidence and
-        // hard-gate-clean.
-        bool mayReplaceExisting = settings.ReplaceExistingMetadata &&
-                                  settings.WritePolicy is MetadataWritePolicy.WriteOnlyHighConfidence
-                                      or MetadataWritePolicy.AlwaysPreferOnline;
+        // replace permission AND an overwrite-capable policy — or an explicit manual
+        // apply, where the side-by-side review card IS that permission (NF-27).
+        bool mayReplaceExisting = manualReview || (
+            settings.ReplaceExistingMetadata &&
+            settings.WritePolicy is MetadataWritePolicy.WriteOnlyHighConfidence
+                or MetadataWritePolicy.AlwaysPreferOnline);
 
         string? newTitle = null;
         if (considerMetadata && ShouldWriteField(IsMissingOrGeneric(track.Title), mayReplaceExisting, track.Title, meta.Title) && !string.IsNullOrWhiteSpace(meta.Title))
@@ -568,7 +573,10 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
         // INT-03: was `(!IsArtistComplete || EnableArtistEnrichment)` — the right
         // operand defaulted true, making the gate always-true so every scan re-enriched
         // every artist. Intended logic: only incomplete artists, both toggles required.
-        if (!completeness.IsArtistComplete && settings.EnableArtistEnrichment && settings.AutoDownloadMissingArtistImages)
+        // NF-27: skipped for manual-review plans — this block writes to the shared
+        // Artist record, which must not mutate before the user approves anything.
+        if (!completeness.IsArtistComplete && settings.EnableArtistEnrichment &&
+            settings.AutoDownloadMissingArtistImages && !manualReview)
         {
             string? artistMbid = topCandidate.ExternalIds?.AdditionalIds != null && topCandidate.ExternalIds.AdditionalIds.TryGetValue("MusicBrainzArtistId", out var aid) ? aid : null;
             string artistKey = !string.IsNullOrWhiteSpace(artistMbid)

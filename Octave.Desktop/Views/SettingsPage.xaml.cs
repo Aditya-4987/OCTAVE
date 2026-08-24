@@ -4,6 +4,7 @@ using Octave_Desktop.ViewModels;
 using Octave.Core.Models;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Navigation;
+using System;
 using System.Collections.Generic;
 
 namespace Octave_Desktop.Views;
@@ -39,7 +40,88 @@ public sealed partial class SettingsPage : Page
         // VM-01: the transient ExternalDataSettingsViewModel subscribes to the
         // singleton settings service in its constructor - without this detach it
         // (and its dispatcher closure) leaked on every navigation away.
-        Unloaded += (s, e) => ExternalSettings.Cleanup();
+        Unloaded += (s, e) =>
+        {
+            ExternalSettings.Cleanup();
+            // ENR-06: same lifetime discipline for the enrichment panel's VM if
+            // the user navigates away while the card is expanded.
+            EnrichmentPanel.ViewModel?.Cleanup();
+            EnrichmentPanel.ViewModel = null;
+        };
+
+        ConfigureEnrichmentExpandAnimation();
+    }
+
+    // ENR-06: the expansion gets the standard WinUI entrance feel - fade plus a
+    // short slide-up via implicit show/hide composition animations. Purely
+    // visual: visibility toggling itself stays a plain property set.
+    private void ConfigureEnrichmentExpandAnimation()
+    {
+        try
+        {
+            var compositor = Microsoft.UI.Xaml.Hosting.ElementCompositionPreview
+                .GetElementVisual(EnrichmentPanelHost).Compositor;
+            var ease = compositor.CreateCubicBezierEasingFunction(
+                new System.Numerics.Vector2(0.0f, 0.0f), new System.Numerics.Vector2(0.0f, 1.0f));
+
+            var showOffset = compositor.CreateVector3KeyFrameAnimation();
+            showOffset.Duration = TimeSpan.FromMilliseconds(220);
+            showOffset.InsertKeyFrame(0.0f, new System.Numerics.Vector3(0f, 24f, 0f));
+            showOffset.InsertKeyFrame(1.0f, new System.Numerics.Vector3(0f, 0f, 0f), ease);
+
+            var showOpacity = compositor.CreateScalarKeyFrameAnimation();
+            showOpacity.Duration = TimeSpan.FromMilliseconds(220);
+            showOpacity.InsertKeyFrame(0.0f, 0.0f);
+            showOpacity.InsertKeyFrame(1.0f, 1.0f, ease);
+
+            var showGroup = compositor.CreateAnimationGroup();
+            showGroup.Add(showOffset);
+            showGroup.Add(showOpacity);
+            Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.SetImplicitShowAnimation(EnrichmentPanelHost, showGroup);
+
+            var hideOffset = compositor.CreateVector3KeyFrameAnimation();
+            hideOffset.Duration = TimeSpan.FromMilliseconds(140);
+            hideOffset.InsertKeyFrame(0.0f, new System.Numerics.Vector3(0f, 0f, 0f));
+            hideOffset.InsertKeyFrame(1.0f, new System.Numerics.Vector3(0f, 16f, 0f), ease);
+
+            var hideOpacity = compositor.CreateScalarKeyFrameAnimation();
+            hideOpacity.Duration = TimeSpan.FromMilliseconds(140);
+            hideOpacity.InsertKeyFrame(0.0f, 1.0f);
+            hideOpacity.InsertKeyFrame(1.0f, 0.0f, ease);
+
+            var hideGroup = compositor.CreateAnimationGroup();
+            hideGroup.Add(hideOffset);
+            hideGroup.Add(hideOpacity);
+            Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.SetImplicitHideAnimation(EnrichmentPanelHost, hideGroup);
+        }
+        catch (Exception ex)
+        {
+            // Composition is a nicety - an unavailable compositor must not break
+            // the panel itself.
+            System.Diagnostics.Debug.WriteLine($"[SettingsPage] Expand animation unavailable: {ex.Message}");
+        }
+    }
+
+    // ENR-05/06: expands the card in place instead of opening the old modal
+    // ContentDialog. Each expansion gets a fresh transient view model (the same
+    // lifetime the dialog gave it); collapsing detaches its service events.
+    private void ToggleLibraryEnrichmentPanel_Click(object sender, RoutedEventArgs e)
+    {
+        bool opening = EnrichmentPanelHost.Visibility != Visibility.Visible;
+
+        if (opening)
+        {
+            EnrichmentPanel.ViewModel = App.Services.GetRequiredService<LibraryEnrichmentViewModel>();
+            EnrichmentPanelHost.Visibility = Visibility.Visible;
+            EnrichmentToggleButtonText.Text = "Hide Panel";
+        }
+        else
+        {
+            EnrichmentPanelHost.Visibility = Visibility.Collapsed;
+            EnrichmentPanel.ViewModel?.Cleanup();
+            EnrichmentPanel.ViewModel = null;
+            EnrichmentToggleButtonText.Text = "Scan & Enrich Library";
+        }
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -99,16 +181,6 @@ public sealed partial class SettingsPage : Page
     private void TheAudioDbPasswordBox_LostFocus(object sender, RoutedEventArgs e)
     {
         _ = ExternalSettings.SaveCommand.ExecuteAsync(null);
-    }
-
-    private async void OpenLibraryEnrichment_Click(object sender, RoutedEventArgs e)
-    {
-        var vm = App.Services.GetRequiredService<LibraryEnrichmentViewModel>();
-        var dialog = new Controls.LibraryEnrichmentDialog(vm)
-        {
-            XamlRoot = this.XamlRoot
-        };
-        await dialog.ShowAsync();
     }
 
     private async void AddFolder_Click(object sender, RoutedEventArgs e)

@@ -925,4 +925,106 @@ public class SmartLibraryEnrichmentTests : IDisposable
         await service.BuildPlanForTrackAsync(track, settings);
         mockLyricsOrch.Verify(l => l.FetchLyricsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<double?>(), It.IsAny<ExternalIds>(), It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    // =================================================================
+    // 12. MANUAL REVIEW APPLY (NF-27): review plans carry a real proposal
+    // =================================================================
+
+    private async Task<(SmartLibraryEnrichmentService Service, ExternalDataSettings Settings)> CreateServiceWithDefaultsAsync(
+        ITrackMetadataMatcher matcher,
+        ITrackMetadataEditor editor)
+    {
+        var rateRegistry = new ProviderRateLimiterRegistry();
+        var httpClient = new HttpClient(new MockHttpMessageHandler());
+        var httpService = new HttpService(rateRegistry, httpClient);
+        var settingsService = new ExternalDataSettingsService(_dbContext, httpService, new TheAudioDbOptions());
+        await settingsService.LoadSettingsAsync();
+
+        var service = new SmartLibraryEnrichmentService(
+            _dbContext,
+            matcher,
+            editor,
+            new Mock<IExternalArtworkOrchestrator>().Object,
+            new Mock<IArtistEnrichmentService>().Object,
+            new Mock<IOnlineLyricsOrchestrator>().Object,
+            settingsService,
+            new Mock<ILibraryService>().Object,
+            _artworkCacheManager,
+            httpService);
+
+        return (service, settingsService.CurrentSettings);
+    }
+
+    [Fact]
+    public async Task ManualReviewPlan_BuildsProposedUpdate_AndApplySucceeds()
+    {
+        // NF-27 regression: NeedsReview plans returned from BuildPlanForTrackAsync
+        // BEFORE any proposal existed, so every "Apply Candidate" click failed with
+        // "No proposed changes in plan." - rendered in accent green. A gate-failing
+        // candidate must now produce a full proposal that fills missing fields AND
+        // replaces real ones (the side-by-side card plus the Apply click are the
+        // consent) even with every automatic write-policy switch OFF.
+        string filePath = CreateTestMp3("review_apply.mp3", "Trouble", "Coldplay", "Parachutes", 2000, 6);
+        var track = new Track("t_review_apply", "Trouble", "a1", "Coldplay", "alb1", "Parachutes", 270.0, filePath, "Local", 6, 2000, DateTime.UtcNow);
+        await _dbContext.UpsertTrackAsync(track);
+
+        // Live-vs-studio version mismatch forces the NeedsReview route despite the
+        // otherwise clean dimensions (duration within ±5 s tolerance).
+        var candidateMeta = new ExternalTrackMetadata("Trouble (Live 2000)", "Coldplay", "Parachutes Live", 2001, "Blues Rock", 6, 1, 275.0, null,
+            new ExternalIds(MusicBrainzId: "mb_review_1"));
+        var candidate = new TrackMatchCandidate("MusicBrainz", new ExternalIds(MusicBrainzId: "mb_review_1"), 0.80, "Probable match", candidateMeta);
+
+        var mockEditor = new Mock<ITrackMetadataEditor>();
+        mockEditor.Setup(e => e.UpdateTrackMetadataAsync(track.Id, It.IsAny<TrackMetadataUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MetadataEditResult.Succeeded(FileWriteResult.Succeeded(filePath), DbSyncResult.Succeeded(track)));
+
+        var (service, settings) = await CreateServiceWithDefaultsAsync(MatcherReturning(candidate), mockEditor.Object);
+        Assert.False(settings.AutoFillMissingMetadata);   // guard: auto-write master switch really is off
+        Assert.False(settings.ReplaceExistingMetadata);   // guard: replace permission really is off
+
+        var plan = await service.BuildPlanForTrackAsync(track, settings);
+
+        Assert.Equal(EnrichmentTrackStatus.NeedsReview, plan.Status);
+        Assert.NotNull(plan.ProposedUpdate);                                        // THE fix
+        Assert.True(plan.PlannedActions.HasFlag(EnrichmentActions.WriteGenre));     // missing field filled
+        Assert.True(plan.PlannedActions.HasFlag(EnrichmentActions.WriteTitle));     // real value replaced (manual consent)
+        Assert.Equal("Trouble (Live 2000)", plan.ProposedUpdate?.Title);
+        Assert.Equal("Blues Rock", plan.ProposedUpdate?.Genre);
+        // Identical values stay untouched (minimal diff applies to review plans too)
+        Assert.False(plan.PlannedActions.HasFlag(EnrichmentActions.WriteArtist));
+
+        // And the point of it all: Apply Candidate succeeds instead of always failing.
+        var result = await service.ApplySinglePlanAsync(plan);
+        Assert.True(result.Success);
+
+        var state = await _dbContext.GetEnrichmentStateRecordAsync(track.Id);
+        Assert.NotNull(state);
+        Assert.Equal((int)EnrichmentTrackStatus.EnrichedSuccessfully, state.Value.Status);
+    }
+
+    [Fact]
+    public async Task ReviewQueue_PersistedPlans_RoundTripProposedUpdate()
+    {
+        // NF-27 companion: the review queue is rebuilt from serialized PlanJson on a
+        // later session - the stored plan must survive the round trip WITH its
+        // proposal, or those cards would hit the same "No proposed changes" failure.
+        string filePath = CreateTestMp3("review_roundtrip.mp3", "Trouble", "Coldplay", "Parachutes", 2000, 6);
+        var track = new Track("t_review_rt", "Trouble", "a1", "Coldplay", "alb1", "Parachutes", 270.0, filePath, "Local", 6, 2000, DateTime.UtcNow);
+        await _dbContext.UpsertTrackAsync(track);
+
+        var candidateMeta = new ExternalTrackMetadata("Trouble (Live 2000)", "Coldplay", "Parachutes Live", 2001, "Blues Rock", 6, 1, 275.0, null,
+            new ExternalIds(MusicBrainzId: "mb_review_rt"));
+        var candidate = new TrackMatchCandidate("MusicBrainz", new ExternalIds(MusicBrainzId: "mb_review_rt"), 0.80, "Probable match", candidateMeta);
+
+        var (service, settings) = await CreateServiceWithDefaultsAsync(MatcherReturning(candidate), new Mock<ITrackMetadataEditor>().Object);
+
+        await service.RunEnrichmentScanAsync(dryRun: true);
+
+        var queue = await service.GetReviewQueueAsync();
+
+        var queued = Assert.Single(queue);
+        Assert.Equal(EnrichmentTrackStatus.NeedsReview, queued.Status);
+        Assert.NotNull(queued.ProposedUpdate);
+        Assert.Equal("Trouble (Live 2000)", queued.ProposedUpdate?.Title);
+    }
 }

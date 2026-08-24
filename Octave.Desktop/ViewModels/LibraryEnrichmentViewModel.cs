@@ -38,6 +38,15 @@ public partial class ReviewItemViewModel : ObservableObject
     public IReadOnlyList<string> Warnings => Plan.SafetyGates.Warnings;
     public IReadOnlyList<TrackMatchCandidate> Alternatives => Plan.AlternativeCandidates;
 
+    // NF-27: WHY the track is in review - the failed safety gates - rendered as
+    // one line above the comparison panels so "Apply Candidate" is an informed
+    // click. (The old card never showed these.)
+    public string WarningsSummary => Warnings.Count > 0 ? string.Join(" · ", Warnings) : string.Empty;
+
+    public Microsoft.UI.Xaml.Visibility HasWarningsVisibility => Warnings.Count > 0
+        ? Microsoft.UI.Xaml.Visibility.Visible
+        : Microsoft.UI.Xaml.Visibility.Collapsed;
+
     // NF-19: the three commands below are CanExecute-guarded on this flag. The
     // buttons only disabled themselves via IsResolved, so a rapid double-tap on
     // "Apply Candidate" stacked two concurrent ApplySinglePlanAsync runs writing
@@ -48,11 +57,36 @@ public partial class ReviewItemViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsNotResolved))]
+    [NotifyPropertyChangedFor(nameof(SuccessStatusVisible))]
+    [NotifyPropertyChangedFor(nameof(FailedStatusVisible))]
+    [NotifyPropertyChangedFor(nameof(IdleStatusVisible))]
     public partial bool IsResolved { get; set; }
+
+    // NF-27: an Apply/Skip failure keeps the item actionable (IsResolved stays
+    // false) while HasFailed switches the status line from accent green to the
+    // danger color - failures used to render as a bare "apply failed" in green.
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(FailedStatusVisible))]
+    [NotifyPropertyChangedFor(nameof(IdleStatusVisible))]
+    public partial bool HasFailed { get; set; }
 
     public bool IsNotProcessing => !IsProcessing;
 
     public bool IsNotResolved => !IsResolved;
+
+    public bool IsSuccessfulOutcome => IsResolved && !HasFailed;
+
+    // Three stacked status TextBlocks (idle / failed / success) pick their color
+    // declaratively via ThemeResource - a single bound Foreground would need a
+    // code-resolved brush that goes stale across light/dark switches.
+    public Microsoft.UI.Xaml.Visibility SuccessStatusVisible => IsSuccessfulOutcome
+        ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+
+    public Microsoft.UI.Xaml.Visibility FailedStatusVisible => HasFailed && !IsResolved
+        ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+
+    public Microsoft.UI.Xaml.Visibility IdleStatusVisible => !IsSuccessfulOutcome && !(HasFailed && !IsResolved)
+        ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
 
     partial void OnIsProcessingChanged(bool value)
     {
@@ -97,11 +131,26 @@ public partial class ReviewItemViewModel : ObservableObject
         try
         {
             var result = await _enrichmentService.ApplySinglePlanAsync(Plan);
-            IsResolved = true;
-            StatusText = result.Success ? "Applied Successfully" : "Apply Failed";
+            if (result.Success)
+            {
+                HasFailed = false;
+                IsResolved = true;
+                StatusText = "Applied Successfully";
+            }
+            else
+            {
+                // NF-27: the failure reason used to be discarded and the bare
+                // "Apply Failed" rendered in the accent (green) color. Keep the
+                // card actionable and surface WHY it failed.
+                HasFailed = true;
+                StatusText = string.IsNullOrWhiteSpace(result.ErrorMessage)
+                    ? "Apply failed."
+                    : $"Apply failed: {result.ErrorMessage}";
+            }
         }
         catch (Exception ex)
         {
+            HasFailed = true;
             StatusText = $"Error: {ex.Message}";
         }
         finally
@@ -117,6 +166,7 @@ public partial class ReviewItemViewModel : ObservableObject
         try
         {
             await _enrichmentService.RejectOrSkipTrackAsync(TrackId, neverAskAgain: false);
+            HasFailed = false;
             IsResolved = true;
             StatusText = "Skipped";
         }
@@ -124,6 +174,7 @@ public partial class ReviewItemViewModel : ObservableObject
         {
             // VM-07: symmetric with ApplyCandidateAsync - an unhandled throw here
             // crashed the dialog's fire-and-forget command pipeline.
+            HasFailed = true;
             StatusText = $"Error: {ex.Message}";
         }
         finally
@@ -139,12 +190,14 @@ public partial class ReviewItemViewModel : ObservableObject
         try
         {
             await _enrichmentService.RejectOrSkipTrackAsync(TrackId, neverAskAgain: true);
+            HasFailed = false;
             IsResolved = true;
             StatusText = "Excluded (Never Ask Again)";
         }
         catch (Exception ex)
         {
             // VM-07: symmetric with ApplyCandidateAsync.
+            HasFailed = true;
             StatusText = $"Error: {ex.Message}";
         }
         finally

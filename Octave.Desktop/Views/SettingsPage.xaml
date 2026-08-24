@@ -7,6 +7,7 @@
     xmlns:models="using:Octave.Core.Models"
     xmlns:local="using:Octave_Desktop.Views"
     xmlns:vm="using:Octave_Desktop.ViewModels"
+    xmlns:controls="using:Octave_Desktop.Controls"
     xmlns:converters="using:Octave_Desktop.Converters"
     mc:Ignorable="d"
     Background="Transparent">
@@ -391,19 +392,35 @@
                                FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
                 </StackPanel>
 
-                <!-- Smart Library Enrichment launcher -->
+                <!-- Smart Library Enrichment (ENR-05/06: expands in place) -->
                 <Border Style="{StaticResource SettingsCard}">
-                    <Grid ColumnDefinitions="*,Auto">
-                        <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center" Margin="0,0,12,0">
-                            <TextBlock Text="Smart Library Enrichment" FontSize="15" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
-                            <TextBlock Text="Scan your local library to preview or automatically enrich missing metadata, album artwork, lyrics, and artist biographies."
-                                       Style="{StaticResource RowDescStyle}" />
-                        </StackPanel>
-                        <Button Grid.Column="1" VerticalAlignment="Center"
-                                Content="Scan &amp; Enrich Library..."
-                                Click="OpenLibraryEnrichment_Click"
-                                Style="{StaticResource AccentButtonStyle}" FontWeight="SemiBold" Height="36" />
-                    </Grid>
+                    <StackPanel Spacing="12">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center" Margin="0,0,12,0">
+                                <TextBlock Text="Smart Library Enrichment" FontSize="15" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                <TextBlock Text="Scan your local library to preview or automatically enrich missing metadata, album artwork, lyrics, and artist biographies."
+                                           Style="{StaticResource RowDescStyle}" />
+                            </StackPanel>
+                            <!-- MinWidth keeps the full label intact on narrow windows -
+                                 the description column wraps instead of squeezing the
+                                 button into "Scan &amp; Enrich Libr…". -->
+                            <Button x:Name="EnrichmentToggleButton" Grid.Column="1" VerticalAlignment="Center"
+                                    MinWidth="190"
+                                    Click="ToggleLibraryEnrichmentPanel_Click"
+                                    Style="{StaticResource AccentButtonStyle}" FontWeight="SemiBold">
+                                <TextBlock x:Name="EnrichmentToggleButtonText" Text="Scan &amp; Enrich Library" TextWrapping="NoWrap" TextTrimming="None" />
+                            </Button>
+                        </Grid>
+
+                        <!-- ENR-06: the old modal ContentDialog content, now expanding
+                             inline below the header - typical settings-card behavior. -->
+                        <Border x:Name="EnrichmentPanelHost" Visibility="Collapsed"
+                                Background="{ThemeResource LayerFillColorDefaultBrush}"
+                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1" CornerRadius="8" Padding="12">
+                            <controls:LibraryEnrichmentPanel x:Name="EnrichmentPanel" />
+                        </Border>
+                    </StackPanel>
                 </Border>
 
                 <!-- Privacy & Offline -->
