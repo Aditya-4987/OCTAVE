@@ -339,7 +339,16 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
                 // Start periodic position reporting and notify listeners OUTSIDE
                 // _streamLock (load-bearing invariant - see _streamLock comment).
                 StartPositionTimer();
-                TrackStarted?.Invoke(this, urlOrPath);
+                // NF-32: a throwing UI handler runs on THIS caller's thread - it
+                // must never be able to kill playback or the process.
+                try
+                {
+                    TrackStarted?.Invoke(this, urlOrPath);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[OCTAVE ENGINE] TrackStarted handler failed: {ex.Message}");
+                }
             }
             else if (stream == 0)
             {
@@ -348,7 +357,17 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
                 var handler = TrackEnded;
                 if (handler != null)
                 {
-                    ThreadPool.QueueUserWorkItem(_ => handler.Invoke(this, new TrackEndedEventArgs(sessionId, urlOrPath)));
+                    ThreadPool.QueueUserWorkItem(_ =>
+                    {
+                        try
+                        {
+                            handler.Invoke(this, new TrackEndedEventArgs(sessionId, urlOrPath));
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"[OCTAVE ENGINE] TrackEnded handler failed: {ex.Message}");
+                        }
+                    });
                 }
             }
 
@@ -917,29 +936,50 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         // unsafe and can deadlock the engine. Stop the timer and marshal the
         // TrackEnded notification onto a thread-pool thread so the callback can
         // return immediately and the queue advances on a clean managed thread.
-        StopPositionTimer();
-
-        EndSyncIdentity identity;
-        lock (_streamLock)
+        //
+        // NF-32: an exception escaping a native BASS callback cannot unwind
+        // through the pinvoke boundary - it surfaces as a fatal stowed exception
+        // (0xC000027B). Nothing in here may throw outward.
+        try
         {
-            // AUDIO-07: resolve identity from the channel that ACTUALLY ended,
-            // not from the globals. A stream whose sync we already detached
-            // (manual skip / crossfade / stop) has no entry here - its late end
-            // is dropped instead of masquerading as the incoming track's end.
-            if (!_endSyncs.Remove(channel, out identity))
+            StopPositionTimer();
+
+            EndSyncIdentity identity;
+            lock (_streamLock)
             {
-                return;
+                // AUDIO-07: resolve identity from the channel that ACTUALLY ended,
+                // not from the globals. A stream whose sync we already detached
+                // (manual skip / crossfade / stop) has no entry here - its late end
+                // is dropped instead of masquerading as the incoming track's end.
+                if (!_endSyncs.Remove(channel, out identity))
+                {
+                    return;
+                }
+            }
+
+            var handler = TrackEnded;
+            if (handler != null)
+            {
+                // Copy before leaving the callback scope; raise OUTSIDE _streamLock
+                // (load-bearing invariant - see _streamLock comment).
+                long endedSession = identity.SessionId;
+                string endedUri = identity.Uri;
+                ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    try
+                    {
+                        handler.Invoke(this, new TrackEndedEventArgs(endedSession, endedUri));
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[OCTAVE ENGINE] TrackEnded handler failed: {ex.Message}");
+                    }
+                });
             }
         }
-
-        var handler = TrackEnded;
-        if (handler != null)
+        catch (Exception ex)
         {
-            // Copy before leaving the callback scope; raise OUTSIDE _streamLock
-            // (load-bearing invariant - see _streamLock comment).
-            long endedSession = identity.SessionId;
-            string endedUri = identity.Uri;
-            ThreadPool.QueueUserWorkItem(_ => handler.Invoke(this, new TrackEndedEventArgs(endedSession, endedUri)));
+            Debug.WriteLine($"[OCTAVE ENGINE] End-sync callback failed: {ex.Message}");
         }
     }
 
@@ -970,7 +1010,17 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
                 return;
             pos = Bass.ChannelBytes2Seconds(_currentStream, Bass.ChannelGetPosition(_currentStream));
         }
-        PositionChanged?.Invoke(this, pos);
+
+        // NF-32: this runs on a timer thread - a throwing subscriber would end
+        // the process via AppDomain.UnhandledException.
+        try
+        {
+            PositionChanged?.Invoke(this, pos);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[OCTAVE ENGINE] PositionChanged handler failed: {ex.Message}");
+        }
     }
 
     public void Dispose()

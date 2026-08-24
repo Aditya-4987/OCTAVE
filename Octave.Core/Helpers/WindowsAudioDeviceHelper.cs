@@ -5,8 +5,11 @@ namespace Octave.Core.Helpers;
 
 public static class WindowsAudioDeviceHelper
 {
+    // CLSID_MMDeviceEnumerator (mmdeviceapi.h). The GUID this used to carry was
+    // not any registered class, so EVERY query failed with REGDB_E_CLASSNOTREG
+    // (0x80040154) and the app silently ran on the BASS-side fallback strings.
     [ComImport]
-    [Guid("BCDE0385-4944-4EA6-82B2-9D67097C93FE")]
+    [Guid("BCDE0395-E52F-467C-844D-A560C580CB51")]
     [ClassInterface(ClassInterfaceType.None)]
     private class MMDeviceEnumerator { }
 
@@ -99,6 +102,10 @@ public static class WindowsAudioDeviceHelper
 
     private static (string Name, string Format, double SampleRateKhz, ushort BitDepth) _cachedDeviceDetails = ("Default Audio Device", "Unknown", 44.1, 16);
     private static DateTime _lastCacheTime = DateTime.MinValue;
+    // A failed query is cached under the same TTL: without this a broken COM
+    // environment re-activated the class factory (and threw) on every property
+    // poll - dozens of first-chance exceptions per minute flooding diagnostics.
+    private static bool _lastQueryFailed = false;
     private static readonly object _cacheLock = new();
     private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(3);
 
@@ -219,13 +226,24 @@ public static class WindowsAudioDeviceHelper
                 {
                     _cachedDeviceDetails = result;
                     _lastCacheTime = DateTime.UtcNow;
+                    _lastQueryFailed = false;
                 }
                 return result;
             }
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[WindowsAudioDeviceHelper] Query failed: {ex.Message}");
+            lock (_cacheLock)
+            {
+                // Cache the failure for the TTL and log once per failure streak -
+                // a persistent COM breakage must not flood the debug output.
+                _lastCacheTime = DateTime.UtcNow;
+                if (!_lastQueryFailed)
+                {
+                    _lastQueryFailed = true;
+                    System.Diagnostics.Debug.WriteLine($"[WindowsAudioDeviceHelper] Query failed (cached {CacheTtl.TotalSeconds:0}s): {ex.Message}");
+                }
+            }
         }
         finally
         {

@@ -53,6 +53,7 @@ public partial class App : Application
         UnhandledException += (s, e) =>
         {
             System.Diagnostics.Debug.WriteLine($"[App UnhandledException] {e.Message} (Handled={e.Handled})");
+            Helpers.CrashLog.Write("App UnhandledException", e.Exception);
 
             // SH-10: only benign cancellations are swallowed. The old blanket
             // e.Handled = true turned every failure - including fatal DB/engine
@@ -69,11 +70,13 @@ public partial class App : Application
         AppDomain.CurrentDomain.UnhandledException += (s, e) =>
         {
             System.Diagnostics.Debug.WriteLine($"[AppDomain UnhandledException] {e.ExceptionObject}");
+            Helpers.CrashLog.Write($"AppDomain UnhandledException (IsTerminating={e.IsTerminating})", e.ExceptionObject as Exception);
         };
 
         System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (s, e) =>
         {
             System.Diagnostics.Debug.WriteLine($"[TaskScheduler UnobservedTaskException] {e.Exception}");
+            Helpers.CrashLog.Write("UnobservedTaskException", e.Exception);
             e.SetObserved();
         };
     }
