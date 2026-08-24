@@ -526,9 +526,14 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
             fBandwidth = 1.0f,
             fCenter = EqFreqs[index],
             fGain = _eqGains[index],
-            lBand = index
+            lBand = index,
+            // NF-21: BASS_BFX_CHANALL (-1). Left at its default this field is
+            // None(0), which matches NO channel mask - every band was configured
+            // correctly and still processed zero channels, so the EQ was silent.
+            lChannel = FXChannelFlags.All
         };
-        Bass.FXSetParameters(_eqFxHandle, p);
+        if (!Bass.FXSetParameters(_eqFxHandle, p))
+            Debug.WriteLine($"[OCTAVE ENGINE] EQ band {index} apply failed (Error: {Bass.LastError})");
     }
 
     private void RemoveEqUnlocked()
