@@ -120,8 +120,15 @@ public class ArtistEnrichmentService : IArtistEnrichmentService
 
                         var enrichedWithLocalImage = profile with { LocalImageToken = localImageToken };
 
-                        // Cache enriched profile with 30-day TTL
-                        await _cache.SetAsync(cacheKey, enrichedWithLocalImage, TimeSpan.FromDays(30), ct).ConfigureAwait(false);
+                        // PROV-04: a 30-day TTL was applied even when no image token
+                        // resolved (provider had no photo / download failed), pinning a
+                        // bio-only profile for a month. Profiles WITH a local image
+                        // keep the long TTL; imageless ones expire quickly so the next
+                        // enrichment attempt can pick the photo up.
+                        TimeSpan cacheTtl = !string.IsNullOrWhiteSpace(localImageToken)
+                            ? TimeSpan.FromDays(30)
+                            : TimeSpan.FromHours(6);
+                        await _cache.SetAsync(cacheKey, enrichedWithLocalImage, cacheTtl, ct).ConfigureAwait(false);
                         return enrichedWithLocalImage;
                     }
                 }

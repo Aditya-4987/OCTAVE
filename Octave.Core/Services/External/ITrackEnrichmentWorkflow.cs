@@ -14,6 +14,14 @@ public interface ITrackEnrichmentWorkflow
         string trackId,
         CancellationToken ct = default);
 
+    // ENR-02 companion: lazily fills a candidate's artwork and lyrics comparisons
+    // when the user selects it in the review dialog (plans hydrate only the top
+    // candidate up front).
+    Task<CandidatePreview> HydrateCandidateAsync(
+        Track track,
+        CandidatePreview preview,
+        CancellationToken ct = default);
+
     Task<EnrichmentApplyResult> ApplyEnrichmentAsync(
         EnrichmentApplyRequest request,
         CancellationToken ct = default);

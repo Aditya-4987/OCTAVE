@@ -26,6 +26,14 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
     private const double ArtistSimilarityThreshold = 0.70;
     private const double DurationToleranceSeconds = 5.0;
 
+    // SLE-09: the apply loop only counted Title/Artist/Album as "metadata updated",
+    // so a scan that fixed genre/year/track#/disc#/IDs reported metadataUpdated=0.
+    // Every tag-text write counts now (external IDs included — they live in the tag).
+    private static readonly EnrichmentActions MetadataFieldActions =
+        EnrichmentActions.WriteTitle | EnrichmentActions.WriteArtist | EnrichmentActions.WriteAlbum |
+        EnrichmentActions.WriteGenre | EnrichmentActions.WriteYear | EnrichmentActions.WriteTrackNumber |
+        EnrichmentActions.WriteDiscNumber | EnrichmentActions.WriteExternalIds;
+
     private readonly SqliteDbContext _dbContext;
     private readonly ITrackMetadataMatcher _matcher;
     private readonly ITrackMetadataEditor _metadataEditor;
@@ -37,11 +45,20 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
     private readonly IArtworkCacheManager _artworkCacheManager;
     private readonly IHttpService _httpService;
 
-    // Deduplication caches across a scan session
-    private readonly ConcurrentDictionary<string, Task<string?>> _albumArtworkTasks = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, Task<EnrichedArtistProfile?>> _artistEnrichmentTasks = new(StringComparer.OrdinalIgnoreCase);
+    // Deduplication caches across a scan session.
+    // NF-16: plain Task<T> values made GetOrAdd's known factory race observable —
+    // concurrent callers on the same key each ran their own factory (only one Task
+    // won the slot, but every loser still executed its HTTP fetch). Lazy<T> with
+    // ExecutionAndPublication guarantees exactly one factory invocation per key.
+    private readonly ConcurrentDictionary<string, Lazy<Task<string?>>> _albumArtworkTasks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, Lazy<Task<EnrichedArtistProfile?>>> _artistEnrichmentTasks = new(StringComparer.OrdinalIgnoreCase);
 
     private CancellationTokenSource? _scanCts;
+
+    // SLE-06: serializes scans. Previously two overlapping scans raced through
+    // _scanCts cancellation and cleared each other's dedup caches mid-flight.
+    private readonly SemaphoreSlim _scanGate = new(1, 1);
+
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
     public event EventHandler<LibraryEnrichmentProgress>? ProgressChanged;
@@ -73,7 +90,31 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
 
     public async Task<LibraryEnrichmentSummary> RunEnrichmentScanAsync(bool dryRun, CancellationToken ct = default)
     {
+        // SLE-06: overlapping scans used to cancel each other mid-flight AND clear
+        // each other's dedup caches (duplicate provider calls racing on the same
+        // artists/albums). Reject a second scan outright; CancelCurrentScan remains
+        // the supported way to stop the running one.
+        if (!await _scanGate.WaitAsync(0, CancellationToken.None).ConfigureAwait(false))
+        {
+            throw new InvalidOperationException("An enrichment scan is already running.");
+        }
+
+        try
+        {
+            return await RunEnrichmentScanCoreAsync(dryRun, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _scanGate.Release();
+        }
+    }
+
+    private async Task<LibraryEnrichmentSummary> RunEnrichmentScanCoreAsync(bool dryRun, CancellationToken ct)
+    {
+        // SLE-06: dispose the superseded CTS — cancelling alone leaked its callback
+        // registrations until finalization.
         _scanCts?.Cancel();
+        _scanCts?.Dispose();
         _scanCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var token = _scanCts.Token;
 
@@ -109,86 +150,129 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
 
         var settings = _settingsService.CurrentSettings;
         int maxConcurrency = Math.Clamp(settings.MaxConcurrentRequests, 1, 8);
-        using var throttle = new SemaphoreSlim(maxConcurrency, maxConcurrency);
 
-        var tasks = allTracks.Select(async track =>
+        // SLE-05: `allTracks.Select(async …)` + Task.WhenAll materialized one closure
+        // and one state machine per track up front (for a 50k-track library that is
+        // 50k queued continuations before any of them run). Parallel.ForEachAsync is
+        // the idiomatic bounded form: same MaxDegreeOfParallelism cap, lazy iteration.
+        try
         {
-            await throttle.WaitAsync(token).ConfigureAwait(false);
-            try
+            await Parallel.ForEachAsync(allTracks,
+                new ParallelOptions { MaxDegreeOfParallelism = maxConcurrency, CancellationToken = token },
+                async (track, itemCt) =>
             {
-                if (token.IsCancellationRequested) return;
+                if (itemCt.IsCancellationRequested) return;
 
-                // Check persistent state for prior exclusion
-                var existingState = await _dbContext.GetEnrichmentStateRecordAsync(track.Id).ConfigureAwait(false);
-                if (existingState.HasValue && existingState.Value.Status == (int)EnrichmentTrackStatus.NeverAskAgain)
+                try
                 {
+                    // Check persistent state for prior exclusion
+                    var existingState = await _dbContext.GetEnrichmentStateRecordAsync(track.Id).ConfigureAwait(false);
+                    if (existingState.HasValue && existingState.Value.Status == (int)EnrichmentTrackStatus.NeverAskAgain)
+                    {
+                        Interlocked.Increment(ref scannedCount);
+                        return;
+                    }
+
+                    // Notify live progress
+                    NotifyProgress(sessionId, totalTracks, scannedCount, safeReadyCount, enrichedCount,
+                        alreadyCompleteCount, needsReviewCount, noMatchCount, failedCount,
+                        track.Title, "Analyzing track...", isRunning: true, isCancelled: false);
+
+                    // Build Execution Plan for track (dryRun suppresses Artist-record
+                    // persistence — a preview scan must not mutate library data)
+                    var plan = await BuildPlanForTrackAsync(track, settings, itemCt, dryRun).ConfigureAwait(false);
+
+                    lock (executionPlans)
+                    {
+                        executionPlans.Add(plan);
+                    }
+
                     Interlocked.Increment(ref scannedCount);
-                    return;
+
+                    switch (plan.Status)
+                    {
+                        case EnrichmentTrackStatus.AlreadyComplete:
+                            Interlocked.Increment(ref alreadyCompleteCount);
+                            break;
+                        case EnrichmentTrackStatus.SafeReadyToApply:
+                            Interlocked.Increment(ref safeReadyCount);
+                            break;
+                        case EnrichmentTrackStatus.NeedsReview:
+                            Interlocked.Increment(ref needsReviewCount);
+                            break;
+                        case EnrichmentTrackStatus.NoMatch:
+                            Interlocked.Increment(ref noMatchCount);
+                            break;
+                        case EnrichmentTrackStatus.Failed:
+                            Interlocked.Increment(ref failedCount);
+                            break;
+                    }
+
+                    // Persist state in SQLite
+                    string? planJson = JsonSerializer.Serialize(plan, JsonOpts);
+                    string? candsJson = plan.AlternativeCandidates.Count > 0 ? JsonSerializer.Serialize(plan.AlternativeCandidates, JsonOpts) : null;
+
+                    await _dbContext.SetEnrichmentStateRecordAsync(
+                        track.Id,
+                        sessionId,
+                        (int)plan.Status,
+                        plan.Confidence,
+                        plan.SafetyGates.Passed,
+                        planJson,
+                        candsJson).ConfigureAwait(false);
                 }
-
-                // Notify live progress
-                NotifyProgress(sessionId, totalTracks, scannedCount, safeReadyCount, enrichedCount,
-                    alreadyCompleteCount, needsReviewCount, noMatchCount, failedCount,
-                    track.Title, "Analyzing track...", isRunning: true, isCancelled: false);
-
-                // Build Execution Plan for track
-                var plan = await BuildPlanForTrackAsync(track, settings, token).ConfigureAwait(false);
-
-                lock (executionPlans)
+                catch (OperationCanceledException) when (itemCt.IsCancellationRequested || token.IsCancellationRequested)
                 {
-                    executionPlans.Add(plan);
+                    // Scan cancelled — skip without counting as failure.
                 }
-
-                Interlocked.Increment(ref scannedCount);
-
-                switch (plan.Status)
+                catch (Exception ex)
                 {
-                    case EnrichmentTrackStatus.AlreadyComplete:
-                        Interlocked.Increment(ref alreadyCompleteCount);
-                        break;
-                    case EnrichmentTrackStatus.SafeReadyToApply:
-                        Interlocked.Increment(ref safeReadyCount);
-                        break;
-                    case EnrichmentTrackStatus.NeedsReview:
-                        Interlocked.Increment(ref needsReviewCount);
-                        break;
-                    case EnrichmentTrackStatus.NoMatch:
-                        Interlocked.Increment(ref noMatchCount);
-                        break;
-                    case EnrichmentTrackStatus.Failed:
-                        Interlocked.Increment(ref failedCount);
-                        break;
+                    // SLE-07: a crashing track used to only bump the in-memory counter —
+                    // nothing was persisted, so the review UI / session history showed
+                    // the track's stale prior status forever. Persist a Failed plan.
+                    Interlocked.Increment(ref failedCount);
+                    System.Diagnostics.Debug.WriteLine($"[SmartLibraryEnrichmentService] Error processing track '{track.Title}': {ex.Message}");
+
+                    var failedPlan = new TrackEnrichmentExecutionPlan
+                    {
+                        TrackId = track.Id,
+                        TrackUri = track.SourceUri,
+                        LocalTitle = track.Title,
+                        LocalArtist = track.ArtistName,
+                        LocalAlbum = track.AlbumTitle,
+                        LocalDurationSeconds = track.DurationSeconds,
+                        LocalYear = track.Year,
+                        LocalTrackNumber = track.TrackNumber,
+                        Status = EnrichmentTrackStatus.Failed,
+                        ErrorMessage = ex.Message
+                    };
+                    lock (executionPlans)
+                    {
+                        executionPlans.Add(failedPlan);
+                    }
+
+                    try
+                    {
+                        await _dbContext.SetEnrichmentStateRecordAsync(
+                            track.Id,
+                            sessionId,
+                            (int)EnrichmentTrackStatus.Failed,
+                            0.0,
+                            false,
+                            JsonSerializer.Serialize(failedPlan, JsonOpts),
+                            null).ConfigureAwait(false);
+                    }
+                    catch (Exception persistEx)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[SmartLibraryEnrichmentService] Could not persist failure state for '{track.Title}': {persistEx.Message}");
+                    }
                 }
-
-                // Persist state in SQLite
-                string? planJson = JsonSerializer.Serialize(plan, JsonOpts);
-                string? candsJson = plan.AlternativeCandidates.Count > 0 ? JsonSerializer.Serialize(plan.AlternativeCandidates, JsonOpts) : null;
-
-                await _dbContext.SetEnrichmentStateRecordAsync(
-                    track.Id,
-                    sessionId,
-                    (int)plan.Status,
-                    plan.Confidence,
-                    plan.SafetyGates.Passed,
-                    planJson,
-                    candsJson).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                // Scan cancelled
-            }
-            catch (Exception ex)
-            {
-                Interlocked.Increment(ref failedCount);
-                System.Diagnostics.Debug.WriteLine($"[SmartLibraryEnrichmentService] Error processing track '{track.Title}': {ex.Message}");
-            }
-            finally
-            {
-                throttle.Release();
-            }
-        });
-
-        await Task.WhenAll(tasks).ConfigureAwait(false);
+            }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Scan cancelled between iterations — fall through to summary.
+        }
 
         // 2. If NOT Dry-Run: Automatically Apply Safe Plans
         if (!dryRun && !token.IsCancellationRequested)
@@ -206,9 +290,9 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
                 if (applyResult.Success)
                 {
                     enrichedCount++;
-                    if (plan.PlannedActions.HasFlag(EnrichmentActions.WriteTitle) ||
-                        plan.PlannedActions.HasFlag(EnrichmentActions.WriteArtist) ||
-                        plan.PlannedActions.HasFlag(EnrichmentActions.WriteAlbum))
+                    // SLE-09: genre/year/track#/disc#/external-ID writes count as
+                    // metadata updates too (only Title/Artist/Album did before).
+                    if ((plan.PlannedActions & MetadataFieldActions) != 0)
                     {
                         metadataUpdated++;
                     }
@@ -258,7 +342,8 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
     public async Task<TrackEnrichmentExecutionPlan> BuildPlanForTrackAsync(
         Track track,
         ExternalDataSettings settings,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool dryRun = false)
     {
         var plan = new TrackEnrichmentExecutionPlan
         {
@@ -439,14 +524,33 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
                 ? releaseGroupId
                 : $"{meta.ArtistName ?? track.ArtistName} - {meta.AlbumTitle ?? track.AlbumTitle}";
 
-            string? artToken = await _albumArtworkTasks.GetOrAdd(albumKey, async key =>
+            Task<string?> artworkResolution = _albumArtworkTasks.GetOrAdd(albumKey, key =>
+                new Lazy<Task<string?>>(() =>
+                    _artworkOrchestrator.ResolveAndCacheAlbumArtworkAsync(
+                        meta.AlbumTitle ?? track.AlbumTitle,
+                        meta.ArtistName ?? track.ArtistName,
+                        topCandidate.ExternalIds,
+                        ct),
+                    LazyThreadSafetyMode.ExecutionAndPublication)).Value;
+
+            string? artToken;
+            try
             {
-                return await _artworkOrchestrator.ResolveAndCacheAlbumArtworkAsync(
-                    meta.AlbumTitle ?? track.AlbumTitle,
-                    meta.ArtistName ?? track.ArtistName,
-                    topCandidate.ExternalIds,
-                    ct).ConfigureAwait(false);
-            }).ConfigureAwait(false);
+                artToken = await artworkResolution.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // SLE-04: a faulted task used to stay cached — one transient network
+                // blip on an album's first track poisoned every other track of that
+                // album for the whole session (they all awaited the same fault).
+                _albumArtworkTasks.TryRemove(albumKey, out _);
+                System.Diagnostics.Debug.WriteLine($"[SmartLibraryEnrichmentService] Artwork resolution failed for '{albumKey}': {ex.Message}");
+                artToken = null;
+            }
 
             if (!string.IsNullOrWhiteSpace(artToken))
             {
@@ -471,14 +575,74 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
                 ? artistMbid
                 : meta.ArtistName ?? track.ArtistName;
 
-            _ = _artistEnrichmentTasks.GetOrAdd(artistKey, async key =>
+            Task<EnrichedArtistProfile?> artistResolution = _artistEnrichmentTasks.GetOrAdd(artistKey, key =>
+                new Lazy<Task<EnrichedArtistProfile?>>(() =>
+                    _artistEnrichmentService.GetEnrichedArtistAsync(
+                        meta.ArtistName ?? track.ArtistName,
+                        artistMbid,
+                        ct),
+                    LazyThreadSafetyMode.ExecutionAndPublication)).Value;
+
+            EnrichedArtistProfile? artistProfile;
+            try
             {
-                return await _artistEnrichmentService.GetEnrichedArtistAsync(
-                    meta.ArtistName ?? track.ArtistName,
-                    artistMbid,
-                    ct).ConfigureAwait(false);
-            });
-            plannedActions |= EnrichmentActions.EnrichArtistBioAndPhoto;
+                // SLE-03: this used to be fire-and-forget (`_ = GetOrAdd(...)`) — the
+                // profile landed in the enrichment service's own cache only, the Artist
+                // record stayed empty, IsArtistComplete never flipped true, and every
+                // subsequent scan re-fetched the same artists while the summary counted
+                // them as enriched anyway. Await it and persist below.
+                artistProfile = await artistResolution.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // Same eviction rationale as the artwork cache above (SLE-04).
+                _artistEnrichmentTasks.TryRemove(artistKey, out _);
+                System.Diagnostics.Debug.WriteLine($"[SmartLibraryEnrichmentService] Artist enrichment failed for '{artistKey}': {ex.Message}");
+                artistProfile = null;
+            }
+
+            if (artistProfile != null &&
+                (!string.IsNullOrWhiteSpace(artistProfile.Biography) || !string.IsNullOrWhiteSpace(artistProfile.LocalImageToken)))
+            {
+                string? newBio = !string.IsNullOrWhiteSpace(artistProfile.Biography) ? artistProfile.Biography : null;
+                string? newArtworkUrl = !string.IsNullOrWhiteSpace(artistProfile.LocalImageToken) ? artistProfile.LocalImageToken : null;
+
+                bool persisted = true;
+                if (!dryRun)
+                {
+                    try
+                    {
+                        var freshArtist = await _dbContext.GetArtistByIdAsync(track.ArtistId).ConfigureAwait(false);
+                        if (freshArtist != null &&
+                            ((!string.Equals(freshArtist.Bio, newBio, StringComparison.Ordinal) && newBio != null) ||
+                             (!string.Equals(freshArtist.ArtworkUrl, newArtworkUrl, StringComparison.Ordinal) && newArtworkUrl != null)))
+                        {
+                            var updated = freshArtist with
+                            {
+                                Bio = newBio ?? freshArtist.Bio,
+                                ArtworkUrl = newArtworkUrl ?? freshArtist.ArtworkUrl
+                            };
+                            await _dbContext.UpsertArtistAsync(updated).ConfigureAwait(false);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        persisted = false;
+                        System.Diagnostics.Debug.WriteLine($"[SmartLibraryEnrichmentService] Artist record persist failed for '{track.ArtistId}': {ex.Message}");
+                    }
+                }
+
+                // Flag only what actually happened (or would happen, for a dry run's
+                // preview) so artistsEnriched stops over-reporting (SLE-03).
+                if (persisted)
+                {
+                    plannedActions |= EnrichmentActions.EnrichArtistBioAndPhoto;
+                }
+            }
         }
 
         // Lyrics Retrieval
