@@ -49,57 +49,19 @@ public sealed partial class SettingsPage : Page
             EnrichmentPanel.ViewModel = null;
         };
 
-        ConfigureEnrichmentExpandAnimation();
-    }
-
-    // ENR-06: the expansion gets the standard WinUI entrance feel - fade plus a
-    // short slide-up via implicit show/hide composition animations. Purely
-    // visual: visibility toggling itself stays a plain property set.
-    private void ConfigureEnrichmentExpandAnimation()
-    {
-        try
-        {
-            var compositor = Microsoft.UI.Xaml.Hosting.ElementCompositionPreview
-                .GetElementVisual(EnrichmentPanelHost).Compositor;
-            var ease = compositor.CreateCubicBezierEasingFunction(
-                new System.Numerics.Vector2(0.0f, 0.0f), new System.Numerics.Vector2(0.0f, 1.0f));
-
-            var showOffset = compositor.CreateVector3KeyFrameAnimation();
-            showOffset.Duration = TimeSpan.FromMilliseconds(220);
-            showOffset.InsertKeyFrame(0.0f, new System.Numerics.Vector3(0f, 24f, 0f));
-            showOffset.InsertKeyFrame(1.0f, new System.Numerics.Vector3(0f, 0f, 0f), ease);
-
-            var showOpacity = compositor.CreateScalarKeyFrameAnimation();
-            showOpacity.Duration = TimeSpan.FromMilliseconds(220);
-            showOpacity.InsertKeyFrame(0.0f, 0.0f);
-            showOpacity.InsertKeyFrame(1.0f, 1.0f, ease);
-
-            var showGroup = compositor.CreateAnimationGroup();
-            showGroup.Add(showOffset);
-            showGroup.Add(showOpacity);
-            Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.SetImplicitShowAnimation(EnrichmentPanelHost, showGroup);
-
-            var hideOffset = compositor.CreateVector3KeyFrameAnimation();
-            hideOffset.Duration = TimeSpan.FromMilliseconds(140);
-            hideOffset.InsertKeyFrame(0.0f, new System.Numerics.Vector3(0f, 0f, 0f));
-            hideOffset.InsertKeyFrame(1.0f, new System.Numerics.Vector3(0f, 16f, 0f), ease);
-
-            var hideOpacity = compositor.CreateScalarKeyFrameAnimation();
-            hideOpacity.Duration = TimeSpan.FromMilliseconds(140);
-            hideOpacity.InsertKeyFrame(0.0f, 1.0f);
-            hideOpacity.InsertKeyFrame(1.0f, 0.0f, ease);
-
-            var hideGroup = compositor.CreateAnimationGroup();
-            hideGroup.Add(hideOffset);
-            hideGroup.Add(hideOpacity);
-            Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.SetImplicitHideAnimation(EnrichmentPanelHost, hideGroup);
-        }
-        catch (Exception ex)
-        {
-            // Composition is a nicety - an unavailable compositor must not break
-            // the panel itself.
-            System.Diagnostics.Debug.WriteLine($"[SettingsPage] Expand animation unavailable: {ex.Message}");
-        }
+        // NF-38: the enrichment card intentionally has NO implicit composition
+        // show/hide animation. Arming one (ElementCompositionPreview.SetImplicit*)
+        // made XAML *play* it natively the instant EnrichmentPanelHost.Visibility
+        // flips to Visible - and on a machine with a degraded composition/COM stack
+        // that commit-time path activates a composition factory through combase that
+        // can return CLASS_E_CLASSNOTAVAILABLE (0x80040111), fast-failing the whole
+        // process (0xC000027B - a stowed exception no managed try/catch can catch,
+        // because the throw never crosses back into managed code). Creating the
+        // animation objects succeeded (it was guarded); *playing* them was the fatal
+        // step and was unguardable. The panel now shows/hides via the plain
+        // Visibility toggle in ToggleLibraryEnrichmentPanel_Click - a pure property
+        // set that touches no composition factory. The entrance fade/slide was
+        // documented as "purely visual", so dropping it costs no functionality.
     }
 
     // ENR-05/06: expands the card in place instead of opening the old modal
