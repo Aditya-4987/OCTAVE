@@ -348,8 +348,10 @@ public class ArtworkPathConverter : IValueConverter
     /// <summary>
     /// Re-runs the converter for every Image / ImageBrush fill under <paramref name="root"/>
     /// whose current source came from this converter, replacing sources decoded for an
-    /// older display scale. Direct property assignment bypasses bindings safely regardless
-    /// of binding mode (OneTime included); images NOT decoded by this converter are left alone.
+    /// older display scale. Bound Images are refreshed by RE-APPLYING their binding (which
+    /// re-runs the converter at the new scale and keeps the binding live for later source
+    /// changes); only unbound sources are swapped directly. Images NOT decoded by this
+    /// converter are left alone.
     /// </summary>
     public static void RefreshBoundArtwork(UIElement root, double newScale)
     {
@@ -367,10 +369,26 @@ public class ArtworkPathConverter : IValueConverter
                 image.Source is BitmapImage imageBitmap &&
                 SourceContexts.TryGetValue(imageBitmap, out var imageCtx))
             {
-                var fresh = GetImageAtScale(imageCtx.Uri, imageCtx.Parameter, newScale);
-                if (!ReferenceEquals(fresh, imageBitmap))
+                // NF-34: most artwork Images are driven by a OneWay {Binding} (the
+                // transport-bar CurrentArtworkUrl, the ambient backdrop, list
+                // thumbnails). Assigning image.Source sets a LOCAL value, which
+                // REMOVES that binding - so after the first cross-monitor refresh
+                // the image froze and never updated again when the track changed.
+                // Re-applying the live binding re-runs the converter at the new
+                // scale WITHOUT detaching it; only truly source-assigned images
+                // (no binding expression) fall back to a direct swap.
+                var expr = image.GetBindingExpression(Image.SourceProperty);
+                if (expr?.ParentBinding != null)
                 {
-                    image.Source = fresh;
+                    image.SetBinding(Image.SourceProperty, expr.ParentBinding);
+                }
+                else
+                {
+                    var fresh = GetImageAtScale(imageCtx.Uri, imageCtx.Parameter, newScale);
+                    if (!ReferenceEquals(fresh, imageBitmap))
+                    {
+                        image.Source = fresh;
+                    }
                 }
             }
 
