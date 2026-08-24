@@ -8,6 +8,7 @@ using Octave.Core.Interfaces;
 using Octave.Core.Interfaces.External;
 using Octave.Core.Models;
 using Octave.Core.Services.Cache;
+using Octave.Core.Services.External.Settings;
 using Octave.Core.Services.Network;
 
 namespace Octave.Core.Services.External;
@@ -19,6 +20,7 @@ public class ExternalArtworkOrchestrator : IExternalArtworkOrchestrator
     private readonly IHttpService _httpService;
     private readonly IArtworkCacheManager _artworkCacheManager;
     private readonly IExternalDataCache _cache;
+    private readonly IExternalDataSettingsService? _settingsService;
     private readonly AsyncSingleFlight _singleFlight = new();
 
     public ExternalArtworkOrchestrator(
@@ -26,13 +28,48 @@ public class ExternalArtworkOrchestrator : IExternalArtworkOrchestrator
         IEnumerable<IExternalArtistImageProvider> artistImageProviders,
         IHttpService httpService,
         IArtworkCacheManager artworkCacheManager,
-        IExternalDataCache cache)
+        IExternalDataCache cache,
+        IExternalDataSettingsService? settingsService = null)
     {
         _albumArtworkProviders = albumArtworkProviders ?? Array.Empty<IExternalAlbumArtworkProvider>();
         _artistImageProviders = artistImageProviders ?? Array.Empty<IExternalArtistImageProvider>();
         _httpService = httpService ?? throw new ArgumentNullException(nameof(httpService));
         _artworkCacheManager = artworkCacheManager ?? throw new ArgumentNullException(nameof(artworkCacheManager));
         _cache = cache ?? throw new ArgumentNullException(nameof(cache));
+        _settingsService = settingsService;
+    }
+
+    // NF-36: wires the three "Caching & Networking" settings that previously had
+    // no backend. A null settings service (test call sites that omit it)
+    // preserves the previous hard-coded behaviour exactly.
+
+    // AllowStaleCacheOnProviderFailure: gates the expired-token fallback taken
+    // after a provider sweep comes back empty (default on).
+    private bool AllowStale => _settingsService?.CurrentSettings.AllowStaleCacheOnProviderFailure ?? true;
+
+    // UseCachedDataOffline: in OfflineOnlyMode, turning this off makes the
+    // orchestrator resolve nothing (providers already disabled by
+    // OfflineOnlyMode) instead of returning a cached/stale token.
+    private bool CacheDisabledOffline
+    {
+        get
+        {
+            if (_settingsService == null) return false;
+            var s = _settingsService.CurrentSettings;
+            return s.OfflineOnlyMode && !s.UseCachedDataOffline;
+        }
+    }
+
+    // CacheRetentionDays: caps how long a resolved artwork TOKEN mapping is kept.
+    // This governs re-resolution cadence only — the cached image file itself
+    // persists on disk via IArtworkCacheManager. days <= 0 or no settings =>
+    // the requested TTL stands.
+    private TimeSpan CapTtl(TimeSpan requested)
+    {
+        int days = _settingsService?.CurrentSettings.CacheRetentionDays ?? 0;
+        if (days <= 0) return requested;
+        var cap = TimeSpan.FromDays(days);
+        return requested < cap ? requested : cap;
     }
 
     public async Task<string?> ResolveAndCacheAlbumArtworkAsync(
@@ -44,6 +81,9 @@ public class ExternalArtworkOrchestrator : IExternalArtworkOrchestrator
     {
         if (string.IsNullOrWhiteSpace(albumTitle) && string.IsNullOrWhiteSpace(artistName))
             return null;
+
+        // NF-36: offline + "use cached data offline" off => resolve nothing.
+        if (CacheDisabledOffline) return null;
 
         string normArtist = MetadataTextNormalizer.Normalize(artistName);
         string normAlbum = MetadataTextNormalizer.Normalize(albumTitle);
@@ -121,7 +161,7 @@ public class ExternalArtworkOrchestrator : IExternalArtworkOrchestrator
                                         string? token = await _artworkCacheManager.CacheBytesAsync(byteResult.Data, detectedMimeType).ConfigureAwait(false);
                                         if (!string.IsNullOrWhiteSpace(token))
                                         {
-                                            await _cache.SetAsync(cacheKey, token, TimeSpan.FromDays(90), CancellationToken.None).ConfigureAwait(false);
+                                            await _cache.SetAsync(cacheKey, token, CapTtl(TimeSpan.FromDays(90)), CancellationToken.None).ConfigureAwait(false);
                                             return token;
                                         }
                                     }
@@ -135,11 +175,15 @@ public class ExternalArtworkOrchestrator : IExternalArtworkOrchestrator
                     }
                 }
 
-                // Fallback: Check stale cache on provider failure / offline
-                var stale = await _cache.GetWithMetadataAsync<string>(cacheKey, allowStale: true).ConfigureAwait(false);
-                if (stale != null && !string.IsNullOrWhiteSpace(stale.Value) && _artworkCacheManager.CachedFileExists(stale.Value))
+                // Fallback: Check stale cache on provider failure / offline.
+                // NF-36: only when "allow stale cache on provider failure" is on.
+                if (AllowStale)
                 {
-                    return stale.Value;
+                    var stale = await _cache.GetWithMetadataAsync<string>(cacheKey, allowStale: true).ConfigureAwait(false);
+                    if (stale != null && !string.IsNullOrWhiteSpace(stale.Value) && _artworkCacheManager.CachedFileExists(stale.Value))
+                    {
+                        return stale.Value;
+                    }
                 }
 
                 return null;
@@ -184,6 +228,9 @@ public class ExternalArtworkOrchestrator : IExternalArtworkOrchestrator
     {
         if (string.IsNullOrWhiteSpace(artistName))
             return null;
+
+        // NF-36: offline + "use cached data offline" off => resolve nothing.
+        if (CacheDisabledOffline) return null;
 
         string normArtist = MetadataTextNormalizer.Normalize(artistName);
         string cacheKey = $"art:artist:{normArtist}";
@@ -235,7 +282,7 @@ public class ExternalArtworkOrchestrator : IExternalArtworkOrchestrator
                                         string? token = await _artworkCacheManager.CacheBytesAsync(byteResult.Data, detectedMimeType).ConfigureAwait(false);
                                         if (!string.IsNullOrWhiteSpace(token))
                                         {
-                                            await _cache.SetAsync(cacheKey, token, TimeSpan.FromDays(90), CancellationToken.None).ConfigureAwait(false);
+                                            await _cache.SetAsync(cacheKey, token, CapTtl(TimeSpan.FromDays(90)), CancellationToken.None).ConfigureAwait(false);
                                             return token;
                                         }
                                     }
@@ -249,11 +296,15 @@ public class ExternalArtworkOrchestrator : IExternalArtworkOrchestrator
                     }
                 }
 
-                // Fallback: Check stale cache on provider failure / offline
-                var stale = await _cache.GetWithMetadataAsync<string>(cacheKey, allowStale: true).ConfigureAwait(false);
-                if (stale != null && !string.IsNullOrWhiteSpace(stale.Value) && _artworkCacheManager.CachedFileExists(stale.Value))
+                // Fallback: Check stale cache on provider failure / offline.
+                // NF-36: only when "allow stale cache on provider failure" is on.
+                if (AllowStale)
                 {
-                    return stale.Value;
+                    var stale = await _cache.GetWithMetadataAsync<string>(cacheKey, allowStale: true).ConfigureAwait(false);
+                    if (stale != null && !string.IsNullOrWhiteSpace(stale.Value) && _artworkCacheManager.CachedFileExists(stale.Value))
+                    {
+                        return stale.Value;
+                    }
                 }
 
                 return null;

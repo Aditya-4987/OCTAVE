@@ -7,6 +7,7 @@ using Octave.Core.Helpers;
 using Octave.Core.Interfaces.External;
 using Octave.Core.Models;
 using Octave.Core.Services.Cache;
+using Octave.Core.Services.External.Settings;
 
 namespace Octave.Core.Services.External;
 
@@ -19,14 +20,51 @@ public class ExternalMetadataOrchestrator : IExternalMetadataOrchestrator
 
     private readonly IEnumerable<IExternalMetadataProvider> _providers;
     private readonly IExternalDataCache _cache;
+    private readonly IExternalDataSettingsService? _settingsService;
     private readonly AsyncSingleFlight _singleFlight = new();
 
     public ExternalMetadataOrchestrator(
         IEnumerable<IExternalMetadataProvider> providers,
-        IExternalDataCache cache)
+        IExternalDataCache cache,
+        IExternalDataSettingsService? settingsService = null)
     {
         _providers = providers ?? Array.Empty<IExternalMetadataProvider>();
         _cache = cache ?? throw new ArgumentNullException(nameof(cache));
+        _settingsService = settingsService;
+    }
+
+    // NF-36: the three "Caching & Networking" settings used to be dead — every
+    // SetAsync passed a fixed TTL, the stale fallback was unconditional, and
+    // nothing honoured "use cached data offline". These helpers wire them in.
+    // A null settings service (the test call sites that omit it) preserves the
+    // previous hard-coded behaviour exactly.
+
+    // AllowStaleCacheOnProviderFailure: gates the expired-entry fallback taken
+    // after a provider sweep comes back empty (default on).
+    private bool AllowStale => _settingsService?.CurrentSettings.AllowStaleCacheOnProviderFailure ?? true;
+
+    // UseCachedDataOffline: in OfflineOnlyMode, when the user turns this off the
+    // orchestrator serves nothing from cache (providers are already disabled by
+    // OfflineOnlyMode) instead of returning cached/stale external data.
+    private bool CacheDisabledOffline
+    {
+        get
+        {
+            if (_settingsService == null) return false;
+            var s = _settingsService.CurrentSettings;
+            return s.OfflineOnlyMode && !s.UseCachedDataOffline;
+        }
+    }
+
+    // CacheRetentionDays: caps how long freshly-fetched positive data is kept.
+    // Applied only to positive-data writes; negative sentinels keep their own
+    // short TTLs. days <= 0 or no settings => the requested TTL stands.
+    private TimeSpan CapTtl(TimeSpan requested)
+    {
+        int days = _settingsService?.CurrentSettings.CacheRetentionDays ?? 0;
+        if (days <= 0) return requested;
+        var cap = TimeSpan.FromDays(days);
+        return requested < cap ? requested : cap;
     }
 
     public async Task<IReadOnlyList<TrackMatchCandidate>> SearchTrackCandidatesAsync(
@@ -40,6 +78,9 @@ public class ExternalMetadataOrchestrator : IExternalMetadataOrchestrator
         {
             return Array.Empty<TrackMatchCandidate>();
         }
+
+        // NF-36: offline + "use cached data offline" off => serve nothing.
+        if (CacheDisabledOffline) return Array.Empty<TrackMatchCandidate>();
 
         string normTitle = MetadataTextNormalizer.Normalize(title);
         string normArtist = MetadataTextNormalizer.Normalize(artist);
@@ -92,15 +133,19 @@ public class ExternalMetadataOrchestrator : IExternalMetadataOrchestrator
                 if (sorted.Count > 0)
                 {
                     // Cache search candidates with 7-day TTL
-                    await _cache.SetAsync(cacheKey, sorted, TimeSpan.FromDays(7)).ConfigureAwait(false);
+                    await _cache.SetAsync(cacheKey, sorted, CapTtl(TimeSpan.FromDays(7))).ConfigureAwait(false);
                     return (IReadOnlyList<TrackMatchCandidate>)sorted;
                 }
 
-                // Fallback: Check for stale cached results on provider failure/offline
-                var staleEntry = await _cache.GetWithMetadataAsync<List<TrackMatchCandidate>>(cacheKey, allowStale: true).ConfigureAwait(false);
-                if (staleEntry != null && staleEntry.Value.Count > 0)
+                // Fallback: Check for stale cached results on provider failure/offline.
+                // NF-36: only when "allow stale cache on provider failure" is on.
+                if (AllowStale)
                 {
-                    return staleEntry.Value;
+                    var staleEntry = await _cache.GetWithMetadataAsync<List<TrackMatchCandidate>>(cacheKey, allowStale: true).ConfigureAwait(false);
+                    if (staleEntry != null && staleEntry.Value.Count > 0)
+                    {
+                        return staleEntry.Value;
+                    }
                 }
 
                 // ORC-01: remember the fruitless sweep briefly.
@@ -128,6 +173,9 @@ public class ExternalMetadataOrchestrator : IExternalMetadataOrchestrator
         {
             return Array.Empty<AlbumMatchCandidate>();
         }
+
+        // NF-36: offline + "use cached data offline" off => serve nothing.
+        if (CacheDisabledOffline) return Array.Empty<AlbumMatchCandidate>();
 
         string normAlbum = MetadataTextNormalizer.Normalize(albumTitle);
         string normArtist = MetadataTextNormalizer.Normalize(artistName);
@@ -171,14 +219,18 @@ public class ExternalMetadataOrchestrator : IExternalMetadataOrchestrator
                 var sorted = results.OrderByDescending(c => c.Confidence).ToList();
                 if (sorted.Count > 0)
                 {
-                    await _cache.SetAsync(cacheKey, sorted, TimeSpan.FromDays(7)).ConfigureAwait(false);
+                    await _cache.SetAsync(cacheKey, sorted, CapTtl(TimeSpan.FromDays(7))).ConfigureAwait(false);
                     return (IReadOnlyList<AlbumMatchCandidate>)sorted;
                 }
 
-                var staleEntry = await _cache.GetWithMetadataAsync<List<AlbumMatchCandidate>>(cacheKey, allowStale: true).ConfigureAwait(false);
-                if (staleEntry != null && staleEntry.Value.Count > 0)
+                // NF-36: stale fallback gated on "allow stale cache on provider failure".
+                if (AllowStale)
                 {
-                    return staleEntry.Value;
+                    var staleEntry = await _cache.GetWithMetadataAsync<List<AlbumMatchCandidate>>(cacheKey, allowStale: true).ConfigureAwait(false);
+                    if (staleEntry != null && staleEntry.Value.Count > 0)
+                    {
+                        return staleEntry.Value;
+                    }
                 }
 
                 var negative = new List<AlbumMatchCandidate>();
@@ -202,6 +254,9 @@ public class ExternalMetadataOrchestrator : IExternalMetadataOrchestrator
         {
             return Array.Empty<ArtistMatchCandidate>();
         }
+
+        // NF-36: offline + "use cached data offline" off => serve nothing.
+        if (CacheDisabledOffline) return Array.Empty<ArtistMatchCandidate>();
 
         string normArtist = MetadataTextNormalizer.Normalize(artistName);
         string cacheKey = $"search:artist:{normArtist}";
@@ -244,14 +299,18 @@ public class ExternalMetadataOrchestrator : IExternalMetadataOrchestrator
                 var sorted = results.OrderByDescending(c => c.Confidence).ToList();
                 if (sorted.Count > 0)
                 {
-                    await _cache.SetAsync(cacheKey, sorted, TimeSpan.FromDays(7)).ConfigureAwait(false);
+                    await _cache.SetAsync(cacheKey, sorted, CapTtl(TimeSpan.FromDays(7))).ConfigureAwait(false);
                     return (IReadOnlyList<ArtistMatchCandidate>)sorted;
                 }
 
-                var staleEntry = await _cache.GetWithMetadataAsync<List<ArtistMatchCandidate>>(cacheKey, allowStale: true).ConfigureAwait(false);
-                if (staleEntry != null && staleEntry.Value.Count > 0)
+                // NF-36: stale fallback gated on "allow stale cache on provider failure".
+                if (AllowStale)
                 {
-                    return staleEntry.Value;
+                    var staleEntry = await _cache.GetWithMetadataAsync<List<ArtistMatchCandidate>>(cacheKey, allowStale: true).ConfigureAwait(false);
+                    if (staleEntry != null && staleEntry.Value.Count > 0)
+                    {
+                        return staleEntry.Value;
+                    }
                 }
 
                 var negative = new List<ArtistMatchCandidate>();
@@ -302,6 +361,9 @@ public class ExternalMetadataOrchestrator : IExternalMetadataOrchestrator
         if (string.IsNullOrWhiteSpace(providerName) || string.IsNullOrWhiteSpace(providerEntityId))
             return null;
 
+        // NF-36: offline + "use cached data offline" off => serve nothing.
+        if (CacheDisabledOffline) return null;
+
         string cacheKey = $"meta:track:{providerName.ToLowerInvariant()}:{providerEntityId}";
         var cached = await _cache.GetAsync<ExternalTrackMetadata>(cacheKey, ct).ConfigureAwait(false);
         if (cached != null) return cached;
@@ -323,7 +385,7 @@ public class ExternalMetadataOrchestrator : IExternalMetadataOrchestrator
                     var meta = await provider.GetTrackMetadataAsync(providerEntityId, CancellationToken.None).ConfigureAwait(false);
                     if (meta != null)
                     {
-                        await _cache.SetAsync(cacheKey, meta, TimeSpan.FromDays(30), CancellationToken.None).ConfigureAwait(false);
+                        await _cache.SetAsync(cacheKey, meta, CapTtl(TimeSpan.FromDays(30)), CancellationToken.None).ConfigureAwait(false);
                         return meta;
                     }
                 }
@@ -332,7 +394,9 @@ public class ExternalMetadataOrchestrator : IExternalMetadataOrchestrator
                     System.Diagnostics.Debug.WriteLine($"[ExternalMetadataOrchestrator] GetTrackMetadataAsync failed for '{providerName}:{providerEntityId}': {ex.Message}");
                 }
 
-                // Stale fallback on network error/offline
+                // Stale fallback on network error/offline.
+                // NF-36: gated on "allow stale cache on provider failure".
+                if (!AllowStale) return null;
                 var stale = await _cache.GetWithMetadataAsync<ExternalTrackMetadata>(cacheKey, allowStale: true).ConfigureAwait(false);
                 return stale?.Value;
             }, ct).ConfigureAwait(false);
@@ -352,6 +416,9 @@ public class ExternalMetadataOrchestrator : IExternalMetadataOrchestrator
     {
         if (string.IsNullOrWhiteSpace(providerName) || string.IsNullOrWhiteSpace(providerEntityId))
             return null;
+
+        // NF-36: offline + "use cached data offline" off => serve nothing.
+        if (CacheDisabledOffline) return null;
 
         string cacheKey = $"meta:album:{providerName.ToLowerInvariant()}:{providerEntityId}";
         var cached = await _cache.GetAsync<ExternalAlbumMetadata>(cacheKey, ct).ConfigureAwait(false);
@@ -374,7 +441,7 @@ public class ExternalMetadataOrchestrator : IExternalMetadataOrchestrator
                     var meta = await provider.GetAlbumMetadataAsync(providerEntityId, CancellationToken.None).ConfigureAwait(false);
                     if (meta != null)
                     {
-                        await _cache.SetAsync(cacheKey, meta, TimeSpan.FromDays(30), CancellationToken.None).ConfigureAwait(false);
+                        await _cache.SetAsync(cacheKey, meta, CapTtl(TimeSpan.FromDays(30)), CancellationToken.None).ConfigureAwait(false);
                         return meta;
                     }
                 }
@@ -383,6 +450,8 @@ public class ExternalMetadataOrchestrator : IExternalMetadataOrchestrator
                     System.Diagnostics.Debug.WriteLine($"[ExternalMetadataOrchestrator] GetAlbumMetadataAsync failed for '{providerName}:{providerEntityId}': {ex.Message}");
                 }
 
+                // NF-36: stale fallback gated on "allow stale cache on provider failure".
+                if (!AllowStale) return null;
                 var stale = await _cache.GetWithMetadataAsync<ExternalAlbumMetadata>(cacheKey, allowStale: true).ConfigureAwait(false);
                 return stale?.Value;
             }, ct).ConfigureAwait(false);
@@ -402,6 +471,9 @@ public class ExternalMetadataOrchestrator : IExternalMetadataOrchestrator
     {
         if (string.IsNullOrWhiteSpace(providerName) || string.IsNullOrWhiteSpace(providerEntityId))
             return null;
+
+        // NF-36: offline + "use cached data offline" off => serve nothing.
+        if (CacheDisabledOffline) return null;
 
         string cacheKey = $"meta:artist:{providerName.ToLowerInvariant()}:{providerEntityId}";
         var cached = await _cache.GetAsync<ExternalArtistMetadata>(cacheKey, ct).ConfigureAwait(false);
@@ -424,7 +496,7 @@ public class ExternalMetadataOrchestrator : IExternalMetadataOrchestrator
                     var meta = await provider.GetArtistMetadataAsync(providerEntityId, CancellationToken.None).ConfigureAwait(false);
                     if (meta != null)
                     {
-                        await _cache.SetAsync(cacheKey, meta, TimeSpan.FromDays(30), CancellationToken.None).ConfigureAwait(false);
+                        await _cache.SetAsync(cacheKey, meta, CapTtl(TimeSpan.FromDays(30)), CancellationToken.None).ConfigureAwait(false);
                         return meta;
                     }
                 }
@@ -433,6 +505,8 @@ public class ExternalMetadataOrchestrator : IExternalMetadataOrchestrator
                     System.Diagnostics.Debug.WriteLine($"[ExternalMetadataOrchestrator] GetArtistMetadataAsync failed for '{providerName}:{providerEntityId}': {ex.Message}");
                 }
 
+                // NF-36: stale fallback gated on "allow stale cache on provider failure".
+                if (!AllowStale) return null;
                 var stale = await _cache.GetWithMetadataAsync<ExternalArtistMetadata>(cacheKey, allowStale: true).ConfigureAwait(false);
                 return stale?.Value;
             }, ct).ConfigureAwait(false);

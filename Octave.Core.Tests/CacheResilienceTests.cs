@@ -13,6 +13,7 @@ using Octave.Core.Models;
 using Octave.Core.Services.Cache;
 using Octave.Core.Services.Database;
 using Octave.Core.Services.External;
+using Octave.Core.Services.External.Settings;
 using Octave.Core.Services.Metadata;
 using Octave.Core.Services.Network;
 using Xunit;
@@ -383,5 +384,177 @@ public class CacheResilienceTests : IDisposable
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
             HandlerFunc(request, cancellationToken);
+    }
+
+    // =================================================================
+    // NF-36: the three "Caching & Networking" settings now have a backend.
+    // Previously every SetAsync passed a fixed TTL, the stale fallback was
+    // unconditional, and nothing honoured "use cached data offline" — the UI
+    // toggles were dead. A null settings service preserves the old hard-coded
+    // behaviour (unaffected test call sites); a live one gates offline cache
+    // use, the stale fallback, and the retention TTL cap.
+    // =================================================================
+
+    // A fully-loaded settings service over this test's DB. The HTTP service is
+    // inert here — settings persistence/apply never calls out.
+    private ExternalDataSettingsService BuildSettingsService()
+    {
+        var httpClient = new HttpClient(new MockHttpMessageHandlerForArt());
+        var httpService = new HttpService(new ProviderRateLimiterRegistry(TimeSpan.FromMilliseconds(1)), httpClient);
+        var settings = new ExternalDataSettingsService(_dbContext, httpService, new TheAudioDbOptions());
+        settings.LoadSettingsAsync().GetAwaiter().GetResult();
+        return settings;
+    }
+
+    private static Mock<IExternalMetadataProvider> BuildTrackProvider(string name)
+    {
+        var provider = new Mock<IExternalMetadataProvider>();
+        provider.SetupGet(p => p.ProviderName).Returns(name);
+        provider.SetupGet(p => p.IsEnabled).Returns(true);
+        provider.SetupGet(p => p.Priority).Returns(1);
+        return provider;
+    }
+
+    private static ExternalTrackMetadata SampleTrackMeta(string title) =>
+        new ExternalTrackMetadata(title, "NF36 Artist", "NF36 Album", 2021, null, 1, 1, 210.0, null, new ExternalIds());
+
+    // --- UseCachedDataOffline ------------------------------------------------
+
+    [Fact]
+    public async Task MetadataSearch_OfflineOnly_CacheUseDisabled_ServesNothingFromWarmCache()
+    {
+        var settings = BuildSettingsService();
+        var provider = BuildTrackProvider("nf36prov");
+        provider.Setup(p => p.SearchTrackCandidatesAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<double?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new TrackMatchCandidate("nf36prov", new ExternalIds(), 0.9, "match", SampleTrackMeta("Warm Song")) });
+
+        var orchestrator = new ExternalMetadataOrchestrator(
+            new[] { provider.Object }, new TwoTierExternalDataCache(_dbContext), settings);
+
+        // Default settings: the sweep runs and the result is cached.
+        var warm = await orchestrator.SearchTrackCandidatesAsync("Warm Song", "NF36 Artist");
+        Assert.Single(warm);
+
+        // Offline + "use cached data offline" OFF: even the warm cache is withheld.
+        var s = settings.CurrentSettings;
+        s.OfflineOnlyMode = true;
+        s.UseCachedDataOffline = false;
+        await settings.UpdateSettingsAsync(s);
+
+        var offline = await orchestrator.SearchTrackCandidatesAsync("Warm Song", "NF36 Artist");
+        Assert.Empty(offline);
+
+        // The short-circuit precedes both the cache read and any provider sweep.
+        provider.Verify(p => p.SearchTrackCandidatesAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<double?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task MetadataSearch_OfflineOnly_CacheUseEnabled_StillServesWarmCache()
+    {
+        var settings = BuildSettingsService();
+        var provider = BuildTrackProvider("nf36prov");
+        provider.Setup(p => p.SearchTrackCandidatesAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<double?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new TrackMatchCandidate("nf36prov", new ExternalIds(), 0.9, "match", SampleTrackMeta("Warm Song")) });
+
+        var orchestrator = new ExternalMetadataOrchestrator(
+            new[] { provider.Object }, new TwoTierExternalDataCache(_dbContext), settings);
+
+        var warm = await orchestrator.SearchTrackCandidatesAsync("Warm Song", "NF36 Artist");
+        Assert.Single(warm);
+
+        // Offline ON but cache use LEFT ON (default): the warm cache is served
+        // without re-sweeping providers — proving the toggle, not offline mode
+        // alone, is what withholds the cache in the test above.
+        var s = settings.CurrentSettings;
+        s.OfflineOnlyMode = true; // UseCachedDataOffline stays true (default)
+        await settings.UpdateSettingsAsync(s);
+
+        var offline = await orchestrator.SearchTrackCandidatesAsync("Warm Song", "NF36 Artist");
+        Assert.Single(offline);
+        provider.Verify(p => p.SearchTrackCandidatesAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<double?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // --- AllowStaleCacheOnProviderFailure ------------------------------------
+
+    [Fact]
+    public async Task GetTrackMetadata_ProviderReturnsNothing_AllowStaleDefault_ServesExpiredEntry()
+    {
+        var settings = BuildSettingsService(); // AllowStale defaults ON
+        var cache = new TwoTierExternalDataCache(_dbContext);
+
+        // Seed an EXPIRED positive entry under the deterministic get-meta key.
+        await cache.SetAsync("meta:track:staleprov:e1", SampleTrackMeta("Stale Song"), TimeSpan.FromMilliseconds(40));
+        await Task.Delay(120);
+
+        var provider = BuildTrackProvider("staleprov");
+        provider.Setup(p => p.GetTrackMetadataAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ExternalTrackMetadata?)null);
+
+        var orchestrator = new ExternalMetadataOrchestrator(new[] { provider.Object }, cache, settings);
+
+        var result = await orchestrator.GetTrackMetadataAsync("staleprov", "e1");
+        Assert.NotNull(result);
+        Assert.Equal("Stale Song", result!.Title);
+    }
+
+    [Fact]
+    public async Task GetTrackMetadata_ProviderReturnsNothing_AllowStaleDisabled_ReturnsNull()
+    {
+        var settings = BuildSettingsService();
+        var s = settings.CurrentSettings;
+        s.AllowStaleCacheOnProviderFailure = false;
+        await settings.UpdateSettingsAsync(s);
+
+        var cache = new TwoTierExternalDataCache(_dbContext);
+        await cache.SetAsync("meta:track:staleprov:e1", SampleTrackMeta("Stale Song"), TimeSpan.FromMilliseconds(40));
+        await Task.Delay(120);
+
+        var provider = BuildTrackProvider("staleprov");
+        provider.Setup(p => p.GetTrackMetadataAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ExternalTrackMetadata?)null);
+
+        var orchestrator = new ExternalMetadataOrchestrator(new[] { provider.Object }, cache, settings);
+
+        // Stale fallback gated off: the expired entry must NOT be served.
+        Assert.Null(await orchestrator.GetTrackMetadataAsync("staleprov", "e1"));
+    }
+
+    // --- CacheRetentionDays --------------------------------------------------
+
+    [Fact]
+    public async Task GetTrackMetadata_CacheRetentionDays_CapsPositiveTtl()
+    {
+        var settings = BuildSettingsService();
+        var cache = new TwoTierExternalDataCache(_dbContext);
+
+        var provider = BuildTrackProvider("capprov");
+        provider.Setup(p => p.GetTrackMetadataAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(SampleTrackMeta("Capped Song"));
+
+        var orchestrator = new ExternalMetadataOrchestrator(new[] { provider.Object }, cache, settings);
+
+        // Low retention caps the 30-day get-meta TTL down to ~1 day.
+        var low = settings.CurrentSettings;
+        low.CacheRetentionDays = 1;
+        await settings.UpdateSettingsAsync(low);
+
+        Assert.NotNull(await orchestrator.GetTrackMetadataAsync("capprov", "cap1"));
+        var capped = await cache.GetWithMetadataAsync<ExternalTrackMetadata>("meta:track:capprov:cap1", allowStale: true);
+        Assert.NotNull(capped);
+        var cappedLifetime = capped!.ExpiresAt - capped.CreatedAt;
+        Assert.True(cappedLifetime <= TimeSpan.FromDays(1) + TimeSpan.FromMinutes(1), $"expected ~1 day, got {cappedLifetime}");
+        Assert.True(cappedLifetime >= TimeSpan.FromHours(23), $"expected ~1 day, got {cappedLifetime}");
+
+        // Control: a generous retention leaves the 30-day TTL intact — the cap
+        // only ever shortens, never lengthens.
+        var high = settings.CurrentSettings;
+        high.CacheRetentionDays = 3650;
+        await settings.UpdateSettingsAsync(high);
+
+        Assert.NotNull(await orchestrator.GetTrackMetadataAsync("capprov", "cap2"));
+        var uncapped = await cache.GetWithMetadataAsync<ExternalTrackMetadata>("meta:track:capprov:cap2", allowStale: true);
+        Assert.NotNull(uncapped);
+        var uncappedLifetime = uncapped!.ExpiresAt - uncapped.CreatedAt;
+        Assert.True(uncappedLifetime > TimeSpan.FromDays(2), $"expected ~30 days, got {uncappedLifetime}");
     }
 }

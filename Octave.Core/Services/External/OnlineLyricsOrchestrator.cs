@@ -7,6 +7,7 @@ using Octave.Core.Helpers;
 using Octave.Core.Interfaces.External;
 using Octave.Core.Models;
 using Octave.Core.Services.Cache;
+using Octave.Core.Services.External.Settings;
 
 namespace Octave.Core.Services.External;
 
@@ -20,14 +21,49 @@ public class OnlineLyricsOrchestrator : IOnlineLyricsOrchestrator
 
     private readonly IEnumerable<IExternalLyricsProvider> _providers;
     private readonly IExternalDataCache _cache;
+    private readonly IExternalDataSettingsService? _settingsService;
     private readonly AsyncSingleFlight _singleFlight = new();
 
     public OnlineLyricsOrchestrator(
         IEnumerable<IExternalLyricsProvider> providers,
-        IExternalDataCache cache)
+        IExternalDataCache cache,
+        IExternalDataSettingsService? settingsService = null)
     {
         _providers = providers ?? Array.Empty<IExternalLyricsProvider>();
         _cache = cache ?? throw new ArgumentNullException(nameof(cache));
+        _settingsService = settingsService;
+    }
+
+    // NF-36: wires the three "Caching & Networking" settings that previously had
+    // no backend. A null settings service (test call sites that omit it)
+    // preserves the previous hard-coded behaviour exactly.
+
+    // AllowStaleCacheOnProviderFailure: gates the expired-entry fallback taken
+    // after a provider sweep comes back empty (default on).
+    private bool AllowStale => _settingsService?.CurrentSettings.AllowStaleCacheOnProviderFailure ?? true;
+
+    // UseCachedDataOffline: in OfflineOnlyMode, turning this off makes the
+    // orchestrator serve nothing from cache (providers already disabled by
+    // OfflineOnlyMode) instead of returning cached/stale lyrics.
+    private bool CacheDisabledOffline
+    {
+        get
+        {
+            if (_settingsService == null) return false;
+            var s = _settingsService.CurrentSettings;
+            return s.OfflineOnlyMode && !s.UseCachedDataOffline;
+        }
+    }
+
+    // CacheRetentionDays: caps how long freshly-fetched positive data is kept.
+    // Applied only to positive-data writes; the negative sentinel keeps its own
+    // short TTL. days <= 0 or no settings => the requested TTL stands.
+    private TimeSpan CapTtl(TimeSpan requested)
+    {
+        int days = _settingsService?.CurrentSettings.CacheRetentionDays ?? 0;
+        if (days <= 0) return requested;
+        var cap = TimeSpan.FromDays(days);
+        return requested < cap ? requested : cap;
     }
 
     public async Task<LyricsData> FetchLyricsAsync(
@@ -48,6 +84,12 @@ public class OnlineLyricsOrchestrator : IOnlineLyricsOrchestrator
         // per-caller tokens, so without this entry gate the full sweep (and its
         // HTTP traffic) would run solely for a caller who is already gone.
         if (ct.IsCancellationRequested)
+        {
+            return new LyricsData(null, LyricsState.Unavailable, null, null);
+        }
+
+        // NF-36: offline + "use cached data offline" off => serve nothing.
+        if (CacheDisabledOffline)
         {
             return new LyricsData(null, LyricsState.Unavailable, null, null);
         }
@@ -99,7 +141,7 @@ public class OnlineLyricsOrchestrator : IOnlineLyricsOrchestrator
                         {
                             var data = new LyricsData(result.TrackId, result.State, result.SyncedLines, result.PlainText);
                             // Cache successful lyrics retrieval with a 30-day TTL
-                            await _cache.SetAsync(cacheKey, data, TimeSpan.FromDays(30)).ConfigureAwait(false);
+                            await _cache.SetAsync(cacheKey, data, CapTtl(TimeSpan.FromDays(30))).ConfigureAwait(false);
                             return data;
                         }
                     }
@@ -116,10 +158,14 @@ public class OnlineLyricsOrchestrator : IOnlineLyricsOrchestrator
 
                 // Fallback: Check stale cache on provider failure / offline. A stale
                 // NEGATIVE entry must not masquerade as a usable fallback.
-                var staleEntry = await _cache.GetWithMetadataAsync<LyricsData>(cacheKey, allowStale: true).ConfigureAwait(false);
-                if (staleEntry != null && staleEntry.Value.State != LyricsState.Unavailable && staleEntry.Value.State != LyricsState.Loading)
+                // NF-36: only when "allow stale cache on provider failure" is on.
+                if (AllowStale)
                 {
-                    return staleEntry.Value;
+                    var staleEntry = await _cache.GetWithMetadataAsync<LyricsData>(cacheKey, allowStale: true).ConfigureAwait(false);
+                    if (staleEntry != null && staleEntry.Value.State != LyricsState.Unavailable && staleEntry.Value.State != LyricsState.Loading)
+                    {
+                        return staleEntry.Value;
+                    }
                 }
 
                 // ORC-01: remember the failed sweep as a short-TTL negative sentinel.
