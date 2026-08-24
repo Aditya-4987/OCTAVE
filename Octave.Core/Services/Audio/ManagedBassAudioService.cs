@@ -143,12 +143,14 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
 
         LoadPlugins();
         
-        try 
+        try
         {
-            _ = ManagedBass.Fx.BassFx.Version; 
-        } 
-        catch (Exception ex) 
+            _ = ManagedBass.Fx.BassFx.Version;
+            IsEqEngineAvailable = true;
+        }
+        catch (Exception ex)
         {
+            IsEqEngineAvailable = false;
             Debug.WriteLine($"[OCTAVE ENGINE] Failed to initialize BASS_FX: {ex.Message}");
         }
 
@@ -439,6 +441,10 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
     // ---- Equalizer --------------------------------------------------------
 
     public IReadOnlyList<int> EqFrequencies => EqFreqs;
+
+    // UI-ST-04: probed once during Init - bass_fx.dll is native, so a missing
+    // file surfaces as a P/Invoke failure the first time BassFx is touched.
+    public bool IsEqEngineAvailable { get; private set; }
 
     public bool IsEqEnabled => _eqEnabled;
 

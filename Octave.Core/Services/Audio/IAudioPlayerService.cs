@@ -46,6 +46,9 @@ public interface IAudioPlayerService
 
     // 10-band graphic equalizer (requires bass_fx.dll at runtime).
     System.Collections.Generic.IReadOnlyList<int> EqFrequencies { get; }
+    // UI-ST-04: false when bass_fx.dll failed to load, so the UI can say the EQ
+    // is silently unavailable instead of offering sliders that do nothing.
+    bool IsEqEngineAvailable { get; }
     bool IsEqEnabled { get; }
     void SetEqEnabled(bool enabled);
     void SetEqBand(int index, float gainDb);

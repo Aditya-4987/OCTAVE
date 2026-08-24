@@ -6,6 +6,7 @@ using Octave.Core.Services.Audio;
 using Octave.Core.Services.Database;
 using Octave.Core.Services.Library;
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.IO;
@@ -185,7 +186,14 @@ public partial class ShellViewModel : ObservableObject
         foreach (var band in EqBands)
         {
             band.PushInitialGainToEngine();
+            // UI-ST-03: every gain change - slider drag or preset apply -
+            // recomputes the active-preset indicator from the band values.
+            band.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(EqBandViewModel.Gain)) UpdateActivePresetName();
+            };
         }
+        UpdateActivePresetName();
 
         // Translate a user drag-reorder in the queue list into a queue operation.
         QueueItems.CollectionChanged += OnQueueItemsChanged;
@@ -492,6 +500,27 @@ public partial class ShellViewModel : ObservableObject
 
     public ObservableCollection<EqBandViewModel> EqBands { get; } = new();
 
+    // UI-ST-03: single source of truth for preset gain curves, so the active-
+    // preset indicator compares against exactly what applying a preset writes.
+    private static readonly Dictionary<string, double[]> PresetGains = new()
+    {
+        ["Flat"]        = new double[] { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        ["BassBoost"]   = new double[] { 6, 5, 4, 2, 0, 0, 0, 0, 0, 0 },
+        ["TrebleBoost"] = new double[] { 0, 0, 0, 0, 0, 0, 2, 4, 5, 6 },
+        ["Vocal"]       = new double[] { -2, -1, 0, 2, 4, 4, 3, 1, 0, -1 },
+        ["Electronic"]  = new double[] { 4, 3, 0, -2, -3, -3, -1, 2, 4, 5 },
+        ["Acoustic"]    = new double[] { 3, 4, 3, 1, 1, 1, 2, 2, 1, 0 },
+    };
+
+    // UI-ST-03: which preset currently matches the band gains ("Custom" once the
+    // user hand-tunes anything). Derived from actual values, so a restored
+    // session shows its true state without extra plumbing.
+    [ObservableProperty]
+    public partial string ActivePresetName { get; set; } = "";
+
+    // UI-ST-04: lets the Settings page show whether bass_fx.dll actually loaded.
+    public bool IsEqEngineAvailable => _audioPlayer.IsEqEngineAvailable;
+
     public bool EqEnabled
     {
         get => _audioPlayer.IsEqEnabled;
@@ -505,21 +534,33 @@ public partial class ShellViewModel : ObservableObject
     [RelayCommand]
     private void EqPreset(string? preset)
     {
-        // Gain values (dB) per band for each preset, low -> high frequency.
-        double[] gains = preset switch
-        {
-            "BassBoost" => new double[] { 6, 5, 4, 2, 0, 0, 0, 0, 0, 0 },
-            "TrebleBoost" => new double[] { 0, 0, 0, 0, 0, 0, 2, 4, 5, 6 },
-            "Vocal" => new double[] { -2, -1, 0, 2, 4, 4, 3, 1, 0, -1 },
-            "Electronic" => new double[] { 4, 3, 0, -2, -3, -3, -1, 2, 4, 5 },
-            "Acoustic" => new double[] { 3, 4, 3, 1, 1, 1, 2, 2, 1, 0 },
-            _ => new double[] { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 } // Flat
-        };
+        double[] gains = PresetGains.GetValueOrDefault(preset ?? "", PresetGains["Flat"]);
 
         for (int i = 0; i < EqBands.Count && i < gains.Length; i++)
         {
-            EqBands[i].Gain = gains[i]; // setter applies to the engine
+            EqBands[i].Gain = gains[i]; // setter applies to the engine (and raises
+                                        // the PropertyChanged that refreshes ActivePresetName)
         }
+    }
+
+    private void UpdateActivePresetName()
+    {
+        if (EqBands.Count == 0) return;
+
+        foreach (var (name, gains) in PresetGains)
+        {
+            bool match = gains.Length == EqBands.Count;
+            for (int i = 0; match && i < gains.Length; i++)
+            {
+                match = Math.Abs(EqBands[i].Gain - gains[i]) <= 0.01;
+            }
+            if (match)
+            {
+                ActivePresetName = name;
+                return;
+            }
+        }
+        ActivePresetName = "Custom";
     }
 
     // ---- Duplicate detection ----------------------------------------------

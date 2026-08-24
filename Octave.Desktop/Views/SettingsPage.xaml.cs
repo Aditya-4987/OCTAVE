@@ -17,6 +17,19 @@ public sealed partial class SettingsPage : Page
     public Visibility BoolToVisibilityInverted(bool value) => value ? Visibility.Collapsed : Visibility.Visible;
     public bool BoolToInverted(bool value) => !value;
 
+    // UI-ST-03: check glyph on the EQ preset button whose curve matches the
+    // current band gains.
+    public Visibility PresetCheckVisible(string preset, string activePreset)
+        => string.Equals(preset, activePreset, System.StringComparison.Ordinal)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+    // The sleep-timer status line only carries information while a timer runs.
+    public Visibility StatusVisibleWhenActive(string status)
+        => string.Equals(status, "Off", System.StringComparison.Ordinal)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+
     public SettingsPage()
     {
         ViewModel = App.Services.GetRequiredService<ShellViewModel>();
@@ -41,6 +54,23 @@ public sealed partial class SettingsPage : Page
         _ = ExternalSettings.SaveCommand.ExecuteAsync(null);
     }
 
+    // Remade sleep timer: one ComboBox instead of five loose buttons; the
+    // status line stays the single source of truth for what is armed.
+    private void SleepTimerCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (ViewModel == null) return;
+
+        int minutes = (sender as ComboBox)?.SelectedIndex switch
+        {
+            1 => 15,
+            2 => 30,
+            3 => 45,
+            4 => 60,
+            _ => 0
+        };
+        ViewModel.SetSleepTimerCommand.Execute(minutes.ToString());
+    }
+
     private void SettingSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         _ = ExternalSettings.SaveCommand.ExecuteAsync(null);
@@ -60,9 +90,15 @@ public sealed partial class SettingsPage : Page
     {
         if (sender is PasswordBox pb)
         {
+            // Sync only - the save used to fire here too, rewriting the WHOLE
+            // ExternalDataSettings object once per typed character.
             ExternalSettings.TheAudioDbApiKey = pb.Password;
-            _ = ExternalSettings.SaveCommand.ExecuteAsync(null);
         }
+    }
+
+    private void TheAudioDbPasswordBox_LostFocus(object sender, RoutedEventArgs e)
+    {
+        _ = ExternalSettings.SaveCommand.ExecuteAsync(null);
     }
 
     private async void OpenLibraryEnrichment_Click(object sender, RoutedEventArgs e)
