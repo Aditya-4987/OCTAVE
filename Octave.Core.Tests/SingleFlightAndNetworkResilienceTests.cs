@@ -282,4 +282,98 @@ public class SingleFlightAndNetworkResilienceTests
         Assert.True(sw.ElapsedMilliseconds >= 250,
             $"shorter NotifyRetryAfter must not shorten the window; observed {sw.ElapsedMilliseconds}ms");
     }
+
+    // =================================================================
+    // TEST-12: empty keys bypass dedup entirely (nothing to key on) while
+    // still honoring each caller's token.
+    // =================================================================
+
+    [Fact]
+    public async Task SingleFlight_EmptyKey_BypassesDedupAndHonorsToken()
+    {
+        var flight = new AsyncSingleFlight();
+        int factoryRuns = 0;
+        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        Task<string?> first = flight.ExecuteAsync<string>("", async () =>
+        {
+            Interlocked.Increment(ref factoryRuns);
+            firstStarted.TrySetResult();
+            await release.Task;
+            return "first";
+        }, CancellationToken.None);
+
+        await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Second empty-key call must NOT ride the first flight — unrelated
+        // lookups share nothing just because their keys were both blank.
+        Task<string?> second = flight.ExecuteAsync<string>("", () =>
+        {
+            Interlocked.Increment(ref factoryRuns);
+            return Task.FromResult<string?>("second");
+        }, CancellationToken.None);
+
+        Assert.Equal("second", await second.WaitAsync(TimeSpan.FromSeconds(5)));
+        release.TrySetResult();
+        Assert.Equal("first", await first.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(2, Volatile.Read(ref factoryRuns));
+
+        // Without a key the token still ends the caller's own wait. The factory
+        // must be genuinely asynchronous — an already-completed task returns
+        // before WaitAsync ever consults the token.
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            flight.ExecuteAsync<string>("", async () =>
+            {
+                await Task.Delay(50);
+                return "ignored";
+            }, cts.Token).WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
+    public async Task SingleFlight_ConcurrentThrowingFactory_AllWaitersObserveTheFault()
+    {
+        // Complements SF_FactoryFault_PropagatesToJoiner: here ALL callers pile in
+        // up front, so every waiter must see the shared fault and the entry must be
+        // removed afterwards — a later caller starts a fresh generation.
+        var flight = new AsyncSingleFlight();
+        int attempts = 0;
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var callers = Enumerable.Range(0, 8).Select(_ =>
+            flight.ExecuteAsync<string>("sf_all_fault", async () =>
+            {
+                if (Interlocked.Increment(ref attempts) == 1)
+                {
+                    await gate.Task; // hold the flight open until everyone has joined
+                }
+                throw new InvalidOperationException($"fault-{Volatile.Read(ref attempts)}");
+            }, CancellationToken.None)).ToArray();
+
+        // Registration above is synchronous, so all eight are already attached.
+        gate.TrySetResult();
+
+        string[] outcomes = await Task.WhenAll(callers.Select(async c =>
+        {
+            try
+            {
+                await c.WaitAsync(TimeSpan.FromSeconds(10));
+                return "no-fault";
+            }
+            catch (InvalidOperationException ex)
+            {
+                return ex.Message;
+            }
+        }));
+
+        Assert.All(outcomes, f => Assert.StartsWith("fault-", f));
+        Assert.Equal(1, Volatile.Read(ref attempts)); // exactly one factory run for the whole flight
+
+        string? recovered = await flight.ExecuteAsync<string>(
+            "sf_all_fault", () => Task.FromResult<string?>("fresh"), CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("fresh", recovered); // faulted entry removed, not cached forever
+    }
 }

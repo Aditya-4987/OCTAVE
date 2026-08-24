@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Data.Sqlite;
 using Moq;
 using Octave.Core.Interfaces;
 using Octave.Core.Models;
@@ -16,15 +17,23 @@ namespace Octave.Core.Tests;
 
 public class QueueServiceTests : IDisposable
 {
-    private readonly string _dbPath;
+    // TEST-20: the fixture used to create a real temp file per test. A uniquely
+    // NAMED shared-cache memory database replaces it — no disk I/O, no cleanup.
+    // The keeper connection holds the named database alive between the context's
+    // per-call open/close cycles, and the GUID name prevents two fixtures running
+    // in parallel from ever attaching to the same physical store.
+    private readonly SqliteConnection _keeper;
     private readonly SqliteDbContext _dbContext;
     private readonly Mock<IAudioPlayerService> _audioPlayerMock;
     private readonly Mock<ILibraryScanner> _scannerMock;
 
     public QueueServiceTests()
     {
-        _dbPath = Path.GetTempFileName() + ".db";
-        _dbContext = new SqliteDbContext(_dbPath);
+        string connectionString = $"Data Source=octave_queue_{Guid.NewGuid():N};Mode=Memory;Cache=Shared";
+        _keeper = new SqliteConnection(connectionString);
+        _keeper.Open();
+
+        _dbContext = new SqliteDbContext(connectionString);
         _dbContext.InitializeAsync().GetAwaiter().GetResult();
 
         _audioPlayerMock = new Mock<IAudioPlayerService>();
@@ -35,14 +44,8 @@ public class QueueServiceTests : IDisposable
 
     public void Dispose()
     {
-        try
-        {
-            if (File.Exists(_dbPath))
-            {
-                File.Delete(_dbPath);
-            }
-        }
-        catch { }
+        _keeper.Dispose(); // last reference gone — the named memory DB evaporates
+        try { SqliteConnection.ClearPool(_keeper); } catch { }
     }
 
     [Fact]
@@ -62,19 +65,76 @@ public class QueueServiceTests : IDisposable
         queueService.PlayIndex(0);
         Assert.Equal("t1", queueService.CurrentState.CurrentTrack?.Id);
 
-        // Raise TrackEnded with a stale Session ID (e.g. 50L)
+        // TEST-19: replace the old Task.Delay(100) sleeps with a deterministic
+        // signal. The stale-session branch returns before its first await, so the
+        // negative case needs no wait at all; the advance path re-enters Play,
+        // which is our completion signal.
+        var advanced = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _audioPlayerMock.Setup(a => a.Play(It.IsAny<string>(), It.IsAny<double>()))
+            .Returns(100L)
+            .Callback(() => advanced.TrySetResult());
+
+        // Raise TrackEnded with a stale Session ID (e.g. 50L) — rejected synchronously.
         _audioPlayerMock.Raise(a => a.TrackEnded += null, new TrackEndedEventArgs(50L, track1.SourceUri));
-        await Task.Delay(100);
 
         // Queue should NOT advance because session ID did not match
         Assert.Equal("t1", queueService.CurrentState.CurrentTrack?.Id);
 
         // Raise TrackEnded with valid active Session ID (100L)
         _audioPlayerMock.Raise(a => a.TrackEnded += null, new TrackEndedEventArgs(100L, track1.SourceUri));
-        await Task.Delay(100);
+        await advanced.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
         // Queue SHOULD advance to track 2
         Assert.Equal("t2", queueService.CurrentState.CurrentTrack?.Id);
+    }
+
+    [Fact]
+    public void SetShuffle_WithSeededRandom_IsDeterministicAcrossInstances()
+    {
+        // TEST-08: shuffle used to be untestable because Random.Shared made the
+        // permutation unrepeatable. With the injectable RNG the same seed must
+        // yield the identical permutation — and a real (non-identity) one.
+        var tracks = new List<Track>();
+        for (int i = 0; i < 10; i++)
+        {
+            tracks.Add(new Track($"sd{i}", $"Track {i}", "ar1", "Artist", "al1", "Album", 180, $"http://test/{i}.mp3", "web", i, 2024, DateTime.UtcNow));
+        }
+
+        var first = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object, new Random(42));
+        var second = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object, new Random(42));
+
+        first.EnqueueRange(tracks);
+        second.EnqueueRange(tracks);
+        first.PlayIndex(0);
+        second.PlayIndex(0);
+        first.SetShuffle(true);
+        second.SetShuffle(true);
+
+        string[] order1 = first.GetCurrentQueue().Select(i => i.Track.Id).ToArray();
+        string[] order2 = second.GetCurrentQueue().Select(i => i.Track.Id).ToArray();
+
+        Assert.Equal(order1, order2);                                   // same seed ⇒ same permutation
+        Assert.Equal(10, order1.Distinct().Count());                    // still a true permutation
+        Assert.Equal(tracks.Select(t => t.Id).OrderBy(x => x), order1.OrderBy(x => x));
+        Assert.NotEqual(tracks.Select(t => t.Id).ToArray(), order1);    // not the identity order
+    }
+
+    [Fact]
+    public async Task RestorePositionOnStartup_Enabled_SeeksToSavedPositionOnce()
+    {
+        // TEST-11: companion to the default-off test — with the flag enabled, the
+        // first play of the restored track must seek to exactly the saved position.
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+        queueService.RestorePositionOnStartup = true;
+
+        var track1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
+        await _dbContext.UpsertTrackAsync(track1);
+
+        await _dbContext.SavePlayerStateAsync(new[] { "t1" }, new[] { "t1" }, 0, 90.0, 0.8f, false, RepeatMode.None);
+        await queueService.RestoreAsync();
+        queueService.PlayIndex(0);
+
+        _audioPlayerMock.Verify(a => a.Seek(90.0), Times.Once);
     }
 
     [Fact]
@@ -281,15 +341,20 @@ public class QueueServiceTests : IDisposable
             await _dbContext.UpsertTrackAsync(tracks[1]);
             await _dbContext.UpsertTrackAsync(tracks[2]);
 
+            // TEST-19: the old per-lap Task.Delay(50) sleeps are replaced by a
+            // deterministic completion signal — the breaker's trip calls Stop().
+            var breakerTripped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _audioPlayerMock.Setup(a => a.Stop()).Callback(() => breakerTripped.TrySetResult());
+
             queueService.EnqueueRange(tracks);
             queueService.PlayIndex(0);
 
             for (int i = 0; i < 3; i++) // one full lap of 3 undecodable tracks trips the breaker
             {
                 _audioPlayerMock.Raise(a => a.TrackEnded += null, new TrackEndedEventArgs(100L, tracks[i].SourceUri));
-                await Task.Delay(50);
             }
 
+            await breakerTripped.Task.WaitAsync(TimeSpan.FromSeconds(10));
             _audioPlayerMock.Verify(a => a.Stop(), Times.Once);
             // Playback halted on the last lap entry — it did not wrap around and keep spinning.
             Assert.Equal("ud2", queueService.CurrentState.CurrentTrack?.Id);

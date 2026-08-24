@@ -58,11 +58,18 @@ public class ArtworkRetrievalTests : IDisposable
 
     private class MockHttpMessageHandler : HttpMessageHandler
     {
+        // TEST-09: lets cancellation tests prove the handler was NEVER invoked,
+        // rather than merely that some empty result came back.
+        public int CallCount;
+
         public Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> HandlerFunc { get; set; } =
             (req, ct) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            HandlerFunc(request, cancellationToken);
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref CallCount);
+            return HandlerFunc(request, cancellationToken);
+        }
     }
 
     // =================================================================
@@ -439,6 +446,10 @@ public class ArtworkRetrievalTests : IDisposable
 
         var token = await orchestrator.ResolveAndCacheAlbumArtworkAsync("Album", "Artist", ct: cts.Token);
 
+        // TEST-09: a null return alone proves nothing — the request could have
+        // gone out and failed. The pre-cancelled token must short-circuit BEFORE
+        // the handler is touched at all.
+        Assert.Equal(0, mockHandler.CallCount);
         Assert.Null(token);
     }
 

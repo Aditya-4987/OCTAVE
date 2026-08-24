@@ -13,12 +13,15 @@ namespace Octave.Core.Services.Metadata;
 
 public class LyricsService : ILyricsService
 {
+    // NF-18: fractional part accepts ONE to three digits — real .lrc files do
+    // appear as "[00:04.5]"; the millisecond normalizer below already scales
+    // 1-digit (×100), 2-digit (×10) and 3-digit (as-is) values.
     private static readonly Regex LrcTimestampRegex = new(
-        @"\[(?<min>\d{1,3}):(?<sec>\d{2})(?:[\.:](?<ms>\d{2,3}))?\]",
+        @"\[(?<min>\d{1,3}):(?<sec>\d{2})(?:[\.:](?<ms>\d{1,3}))?\]",
         RegexOptions.Compiled);
 
     private static readonly Regex TagRegex = new(
-        @"\[\d{1,3}:\d{2}(?:[\.:]\d{2,3})?\]",
+        @"\[\d{1,3}:\d{2}(?:[\.:]\d{1,3})?\]",
         RegexOptions.Compiled);
 
     private static readonly Regex OffsetRegex = new(
@@ -130,6 +133,36 @@ public class LyricsService : ILyricsService
         catch { }
 
         return null;
+    }
+
+    // TEST-04: the active-line seek lookup used to live only inside
+    // NowPlayingViewModel.UpdateLyricPosition (and was "tested" by a private copy in
+    // LyricsServiceTests that could never catch a regression). Extracted here as the
+    // single production implementation: returns the index of the last line whose
+    // Start is at or before the position, or -1 when every line starts later.
+    public static int FindActiveLineIndex(IReadOnlyList<LyricLine> lines, TimeSpan position)
+    {
+        if (lines == null || lines.Count == 0) return -1;
+
+        int low = 0;
+        int high = lines.Count - 1;
+        int found = -1;
+
+        while (low <= high)
+        {
+            int mid = (low + high) / 2;
+            if (lines[mid].Start <= position)
+            {
+                found = mid;
+                low = mid + 1;
+            }
+            else
+            {
+                high = mid - 1;
+            }
+        }
+
+        return found;
     }
 
     public static LyricsData ParseLrcContent(string trackId, string rawContent)

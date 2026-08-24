@@ -16,11 +16,18 @@ public class MusicBrainzProviderTests
 {
     private class MockHttpMessageHandler : HttpMessageHandler
     {
+        // TEST-09: lets cancellation tests prove the handler was NEVER invoked,
+        // rather than merely that some empty result came back.
+        public int CallCount;
+
         public Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> HandlerFunc { get; set; } =
             (req, ct) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            HandlerFunc(request, cancellationToken);
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref CallCount);
+            return HandlerFunc(request, cancellationToken);
+        }
     }
 
     // =================================================================
@@ -333,6 +340,10 @@ public class MusicBrainzProviderTests
 
         var candidates = await provider.SearchTrackCandidatesAsync("Bohemian Rhapsody", "Queen", ct: cts.Token);
 
+        // TEST-09: an empty result alone proves nothing — the request could have
+        // gone out and failed. The pre-cancelled token must short-circuit BEFORE
+        // the handler is touched at all.
+        Assert.Equal(0, mockHandler.CallCount);
         Assert.Empty(candidates);
     }
 
@@ -343,19 +354,65 @@ public class MusicBrainzProviderTests
     [Fact]
     public async Task ProviderRateLimiter_EnforcesMinimumIntervalBetweenRequests()
     {
-        var rateRegistry = new ProviderRateLimiterRegistry(TimeSpan.FromMilliseconds(80));
-        var limiter = rateRegistry.GetOrCreate("musicbrainz", TimeSpan.FromMilliseconds(80));
+        // TEST-19: this test used to sleep real wall-clock time (~140ms) and
+        // assert a stopwatch lower bound — slow CI risked flaking and a fast box
+        // proved nothing about the arithmetic. Drive the injectable clock instead.
+        DateTime now = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var interval = TimeSpan.FromMilliseconds(500);
+        var limiter = new ProviderRateLimiter("test-provider", interval, () => now);
+
+        await limiter.WaitAsync();   // first call: no reservation exists yet
+        Assert.Equal(now + interval, limiter.NextAllowedUtcForTests);
+
+        // Advance exactly one interval before each further call so no real
+        // Task.Delay fires; each reservation must extend by precisely one interval.
+        now += interval;
+        await limiter.WaitAsync();
+        Assert.Equal(now + interval, limiter.NextAllowedUtcForTests);
+
+        now += interval;
+        await limiter.WaitAsync();
+        Assert.Equal(now + interval, limiter.NextAllowedUtcForTests);
+    }
+
+    [Fact]
+    public async Task ProviderRateLimiter_OutstandingReservation_ActuallyDelaysAndHonorsCancellation()
+    {
+        // The delay branch itself needs real time to be observable — but only as a
+        // LOWER bound (Task.Delay never fires early), so it cannot flake. A tiny
+        // interval keeps it fast; the exact math stays covered by the fake-clock test.
+        DateTime now = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var limiter = new ProviderRateLimiter("test-provider", TimeSpan.FromMilliseconds(60), () => now);
+        using var cancelDuringDelay = new CancellationTokenSource();
+
+        await limiter.WaitAsync();   // reserves now + 60ms
+        Assert.Equal(now + TimeSpan.FromMilliseconds(60), limiter.NextAllowedUtcForTests);
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-
-        await limiter.WaitAsync();
-        await limiter.WaitAsync();
-        await limiter.WaitAsync();
-
+        await limiter.WaitAsync(cancelDuringDelay.Token);   // owes the full 60ms delay
         stopwatch.Stop();
 
-        // 3 consecutive calls with 80ms interval must take at least ~140ms
-        Assert.True(stopwatch.ElapsedMilliseconds >= 140, $"Expected >= 140ms, got {stopwatch.ElapsedMilliseconds}ms");
+        // The caller genuinely waited out the outstanding window (lower bound
+        // only — Task.Delay never fires early, so this cannot flake).
+        Assert.True(stopwatch.ElapsedMilliseconds >= 55,
+            $"second call should have waited out the reservation, took {stopwatch.ElapsedMilliseconds}ms");
+
+        // With the frozen fake clock the recomputed reservation is unchanged:
+        // completion-time + interval == the original reservation. This pins that
+        // a delayed caller does not double-extend the window past one interval.
+        Assert.Equal(now + TimeSpan.FromMilliseconds(60), limiter.NextAllowedUtcForTests);
+
+        // Pre-cancelled token with a fresh outstanding window: must throw before
+        // reserving again — a cancelled caller never extends the wait for others.
+        now += TimeSpan.FromSeconds(10); // let the old reservation lapse first
+        await limiter.WaitAsync();       // fresh reservation at now+60ms
+        DateTime reservedUntil = limiter.NextAllowedUtcForTests;
+
+        using var preCancelled = new CancellationTokenSource();
+        preCancelled.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => limiter.WaitAsync(preCancelled.Token));
+
+        Assert.Equal(reservedUntil, limiter.NextAllowedUtcForTests);
     }
 
     // =================================================================

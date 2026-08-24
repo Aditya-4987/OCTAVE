@@ -450,26 +450,10 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
             }
         }
 
-        // O(log N) Binary Search when user seeked or position jumped
-        int low = 0;
-        int high = SyncedLines.Count - 1;
-        int found = -1;
-
-        while (low <= high)
-        {
-            int mid = (low + high) / 2;
-            if (SyncedLines[mid].Start <= currentPos)
-            {
-                found = mid;
-                low = mid + 1;
-            }
-            else
-            {
-                high = mid - 1;
-            }
-        }
-
-        CurrentLyricIndex = found;
+        // O(log N) Binary Search when user seeked or position jumped.
+        // TEST-04: the loop itself now lives in LyricsService.FindActiveLineIndex —
+        // the one production implementation, covered by direct boundary tests.
+        CurrentLyricIndex = Octave.Core.Services.Metadata.LyricsService.FindActiveLineIndex(SyncedLines, currentPos);
     }
 
     private void RefreshUpNextQueue()

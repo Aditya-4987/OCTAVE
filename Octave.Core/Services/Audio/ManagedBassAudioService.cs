@@ -819,34 +819,45 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
                 return result;
             }
 
-            for (int i = 0; i < binCount; i++)
-            {
-                int startBin = (int)Math.Pow(256.0, (double)i / binCount);
-                int endBin = (int)Math.Pow(256.0, (double)(i + 1) / binCount);
-                startBin = Math.Clamp(startBin, 0, 255);
-                endBin = Math.Clamp(endBin, startBin + 1, 256);
-
-                float maxVal = 0f;
-                for (int b = startBin; b < endBin; b++)
-                {
-                    if (_rawFftBuffer[b] > maxVal) maxVal = _rawFftBuffer[b];
-                }
-
-                float target = Math.Clamp((float)(Math.Sqrt(maxVal) * 1.8), 0.02f, 1.0f);
-                if (target > _lastFftPeaks[i])
-                {
-                    _lastFftPeaks[i] = _lastFftPeaks[i] * 0.3f + target * 0.7f;
-                }
-                else
-                {
-                    _lastFftPeaks[i] = _lastFftPeaks[i] * 0.82f + target * 0.18f;
-                }
-
-                result[i] = _lastFftPeaks[i];
-            }
+            AggregateFftBins(_rawFftBuffer, binCount, _lastFftPeaks, result);
         }
 
         return result;
+    }
+
+    // TEST-06: the logarithmic bin mapping + attack/decay peak smoothing, extracted
+    // from GetFftData as a pure function so tests can inject a synthetic raw FFT
+    // buffer (BASS FFT512 → 256 magnitude bins) and assert exact per-bin outputs.
+    // Previously the test could only observe the array length. `peaks` carries the
+    // previous frame's state and is updated in place; `result` receives the display
+    // values. Caller owns any locking.
+    internal static void AggregateFftBins(float[] rawFft, int binCount, float[] peaks, float[] result)
+    {
+        for (int i = 0; i < binCount; i++)
+        {
+            int startBin = (int)Math.Pow(256.0, (double)i / binCount);
+            int endBin = (int)Math.Pow(256.0, (double)(i + 1) / binCount);
+            startBin = Math.Clamp(startBin, 0, 255);
+            endBin = Math.Clamp(endBin, startBin + 1, 256);
+
+            float maxVal = 0f;
+            for (int b = startBin; b < endBin; b++)
+            {
+                if (rawFft[b] > maxVal) maxVal = rawFft[b];
+            }
+
+            float target = Math.Clamp((float)(Math.Sqrt(maxVal) * 1.8), 0.02f, 1.0f);
+            if (target > peaks[i])
+            {
+                peaks[i] = peaks[i] * 0.3f + target * 0.7f;
+            }
+            else
+            {
+                peaks[i] = peaks[i] * 0.82f + target * 0.18f;
+            }
+
+            result[i] = peaks[i];
+        }
     }
 
     public void Seek(double positionSeconds)

@@ -43,6 +43,15 @@ public class OnlineLyricsOrchestrator : IOnlineLyricsOrchestrator
             return new LyricsData(null, LyricsState.Unavailable, null, null);
         }
 
+        // NF-17: a caller whose token was already cancelled must not spin up the
+        // shared fetch at all. SF-01 deliberately detaches the provider sweep from
+        // per-caller tokens, so without this entry gate the full sweep (and its
+        // HTTP traffic) would run solely for a caller who is already gone.
+        if (ct.IsCancellationRequested)
+        {
+            return new LyricsData(null, LyricsState.Unavailable, null, null);
+        }
+
         string normArtist = MetadataTextNormalizer.Normalize(artist);
         string normTitle = MetadataTextNormalizer.Normalize(title);
         string cacheKey = $"lyrics:{normArtist}:{normTitle}";

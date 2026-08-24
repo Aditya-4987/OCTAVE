@@ -59,6 +59,9 @@ Line three of unsynced lyrics";
         Assert.Null(data.PlainText);
     }
 
+    // TEST-04: this used to re-implement the binary search locally, which meant a
+    // regression in the production lookup would never be caught. Drive the real
+    // LyricsService.FindActiveLineIndex instead — including the empty/null guards.
     [Fact]
     public void LyricSynchronization_BoundaryCheck_And_BinarySearchSeek_WorkAccurately()
     {
@@ -70,36 +73,76 @@ Line three of unsynced lyrics";
             new LyricLine(TimeSpan.FromSeconds(30), null, "Line 4")
         };
 
-        // Binary search logic test
-        int FindIndex(double posSec)
-        {
-            TimeSpan currentPos = TimeSpan.FromSeconds(posSec);
-            int low = 0;
-            int high = lines.Count - 1;
-            int found = -1;
+        // Guards first: null list, empty list.
+        Assert.Equal(-1, LyricsService.FindActiveLineIndex(null!, TimeSpan.FromSeconds(10)));
+        Assert.Equal(-1, LyricsService.FindActiveLineIndex(new List<LyricLine>(), TimeSpan.FromSeconds(10)));
 
-            while (low <= high)
-            {
-                int mid = (low + high) / 2;
-                if (lines[mid].Start <= currentPos)
-                {
-                    found = mid;
-                    low = mid + 1;
-                }
-                else
-                {
-                    high = mid - 1;
-                }
-            }
+        // Exact boundaries land on the later line when timestamps coincide.
+        Assert.Equal(-1, LyricsService.FindActiveLineIndex(lines, TimeSpan.FromSeconds(2.0)));  // Before start
+        Assert.Equal(-1, LyricsService.FindActiveLineIndex(lines, TimeSpan.FromSeconds(4.99))); // Just before Line 1
+        Assert.Equal(0, LyricsService.FindActiveLineIndex(lines, TimeSpan.FromSeconds(5.0)));   // Exactly Line 1 start
+        Assert.Equal(0, LyricsService.FindActiveLineIndex(lines, TimeSpan.FromSeconds(5.5)));   // Line 1
+        Assert.Equal(1, LyricsService.FindActiveLineIndex(lines, TimeSpan.FromSeconds(10.0)));  // Exactly Line 2 start
+        Assert.Equal(1, LyricsService.FindActiveLineIndex(lines, TimeSpan.FromSeconds(12.0)));  // Line 2
+        Assert.Equal(2, LyricsService.FindActiveLineIndex(lines, TimeSpan.FromSeconds(20.0)));  // Exactly Line 3 start
+        Assert.Equal(2, LyricsService.FindActiveLineIndex(lines, TimeSpan.FromSeconds(25.0)));  // Line 3
+        Assert.Equal(3, LyricsService.FindActiveLineIndex(lines, TimeSpan.FromSeconds(30.0)));  // Exactly Line 4 start
+        Assert.Equal(3, LyricsService.FindActiveLineIndex(lines, TimeSpan.FromSeconds(45.0)));  // Line 4 (open-ended)
 
-            return found;
-        }
+        // Unsorted input must not throw or loop forever — last matching Start wins.
+        var shuffled = new List<LyricLine>(lines);
+        (shuffled[1], shuffled[2]) = (shuffled[2], shuffled[1]);
+        int idx = LyricsService.FindActiveLineIndex(shuffled, TimeSpan.FromSeconds(25.0));
+        Assert.True(idx is 1 or 2, $"expected an active-line index in [1,2], got {idx}");
+    }
 
-        Assert.Equal(-1, FindIndex(2.0));   // Before start
-        Assert.Equal(0, FindIndex(5.5));    // Line 1
-        Assert.Equal(1, FindIndex(12.0));   // Line 2
-        Assert.Equal(2, FindIndex(25.0));   // Line 3
-        Assert.Equal(3, FindIndex(45.0));   // Line 4
+    // TEST-10: fractional-timestamp variants and multi-timestamp lines that real
+    // .lrc files contain; plus the offset clamping rule for pre-zero results.
+    [Theory]
+    [InlineData("00:04.5", 4.5)]      // single millisecond digit → ×100
+    [InlineData("00:04.50", 4.5)]     // two digits → ×10
+    [InlineData("00:04.500", 4.5)]    // three digits taken as-is
+    [InlineData("01:04.5", 64.5)]     // minutes carry over
+    public void ParseLrcContent_FractionalTimestampVariants_ParseToExactStarts(string stamp, double expectedSeconds)
+    {
+        string rawLrc = $"[{stamp}]Fractional line";
+
+        var data = LyricsService.ParseLrcContent("track_1", rawLrc);
+
+        Assert.Equal(LyricsState.Synced, data.State);
+        Assert.NotNull(data.SyncedLines);
+        LyricLine line = Assert.Single(data.SyncedLines);
+        Assert.Equal(TimeSpan.FromSeconds(expectedSeconds), line.Start);
+    }
+
+    [Fact]
+    public void ParseLrcContent_MultiTimestampLine_CreatesOneEntryPerTimestamp()
+    {
+        string rawLrc = "[00:01.00][00:05.00]Shared chorus";
+
+        var data = LyricsService.ParseLrcContent("track_1", rawLrc);
+
+        Assert.Equal(LyricsState.Synced, data.State);
+        Assert.NotNull(data.SyncedLines);
+        Assert.Equal(2, data.SyncedLines.Count);
+        Assert.Equal(TimeSpan.FromSeconds(1), data.SyncedLines[0].Start);
+        Assert.Equal(TimeSpan.FromSeconds(5), data.SyncedLines[1].Start);
+        Assert.All(data.SyncedLines, l => Assert.Equal("Shared chorus", l.Text));
+    }
+
+    [Fact]
+    public void ParseLrcContent_OffsetPushingBeforeZero_ClampsToZero()
+    {
+        string rawLrc = @"[offset:+6000]
+[00:04.00]Clamped line
+[00:09.00]Still positive line";
+
+        var data = LyricsService.ParseLrcContent("track_1", rawLrc);
+
+        Assert.Equal(LyricsState.Synced, data.State);
+        Assert.NotNull(data.SyncedLines);
+        Assert.Equal(TimeSpan.Zero, data.SyncedLines[0].Start);          // 4000-6000 → clamped
+        Assert.Equal(TimeSpan.FromSeconds(3), data.SyncedLines[1].Start); // 9000-6000 stays exact
     }
 
     [Fact]

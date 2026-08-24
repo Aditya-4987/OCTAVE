@@ -41,11 +41,18 @@ public class LyricsRetrievalTests : IDisposable
 
     private class MockHttpMessageHandler : HttpMessageHandler
     {
+        // TEST-09: lets cancellation tests prove the handler was NEVER invoked,
+        // rather than merely that some empty result came back.
+        public int CallCount;
+
         public Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> HandlerFunc { get; set; } =
             (req, ct) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            HandlerFunc(request, cancellationToken);
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref CallCount);
+            return HandlerFunc(request, cancellationToken);
+        }
     }
 
     // =================================================================
@@ -216,6 +223,10 @@ public class LyricsRetrievalTests : IDisposable
 
         var result = await orchestrator.FetchLyricsAsync("Song", "Artist", ct: cts.Token);
 
+        // TEST-09: an Unavailable state alone proves nothing — the request could
+        // have gone out and failed. The pre-cancelled token must short-circuit
+        // BEFORE the handler is touched at all.
+        Assert.Equal(0, mockHandler.CallCount);
         Assert.Equal(LyricsState.Unavailable, result.State);
     }
 

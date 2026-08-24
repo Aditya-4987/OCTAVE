@@ -57,12 +57,8 @@ public sealed partial class MiniPlayerWindow : Window
     public Visibility BoolToVisibility(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
     public Visibility BoolToVisibilityNegation(bool value) => value ? Visibility.Collapsed : Visibility.Visible;
 
-    public string FormatSeconds(double seconds)
-    {
-        if (double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds < 0) return "0:00";
-        var time = TimeSpan.FromSeconds(seconds);
-        return time.TotalHours >= 1 ? time.ToString(@"h\:mm\:ss") : time.ToString(@"m\:ss");
-    }
+    public string FormatSeconds(double seconds) =>
+        Octave.Core.Helpers.DurationFormatter.FormatSeconds(seconds);
 
     private void MiniSeek_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {

@@ -288,4 +288,78 @@ public class LocalLibraryScannerTests : IDisposable
         Assert.True(lastEvent.FilesProcessed >= 1);
         Assert.All(events.Take(events.Count - 1), e => Assert.True(e.TotalFilesFound >= -1));
     }
+
+    // =================================================================
+    // TEST-13: zero-byte inputs and cancellation mid-walk.
+    // =================================================================
+
+    [Fact]
+    public async Task ScanAsync_ZeroByteFileAmongValid_IsSkippedAndValidStillIngested()
+    {
+        // A zero-length file (crashed download / interrupted sync) must be
+        // rejected like any other undecodable input — without aborting the walk.
+        string root = Path.Combine(_tempDir, "zerobyte_root");
+        Directory.CreateDirectory(root);
+        WriteTaggedFile(Path.Combine(root, "real.mp3"), "Real Song", "Real Artist", "Real Album", 1);
+        using (var empty = File.Create(Path.Combine(root, "truncated.mp3"))) { }
+
+        await _scanner.ScanAsync(root, CancellationToken.None);
+
+        var all = await _dbContext.GetAllTracksAsync();
+        Assert.Contains(all, t => t.Title == "Real Song");
+        Assert.DoesNotContain(all, t => t.SourceUri.EndsWith("truncated.mp3", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task ScanAsync_PreCancelledToken_ThrowsWithoutDeletingExistingTracks()
+    {
+        string root = Path.Combine(_tempDir, "precancel_root");
+        Directory.CreateDirectory(root);
+        WriteTaggedFile(Path.Combine(root, "present.mp3"), "Present Song", "Precancel Artist", "Precancel Album", 1);
+        await _dbContext.UpsertTrackAsync(MakeTrack("tr_precancel_ghost", "Precancel Ghost", Path.Combine(root, "ghost.mp3")));
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // The semaphore acquire observes the token before anything is walked,
+        // written or reconciled — the call must surface the cancellation.
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => _scanner.ScanAsync(root, cts.Token));
+
+        var all = await _dbContext.GetAllTracksAsync();
+        Assert.Contains(all, t => t.Id == "tr_precancel_ghost");
+    }
+
+    [Fact]
+    public async Task ScanAsync_CancelledMidScan_StopsWithOperationCanceled_AndDeletesNothing()
+    {
+        string root = Path.Combine(_tempDir, "midcancel_root");
+        Directory.CreateDirectory(root);
+
+        // 30 tagged files guarantees at least one progress event (every 25th)
+        // fires while files remain unprocessed, making the mid-scan landing
+        // deterministic rather than timing-dependent.
+        const int fileCount = 30;
+        for (int i = 0; i < fileCount; i++)
+        {
+            WriteTaggedFile(Path.Combine(root, $"song_{i:D2}.mp3"), $"Song {i}", "MidCancel Artist", "MidCancel Album", i + 1);
+        }
+
+        // A stale row whose physical file no longer exists: only reconciliation
+        // can delete it, and a cancelled scan must never reach reconciliation.
+        await _dbContext.UpsertTrackAsync(MakeTrack("tr_midghost", "MidGhost", Path.Combine(root, "ghost.mp3")));
+
+        int progressEvents = 0;
+        using var cts = new CancellationTokenSource();
+        _scanner.ScanProgressChanged += (_, _) =>
+        {
+            Interlocked.Increment(ref progressEvents);
+            cts.Cancel();
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => _scanner.ScanAsync(root, cts.Token));
+
+        Assert.True(Volatile.Read(ref progressEvents) >= 1, "cancellation landed before the walk started");
+        var all = await _dbContext.GetAllTracksAsync();
+        Assert.Contains(all, t => t.Id == "tr_midghost"); // survived: no reconciliation ran
+    }
 }

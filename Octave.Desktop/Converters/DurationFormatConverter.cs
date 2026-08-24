@@ -5,12 +5,10 @@ namespace Octave_Desktop.Converters;
 
 public class DurationFormatConverter : IValueConverter
 {
-    public static string FormatSeconds(double seconds)
-    {
-        if (double.IsNaN(seconds) || seconds <= 0) return "0:00";
-        var ts = TimeSpan.FromSeconds(seconds);
-        return ts.Hours > 0 ? ts.ToString(@"h\:mm\:ss") : ts.ToString(@"m\:ss");
-    }
+    // TEST-03: delegate to the canonical Core formatter (the XAML-facing wrapper
+    // stays here; the logic lives in one tested place).
+    public static string FormatSeconds(double seconds) =>
+        Octave.Core.Helpers.DurationFormatter.FormatSeconds(seconds);
 
     public object Convert(object value, Type targetType, object parameter, string language)
     {

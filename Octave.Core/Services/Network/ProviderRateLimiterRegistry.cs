@@ -15,13 +15,22 @@ public class ProviderRateLimiter : IProviderRateLimiter
     private long _nextAllowedTicksUtc;
     private readonly TimeSpan _minInterval;
 
+    // TEST-19: injectable time source so the spacing math is testable without
+    // wall-clock sleeps. Production default is the system UTC clock.
+    private readonly Func<DateTime> _clock;
+
     public string ProviderKey { get; }
     public TimeSpan MinInterval => _minInterval;
 
-    public ProviderRateLimiter(string providerKey, TimeSpan minInterval)
+    // Internal probe for deterministic tests (InternalsVisibleTo): the reservation
+    // state after WaitAsync/NotifyRetryAfter, without sleeping real time.
+    internal DateTime NextAllowedUtcForTests => new(Interlocked.Read(ref _nextAllowedTicksUtc), DateTimeKind.Utc);
+
+    public ProviderRateLimiter(string providerKey, TimeSpan minInterval, Func<DateTime>? clock = null)
     {
         ProviderKey = providerKey ?? throw new ArgumentNullException(nameof(providerKey));
         _minInterval = minInterval;
+        _clock = clock ?? (() => DateTime.UtcNow);
     }
 
     public async Task WaitAsync(CancellationToken ct = default)
@@ -29,12 +38,12 @@ public class ProviderRateLimiter : IProviderRateLimiter
         await _semaphore.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            long nowTicks = DateTime.UtcNow.Ticks;
+            long nowTicks = _clock().Ticks;
             if (Interlocked.Read(ref _nextAllowedTicksUtc) > nowTicks)
             {
                 TimeSpan delay = TimeSpan.FromTicks(Interlocked.Read(ref _nextAllowedTicksUtc) - nowTicks);
                 await Task.Delay(delay, ct).ConfigureAwait(false);
-                nowTicks = DateTime.UtcNow.Ticks;
+                nowTicks = _clock().Ticks;
             }
 
             Interlocked.Exchange(ref _nextAllowedTicksUtc, nowTicks + _minInterval.Ticks);
@@ -47,7 +56,7 @@ public class ProviderRateLimiter : IProviderRateLimiter
 
     public void NotifyRetryAfter(TimeSpan retryAfter)
     {
-        long target = DateTime.UtcNow.Ticks + retryAfter.Ticks;
+        long target = _clock().Ticks + retryAfter.Ticks;
         long current = Interlocked.Read(ref _nextAllowedTicksUtc);
 
         // Extend the next allowed time only — never shorten an in-flight

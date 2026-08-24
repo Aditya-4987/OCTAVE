@@ -21,6 +21,11 @@ public class QueueService : IQueueService, IDisposable
     private readonly SqliteDbContext _dbContext;
     private readonly ILibraryScanner _libraryScanner;
 
+    // TEST-08: injectable so tests can seed the shuffle order deterministically.
+    // Production default stays Random.Shared (QUEUE-07: one shared generator, no
+    // per-call seed race).
+    private readonly Random _shuffleRng;
+
     // Load-bearing lock-order invariant (§12.4): locking is always
     // _queueLock -> (audio service internals). The audio service releases its own
     // stream lock BEFORE firing TrackStarted/TrackEnded/PositionChanged, which is
@@ -75,11 +80,13 @@ public class QueueService : IQueueService, IDisposable
     public QueueService(
         IAudioPlayerService audioPlayer,
         SqliteDbContext dbContext,
-        ILibraryScanner libraryScanner)
+        ILibraryScanner libraryScanner,
+        Random? shuffleRng = null)
     {
         _audioPlayer = audioPlayer ?? throw new ArgumentNullException(nameof(audioPlayer));
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
         _libraryScanner = libraryScanner ?? throw new ArgumentNullException(nameof(libraryScanner));
+        _shuffleRng = shuffleRng ?? Random.Shared;
 
         CurrentState = GetCurrentState();
 
@@ -591,7 +598,8 @@ public class QueueService : IQueueService, IDisposable
                         listToShuffle.RemoveAll(i => i.Id == currentItem.Id);
                     }
 
-                    Random rng = Random.Shared; // QUEUE-07: shared generator, no per-call seed race
+                    // QUEUE-07/TEST-08: shared generator by default, injected seed in tests
+                    Random rng = _shuffleRng;
                     int n = listToShuffle.Count;
                     while (n > 1)
                     {

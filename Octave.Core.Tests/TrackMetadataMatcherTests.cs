@@ -298,7 +298,13 @@ public class TrackMetadataMatcherTests
                     new ExternalTrackMetadata("Money", "Pink Floyd", "Dark Side", 1973, "Rock", 6, 1, 382.0, null, new ExternalIds("mb-recovered")))
             });
 
-        string tempAudioFile = Path.Combine(Path.GetTempPath(), "06 - Pink Floyd - Money.mp3");
+        // TEST-18: the fixture used to sit at a FIXED temp path — two overlapping
+        // runs (or a crashed one) collided on "06 - Pink Floyd - Money.mp3".
+        // Isolate every run inside its own GUID directory; the FILE NAME is what
+        // the filename-parse fallback consumes and must stay exact.
+        string tempDir = Path.Combine(Path.GetTempPath(), "octave_match_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        string tempAudioFile = Path.Combine(tempDir, "06 - Pink Floyd - Money.mp3");
         try
         {
             File.WriteAllText(tempAudioFile, "dummy audio content");
@@ -316,10 +322,7 @@ public class TrackMetadataMatcherTests
         }
         finally
         {
-            if (File.Exists(tempAudioFile))
-            {
-                try { File.Delete(tempAudioFile); } catch { }
-            }
+            try { Directory.Delete(tempDir, true); } catch { }
         }
     }
 

@@ -102,6 +102,59 @@ public static class WindowsAudioDeviceHelper
     private static readonly object _cacheLock = new();
     private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(3);
 
+    // TEST-07: pure parse of the PKEY_AudioEngine_DeviceFormat blob (a
+    // WAVEFORMATEX or WAVEFORMATEXTENSIBLE) into the user-facing format string,
+    // sample rate in kHz and effective bit depth. Extracted from the COM call so
+    // tests can feed synthetic blobs; a too-short/garbage blob yields the same
+    // ("Unknown", 44.1, 16) fallback the live path used to hardcode.
+    internal static (string Format, double SampleRateKhz, ushort BitDepth) ParseDeviceFormatBlob(byte[] blob)
+    {
+        const ushort FallbackBits = 16;
+        const double FallbackKhz = 44.1;
+
+        if (blob == null || blob.Length < Marshal.SizeOf<WAVEFORMATEX>())
+        {
+            return ("Unknown", FallbackKhz, FallbackBits);
+        }
+
+        var waveFormat = ReadBlobStruct<WAVEFORMATEX>(blob, Marshal.SizeOf<WAVEFORMATEX>());
+        ushort bits = waveFormat.wBitsPerSample;
+        double khz = waveFormat.nSamplesPerSec / 1000.0;
+        if (khz <= 0) khz = FallbackKhz;
+
+        if (blob.Length >= Marshal.SizeOf<WAVEFORMATEXTENSIBLE>() && waveFormat.cbSize >= 22)
+        {
+            var ext = ReadBlobStruct<WAVEFORMATEXTENSIBLE>(blob, Marshal.SizeOf<WAVEFORMATEXTENSIBLE>());
+            if (ext.wValidBitsPerSample > 0) bits = ext.wValidBitsPerSample;
+        }
+
+        if (bits == 0) bits = FallbackBits;
+
+        return ($"{bits}-bit {khz:0.0}kHz (Shared Mode)", khz, bits);
+    }
+
+    // Marshaling needs a stable native address — copy the managed bytes through a
+    // temp HGLOBAL sized for the struct read and always free it.
+    private static T ReadBlobStruct<T>(byte[] blob, int structBytes) where T : struct
+    {
+        IntPtr ptr = Marshal.AllocHGlobal(structBytes);
+        try
+        {
+            int bytesToCopy = Math.Min(blob.Length, structBytes);
+            Marshal.Copy(blob, 0, ptr, bytesToCopy);
+            // Zero-fill any remainder so a short EXTENSIBLE tail can't leak garbage.
+            if (bytesToCopy < structBytes)
+            {
+                Marshal.Copy(new byte[structBytes - bytesToCopy], 0, ptr + bytesToCopy, structBytes - bytesToCopy);
+            }
+            return Marshal.PtrToStructure<T>(ptr);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(ptr);
+        }
+    }
+
     public static (string Name, string Format, double SampleRateKhz, ushort BitDepth) GetDefaultOutputDeviceDetails(bool forceRefresh = false)
     {
         if (!OperatingSystem.IsWindows())
@@ -149,18 +202,14 @@ public static class WindowsAudioDeviceHelper
                         uint blobSize = pvFormat.blobCount;
                         IntPtr dataPtr = pvFormat.blobData;
 
-                        if (dataPtr != IntPtr.Zero && blobSize >= (uint)Marshal.SizeOf<WAVEFORMATEX>())
+                        if (dataPtr != IntPtr.Zero && blobSize > 0)
                         {
-                            var waveFormat = Marshal.PtrToStructure<WAVEFORMATEX>(dataPtr);
-                            ushort bits = waveFormat.wBitsPerSample;
-                            if (blobSize >= (uint)Marshal.SizeOf<WAVEFORMATEXTENSIBLE>() && waveFormat.cbSize >= 22)
-                            {
-                                var ext = Marshal.PtrToStructure<WAVEFORMATEXTENSIBLE>(dataPtr);
-                                if (ext.wValidBitsPerSample > 0) bits = ext.wValidBitsPerSample;
-                            }
-                            devBits = bits;
-                            devKhz = waveFormat.nSamplesPerSec / 1000.0;
-                            devFormat = $"{bits}-bit {devKhz:0.0}kHz (Shared Mode)";
+                            // TEST-07: the format-string/bit-depth/kHz derivation lives in
+                            // ParseDeviceFormatBlob so tests can feed synthetic
+                            // WAVEFORMATEX / EXTENSIBLE blobs without touching live COM.
+                            byte[] blob = new byte[blobSize];
+                            Marshal.Copy(dataPtr, blob, 0, (int)blobSize);
+                            (devFormat, devKhz, devBits) = ParseDeviceFormatBlob(blob);
                         }
                     }
                 }

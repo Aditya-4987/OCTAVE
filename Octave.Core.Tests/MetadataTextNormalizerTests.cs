@@ -22,6 +22,20 @@ public class MetadataTextNormalizerTests
         { "Rock 'N' Roll Train", "rock n roll train", 1.0, 1.0 }, // case/punctuation fold
         { "AC/DC", "AC DC", 1.0, 1.0 },                           // '/' normalizes to space
 
+        // TEST-15: ampersand must fold to the word "and" so provider spellings match.
+        { "Simon & Garfunkel", "Simon And Garfunkel", 1.0, 1.0 },
+        { "Earth, Wind & Fire", "earth wind and fire", 1.0, 1.0 },
+        { "Crosby, Stills & Nash", "crosby stills and nash", 1.0, 1.0 },
+
+        // TEST-15: direct Levenshtein scoring (no containment shortcut fires) —
+        // near-miss spellings land in predictable mid-to-high bands.
+        { "Metallica", "Metalica", 0.84, 0.94 },                  // one deletion over 9 chars ≈ 0.89
+        { "kitten", "sitting", 0.50, 0.65 },                      // distance 3 over 7 chars ≈ 0.57
+        { "flaw", "lawn", 0.45, 0.55 },                           // distance 2 over 4 chars = 0.50
+
+        // TEST-15: both sides empty is defined as a perfect match.
+        { null, null, 1.0, 1.0 },
+
         // MATCH-02: weak containment must NOT floor at 0.85 — a 2-character
         // fragment inside a longer word falls through to Levenshtein and
         // scores on its own (low) merits.
