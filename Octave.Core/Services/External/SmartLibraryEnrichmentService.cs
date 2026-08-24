@@ -535,7 +535,9 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
                         meta.AlbumTitle ?? track.AlbumTitle,
                         meta.ArtistName ?? track.ArtistName,
                         topCandidate.ExternalIds,
-                        ct),
+                        ct,
+                        // NF-31: scans upgrade pre-fix low-res cached covers.
+                        preferHighResolutionUpgrade: true),
                     LazyThreadSafetyMode.ExecutionAndPublication)).Value;
 
             string? artToken;

@@ -262,7 +262,7 @@ public class SmartLibraryEnrichmentTests : IDisposable
 
         int artworkCalls = 0;
         var mockArtworkOrch = new Mock<IExternalArtworkOrchestrator>();
-        mockArtworkOrch.Setup(a => a.ResolveAndCacheAlbumArtworkAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<ExternalIds>(), It.IsAny<CancellationToken>()))
+        mockArtworkOrch.Setup(a => a.ResolveAndCacheAlbumArtworkAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<ExternalIds>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .ReturnsAsync(() =>
             {
                 Interlocked.Increment(ref artworkCalls);
@@ -436,7 +436,7 @@ public class SmartLibraryEnrichmentTests : IDisposable
             .ReturnsAsync(new[] { candidate });
 
         var mockArtworkOrch = new Mock<IExternalArtworkOrchestrator>();
-        mockArtworkOrch.Setup(a => a.ResolveAndCacheAlbumArtworkAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<ExternalIds>(), It.IsAny<CancellationToken>()))
+        mockArtworkOrch.Setup(a => a.ResolveAndCacheAlbumArtworkAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<ExternalIds>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .ReturnsAsync("cached_cover.jpg");
 
         // Write a test image file into the cache root so it can be read

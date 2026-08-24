@@ -540,13 +540,15 @@ public class ArtworkRetrievalTests : IDisposable
         var provider = BuildDirectCaaProvider(mockHandler, new ProviderRateLimiterRegistry(TimeSpan.FromMilliseconds(10)));
 
         // Positive control: a RELEASE-stamped mbid still routes to the release endpoint.
+        // NF-31: with no 1200px thumbnail offered, the full-resolution "image"
+        // URL is now preferred over the 500px thumbnail.
         var extIds = new ExternalIds("rel-stamped",
             AdditionalIds: new Dictionary<string, string> { [ExternalIdKinds.EntityKind] = ExternalIdKinds.KindRelease });
 
         var urls = await provider.SearchAlbumArtworkUrlsAsync("Some Album", "Some Artist", extIds);
 
         Assert.Single(urls);
-        Assert.Contains("stamped-500.jpg", urls[0]);
+        Assert.Contains("stamped.jpg", urls[0]);
         Assert.Equal(1, requestCount);
     }
 

@@ -116,14 +116,11 @@ public class CoverArtArchiveArtworkProvider : IExternalAlbumArtworkProvider
 
                     foreach (var img in candidateImages)
                     {
-                        if (!string.IsNullOrWhiteSpace(img.Thumbnails?.Thumb500))
-                            found.Add(img.Thumbnails.Thumb500);
-                        else if (!string.IsNullOrWhiteSpace(img.Thumbnails?.Large))
-                            found.Add(img.Thumbnails.Large);
-                        else if (!string.IsNullOrWhiteSpace(img.Thumbnails?.Thumb1200))
-                            found.Add(img.Thumbnails.Thumb1200);
-                        else if (!string.IsNullOrWhiteSpace(img.Image))
-                            found.Add(img.Image);
+                        // NF-31: highest-resolution first. Thumb500-first cached
+                        // 500×500 files for everything, which the NowPlaying art
+                        // (~660 physical px at 150%) and the ambient backdrop then
+                        // GPU-upscaled - the "pixelated / grainy" artwork reports.
+                        AddPreferred(found, img);
                     }
 
                     return found;
@@ -167,14 +164,7 @@ public class CoverArtArchiveArtworkProvider : IExternalAlbumArtworkProvider
 
                     foreach (var img in candidateImages)
                     {
-                        if (!string.IsNullOrWhiteSpace(img.Thumbnails?.Thumb500))
-                            found.Add(img.Thumbnails.Thumb500);
-                        else if (!string.IsNullOrWhiteSpace(img.Thumbnails?.Large))
-                            found.Add(img.Thumbnails.Large);
-                        else if (!string.IsNullOrWhiteSpace(img.Thumbnails?.Thumb1200))
-                            found.Add(img.Thumbnails.Thumb1200);
-                        else if (!string.IsNullOrWhiteSpace(img.Image))
-                            found.Add(img.Image);
+                        AddPreferred(found, img);
                     }
 
                     return found;
@@ -194,5 +184,20 @@ public class CoverArtArchiveArtworkProvider : IExternalAlbumArtworkProvider
         }
 
         return urls.Distinct().ToList();
+    }
+
+    // NF-31: candidate order is download order (the orchestrator takes the first
+    // URL that fetches), so preference here IS final quality. 1200px thumbnail →
+    // full-resolution original → 500px variants.
+    private static void AddPreferred(List<string> found, CaaImageDto img)
+    {
+        if (!string.IsNullOrWhiteSpace(img.Thumbnails?.Thumb1200))
+            found.Add(img.Thumbnails.Thumb1200);
+        else if (!string.IsNullOrWhiteSpace(img.Image))
+            found.Add(img.Image);
+        else if (!string.IsNullOrWhiteSpace(img.Thumbnails?.Large))
+            found.Add(img.Thumbnails.Large);
+        else if (!string.IsNullOrWhiteSpace(img.Thumbnails?.Thumb500))
+            found.Add(img.Thumbnails.Thumb500);
     }
 }

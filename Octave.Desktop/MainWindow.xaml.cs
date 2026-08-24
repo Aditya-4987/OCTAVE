@@ -46,6 +46,11 @@ public sealed partial class MainWindow : Window
         // at the new scale.
         Converters.ArtworkPathConverter.AttachDisplayScaleMonitor(RootGrid);
 
+        // NF-32: XamlRoot.Changed alone missed some cross-monitor drags. The
+        // window-level position change is the deterministic "crossed a display
+        // boundary" signal - re-evaluate the rasterization scale on both paths.
+        AppWindow.Changed += OnAppWindowChangedForScale;
+
         // Real-time audio spectrum rendering tick
         CompositionTarget.Rendering += CompositionTarget_Rendering;
 
@@ -61,14 +66,32 @@ public sealed partial class MainWindow : Window
         };
     }
 
+    private void OnAppWindowChangedForScale(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowChangedEventArgs args)
+    {
+        if (args.DidPositionChange)
+        {
+            Converters.ArtworkPathConverter.CheckDisplayScale(RootGrid);
+        }
+    }
+
     private void CompositionTarget_Rendering(object? sender, object e)
     {
-        if (ProgressBarVisualizer == null || !ViewModel.IsVisualizerEnabled || ProgressBarVisualizer.Visibility != Visibility.Visible) return;
-        if (!ViewModel.IsPlaying) return;
+        // Runs every frame for the app's whole lifetime - a single throw here
+        // (transient state during a crossfade, visualizer mid-teardown) must not
+        // take the process down.
+        try
+        {
+            if (ProgressBarVisualizer == null || !ViewModel.IsVisualizerEnabled || ProgressBarVisualizer.Visibility != Visibility.Visible) return;
+            if (!ViewModel.IsPlaying) return;
 
-        var fft = _audioPlayer.GetFftData(36);
-        double ratio = (ViewModel.DurationSeconds > 0) ? (ViewModel.PositionSeconds / ViewModel.DurationSeconds) : 0.0;
-        ProgressBarVisualizer.UpdateSpectrum(fft, ratio);
+            var fft = _audioPlayer.GetFftData(36);
+            double ratio = (ViewModel.DurationSeconds > 0) ? (ViewModel.PositionSeconds / ViewModel.DurationSeconds) : 0.0;
+            ProgressBarVisualizer.UpdateSpectrum(fft, ratio);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[OCTAVE] Spectrum frame failed: {ex.Message}");
+        }
     }
 
     private void RootGrid_SizeChanged(object sender, Microsoft.UI.Xaml.SizeChangedEventArgs e)

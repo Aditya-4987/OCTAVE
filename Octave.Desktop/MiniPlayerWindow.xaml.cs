@@ -39,6 +39,9 @@ public sealed partial class MiniPlayerWindow : Window
         // NF-28: and re-decodes its artwork when dragged across DPI boundaries.
         Converters.ArtworkPathConverter.AttachDisplayScaleMonitor(RootGrid);
 
+        // NF-32: same deterministic position-change signal as the main window.
+        AppWindow.Changed += OnAppWindowChangedForScale;
+
         // Compact, always-on-top, non-resizable overlay.
         if (AppWindow.Presenter is OverlappedPresenter presenter)
         {
@@ -63,6 +66,14 @@ public sealed partial class MiniPlayerWindow : Window
         {
             e.Handled = true;
             ViewModel.TogglePlayPauseCommand.Execute(null);
+        }
+    }
+
+    private void OnAppWindowChangedForScale(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowChangedEventArgs args)
+    {
+        if (args.DidPositionChange && RootGrid != null)
+        {
+            Converters.ArtworkPathConverter.CheckDisplayScale(RootGrid);
         }
     }
 
