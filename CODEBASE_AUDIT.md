@@ -1257,6 +1257,30 @@ None of these break behavior or lose data; they are intentionally **not** assign
 
 *(Appended at the end of the document per the user's instruction: every resolved issue is recorded here as it lands. Newest session first. Format: batch → commit → per-ID status → acceptance evidence → notes/behavior changes. IDs marked ✅ should be treated as fixed; later batches must not re-fix them.)*
 
+### Session 2026-08-24 — Artwork scaling + DPI-change safety audit *(commit `aee3d67`)*
+
+**Scope**: user follow-up after the enrichment batch — "how the images (album art, artist art and others) are being displayed… not scaled properly… over-sharpening or pixelated effect… also make sure there should be no errors/bug caused by dpi change (dragging the window from one monitor to another of different DPI)."
+
+Full audit mapped all 15 `ArtworkPathConverter` consumers against their decode buckets: NowPlaying art 440 ≤ 600 ✓, entity header 232 ≤ 600 ✓, album/artist/home cards 136/120/140 ≤ 320 ✓, list thumbs 48–64 ≤ 112 ✓, `DecodePixelType.Physical` × live `RasterizationScale` usage correct, placeholders 1024×1024, WIC Fant decode downscaling high quality. The visible defects were three:
+
+#### New findings discovered & fixed on the go *(this session)*
+
+| # | Severity | Location | Finding & Fix |
+|---|----------|----------|---------------|
+| NF-28 | 🔴 Visible defect on every monitor drag | `ArtworkPathConverter` / `MainWindow` / `MiniPlayerWindow` | Decoded bitmaps are cached per rasterization scale, but NOTHING subscribed to scale changes: dragging the window onto a different-DPI monitor left every artwork bound to its old-density decode — exactly the soft/pixelated-after-drag symptom. The converter now records the (url, parameter) context behind each decoded BitmapImage in a self-cleaning `ConditionalWeakTable`, and both windows attach a `XamlRoot.Changed` monitor (`AttachDisplayScaleMonitor`) that clears the stale cache and walks the visual tree re-decoding every converter-produced Image AND ImageBrush fill (Ellipse fills included) at the new scale. Sources not produced by the converter (metadata dialog's full-res previews) are untouched; direct property assignment works regardless of binding mode (OneTime included). Note: `XamlRootChangedEventArgs` carries no payload — the new scale must be read off the captured XamlRoot. |
+| NF-29 | ⚠️ Wrong-density decode | `MiniPlayerWindow` | Artwork decoded using the MAIN window's `RasterizationScale` — wrong whenever the always-on-top mini player sits on a monitor with a different DPI from the (hidden) main window. Per-instance `ScaleProvider` now points the mini player's converter at its own XamlRoot; other consumers default to the main window as before. |
+| NF-30 | ⚠️ Chronic softness/banding | `MainWindow.xaml` ambient backdrop | The full-window background image used the "Large" bucket (600 logical) stretched UniformToFill across e.g. 1600–2560 logical — a ~3–4× GPU upscale on the single most visible image in the app (soft edges, banding under the acrylic tint). New dedicated "Background" bucket (960 logical) with a 1920 physical-pixel cap so 2.5× monitors cannot balloon decode memory (~14 MB worst case for the one hot backdrop); EntityDetailPage keeps Large for its 232 px header. Cache keys are now effective-decode-width only, so scales clamping to the same width share one bitmap instead of decoding duplicates. |
+
+#### Notes & deliberate trade-offs
+
+- On a real DPI change every converter-produced image re-decodes asynchronously: brief placeholder-to-image fade-in is expected (the ambient backdrop's existing ImageOpened opacity storyboard re-runs, reading as an intentional cross-fade).
+- The refresh walk covers Image.Source plus Shape.Fill / Border.Background / Panel.Background ImageBrushes — the only brush usages in the app.
+- "Over-sharpening" in the report maps to the upscaled backdrop (NF-30), stale low-density decodes after monitor drag (NF-28) and the mini-player mismatch (NF-29); no sharpening filters exist anywhere in the pipeline.
+
+**Acceptance verified**: build `dotnet build Octave.Desktop` = 0 warnings / 0 errors · `dotnet test Octave.Core.Tests` = **317/317**. Desktop-only change — structural reasoning + the audit table above; no Core code touched.
+
+---
+
 ### Session 2026-08-24 — Smart-enrichment review apply + expanding settings card *(commit `3770479`)*
 
 **Scope**: user report on the Settings "Scan & Enrich Library..." flow — (1) button text truncated, (2) replace the modal popup with an in-card vertical expansion showing everything the popup did, (3) "make sure that this feature works perfectly": popup elements stretched out of view, "Preview Changes (D…" cut off, review-card Apply Candidate button next to an invisible button, and clicking Apply Candidate showed **"apply failed" in green**.
