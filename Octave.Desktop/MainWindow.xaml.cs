@@ -40,6 +40,12 @@ public sealed partial class MainWindow : Window
         // Global Spacebar Play/Pause handler before UI controls consume Space for selection
         RootGrid.PreviewKeyDown += RootGrid_PreviewKeyDown;
 
+        // NF-28: dragging the window onto a monitor with a different DPI used to
+        // leave every artwork bound to its old-density decode (soft / pixelated).
+        // The monitor clears the decode cache and re-decodes all visible artwork
+        // at the new scale.
+        Converters.ArtworkPathConverter.AttachDisplayScaleMonitor(RootGrid);
+
         // Real-time audio spectrum rendering tick
         CompositionTarget.Rendering += CompositionTarget_Rendering;
 

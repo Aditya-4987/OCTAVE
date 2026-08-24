@@ -37,7 +37,7 @@
         
         <!-- Ambient Album Artwork Background -->
         <Grid Grid.RowSpan="3">
-            <Image Source="{Binding ViewModel.CurrentArtworkUrl, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Large}" Stretch="UniformToFill" Opacity="0.3" ImageOpened="BackgroundImage_ImageOpened" />
+            <Image Source="{Binding ViewModel.CurrentArtworkUrl, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Background}" Stretch="UniformToFill" Opacity="0.3" ImageOpened="BackgroundImage_ImageOpened" />
             <Border>
                 <Border.Background>
                     <AcrylicBrush TintColor="{ThemeResource SystemAltHighColor}" TintOpacity="0.85" FallbackColor="Transparent" />

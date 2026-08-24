@@ -1,9 +1,14 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Data;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using Microsoft.UI.Xaml.Shapes;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 
 namespace Octave_Desktop.Converters;
 
@@ -15,10 +20,29 @@ public class ArtworkPathConverter : IValueConverter
         public required BitmapImage Image { get; init; }
     }
 
+    // NF-28: what (artwork url, converter parameter) produced each decoded
+    // BitmapImage, so a display-scale change can re-decode every bound image.
+    // A ConditionalWeakTable needs no eviction management - entries die with
+    // their images, including LRU evictions. (TValue must be a reference type.)
+    private sealed class SourceContext
+    {
+        public SourceContext(string? uri, string parameter) { Uri = uri; Parameter = parameter; }
+        public string? Uri { get; }
+        public string Parameter { get; }
+    }
+
+    private static readonly ConditionalWeakTable<BitmapImage, SourceContext> SourceContexts = new();
+
     private const int MaxCacheSize = 250;
     private static readonly object CacheLock = new();
     private static readonly Dictionary<string, CacheEntry> Cache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly LinkedList<string> LruList = new();
+
+    // NF-29: windows that declare their own converter instance can point it at
+    // their own XamlRoot. Without this, the mini player on a monitor with a
+    // different DPI decoded at the MAIN window's scale and its artwork was
+    // mis-sized for its own display.
+    public Func<double>? ScaleProvider { get; set; }
 
     public static void ClearCache()
     {
@@ -27,129 +51,302 @@ public class ArtworkPathConverter : IValueConverter
             Cache.Clear();
             LruList.Clear();
         }
+        // SourceContexts cleans itself up with its images.
     }
 
     public object Convert(object value, Type targetType, object parameter, string language)
     {
+        string parameterString = parameter as string ?? string.Empty;
         try
         {
-            string? artworkUrl = value as string;
-            string parameterString = parameter as string ?? string.Empty;
-            bool isArtist = parameterString.Equals("Artist", StringComparison.OrdinalIgnoreCase);
-
-            string uriString;
-            if (string.IsNullOrWhiteSpace(artworkUrl))
-            {
-                uriString = isArtist ? "ms-appx:///Assets/PlaceholderArtist.png" : "ms-appx:///Assets/PlaceholderAlbum.png";
-            }
-            else if (artworkUrl.StartsWith("ArtworkCache/", StringComparison.OrdinalIgnoreCase))
-            {
-                // NF-09 (Batch 10): the token→absolute-path mapping belongs to the
-                // manager that owns the token layout — this used to re-implement
-                // "<LocalFolder>\ArtworkCache" here and would break silently if
-                // the cache root ever moved.
-                // WinUI's BitmapImage decodes ms-appdata:///local/ asynchronously on a background worker thread
-                uriString = App.Services.GetRequiredService<Octave.Core.Interfaces.IArtworkCacheManager>()
-                    .ResolveTokenPath(artworkUrl);
-            }
-            else if (artworkUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase) || 
-                     artworkUrl.StartsWith("ms-appx", StringComparison.OrdinalIgnoreCase) ||
-                     artworkUrl.StartsWith("ms-appdata", StringComparison.OrdinalIgnoreCase))
-            {
-                uriString = artworkUrl;
-            }
-            else
-            {
-                uriString = isArtist ? "ms-appx:///Assets/PlaceholderArtist.png" : "ms-appx:///Assets/PlaceholderAlbum.png";
-            }
-
-            int targetLogicalWidth = 320;
-            if (!string.IsNullOrWhiteSpace(parameterString))
-            {
-                if (parameterString.Equals("Small", StringComparison.OrdinalIgnoreCase) || 
-                    parameterString.Equals("Thumb", StringComparison.OrdinalIgnoreCase) ||
-                    parameterString.Equals("56", StringComparison.OrdinalIgnoreCase) ||
-                    parameterString.Equals("40", StringComparison.OrdinalIgnoreCase))
-                {
-                    targetLogicalWidth = 112;
-                }
-                else if (parameterString.Equals("Artist", StringComparison.OrdinalIgnoreCase) ||
-                         parameterString.Equals("Card", StringComparison.OrdinalIgnoreCase) ||
-                         parameterString.Equals("Medium", StringComparison.OrdinalIgnoreCase) ||
-                         parameterString.Equals("160", StringComparison.OrdinalIgnoreCase))
-                {
-                    targetLogicalWidth = 320;
-                }
-                else if (parameterString.Equals("Large", StringComparison.OrdinalIgnoreCase) ||
-                         parameterString.Equals("NowPlaying", StringComparison.OrdinalIgnoreCase) ||
-                         parameterString.Equals("Background", StringComparison.OrdinalIgnoreCase) ||
-                         parameterString.Equals("500", StringComparison.OrdinalIgnoreCase))
-                {
-                    targetLogicalWidth = 600;
-                }
-                else if (int.TryParse(parameterString, out int customWidth) && customWidth > 0)
-                {
-                    targetLogicalWidth = customWidth;
-                }
-            }
-
-            double scale = 1.0;
-            try
-            {
-                if (App.MainWindowInstance?.Content?.XamlRoot != null)
-                {
-                    scale = App.MainWindowInstance.Content.XamlRoot.RasterizationScale;
-                }
-            }
-            catch { }
-            if (scale <= 0) scale = 1.0;
-
-            int targetPhysicalWidth = (int)Math.Round(targetLogicalWidth * scale);
-            if (targetPhysicalWidth <= 0) targetPhysicalWidth = targetLogicalWidth;
-
-            string cacheKey = $"{uriString}_{targetPhysicalWidth}_{scale:F2}";
-
-            lock (CacheLock)
-            {
-                if (Cache.TryGetValue(cacheKey, out var entry))
-                {
-                    LruList.Remove(entry.Node);
-                    LruList.AddFirst(entry.Node);
-                    return entry.Image;
-                }
-
-                var newImage = new BitmapImage
-                {
-                    DecodePixelType = DecodePixelType.Physical,
-                    DecodePixelWidth = targetPhysicalWidth,
-                    UriSource = new Uri(uriString)
-                };
-
-                if (Cache.Count >= MaxCacheSize && LruList.Last != null)
-                {
-                    string oldestKey = LruList.Last.Value;
-                    LruList.RemoveLast();
-                    Cache.Remove(oldestKey);
-                }
-
-                var node = new LinkedListNode<string>(cacheKey);
-                LruList.AddFirst(node);
-                Cache[cacheKey] = new CacheEntry { Node = node, Image = newImage };
-                return newImage;
-            }
+            return GetImageAtScale(value as string, parameterString, ResolveScale(ScaleProvider));
         }
         catch (Exception ex)
         {
             Debug.WriteLine($"[ArtworkPathConverter] {ex}");
-            string fallbackUri = (parameter as string ?? "").Equals("Artist", StringComparison.OrdinalIgnoreCase) 
-                ? "ms-appx:///Assets/PlaceholderArtist.png" 
-                : "ms-appx:///Assets/PlaceholderAlbum.png";
-            return new BitmapImage(new Uri(fallbackUri)) { DecodePixelType = DecodePixelType.Logical, DecodePixelWidth = 256 };
+            return GetImageAtScale(null, parameterString, ResolveScale(ScaleProvider));
         }
     }
 
     public object ConvertBack(object value, Type targetType, object parameter, string language)
     {
         throw new NotImplementedException();
+    }
+
+    private static double ResolveScale(Func<double>? provider)
+    {
+        try
+        {
+            if (provider != null)
+            {
+                double provided = provider();
+                if (provided > 0) return provided;
+            }
+            if (App.MainWindowInstance?.Content?.XamlRoot != null)
+            {
+                return App.MainWindowInstance.Content.XamlRoot.RasterizationScale;
+            }
+        }
+        catch { }
+        return 1.0;
+    }
+
+    private static BitmapImage GetImageAtScale(string? artworkUrl, string parameterString, double scale)
+    {
+        if (scale <= 0) scale = 1.0;
+
+        string uriString = ResolveUri(artworkUrl, parameterString);
+
+        int targetLogicalWidth = 320;
+        bool isBackdrop = false;
+        if (!string.IsNullOrWhiteSpace(parameterString))
+        {
+            if (parameterString.Equals("Small", StringComparison.OrdinalIgnoreCase) ||
+                parameterString.Equals("Thumb", StringComparison.OrdinalIgnoreCase) ||
+                parameterString.Equals("56", StringComparison.OrdinalIgnoreCase) ||
+                parameterString.Equals("40", StringComparison.OrdinalIgnoreCase))
+            {
+                targetLogicalWidth = 112;
+            }
+            else if (parameterString.Equals("Artist", StringComparison.OrdinalIgnoreCase) ||
+                     parameterString.Equals("Card", StringComparison.OrdinalIgnoreCase) ||
+                     parameterString.Equals("Medium", StringComparison.OrdinalIgnoreCase) ||
+                     parameterString.Equals("160", StringComparison.OrdinalIgnoreCase))
+            {
+                targetLogicalWidth = 320;
+            }
+            else if (parameterString.Equals("Large", StringComparison.OrdinalIgnoreCase) ||
+                     parameterString.Equals("NowPlaying", StringComparison.OrdinalIgnoreCase) ||
+                     parameterString.Equals("500", StringComparison.OrdinalIgnoreCase))
+            {
+                targetLogicalWidth = 600;
+            }
+            // NF-30: the ambient backdrop stretches over the WHOLE window - the
+            // 600-logical "Large" decode used to be GPU-upscaled ~4x across a
+            // maximized window (soft, banded edges). Its own generous bucket,
+            // capped in physical pixels so high-scale monitors cannot balloon
+            // memory.
+            else if (parameterString.Equals("Background", StringComparison.OrdinalIgnoreCase))
+            {
+                targetLogicalWidth = 960;
+                isBackdrop = true;
+            }
+            else if (int.TryParse(parameterString, out int customWidth) && customWidth > 0)
+            {
+                targetLogicalWidth = customWidth;
+            }
+        }
+
+        int physicalCap = isBackdrop ? 1920 : int.MaxValue;
+        int targetPhysicalWidth = (int)Math.Min(Math.Round(targetLogicalWidth * scale), physicalCap);
+        if (targetPhysicalWidth <= 0) targetPhysicalWidth = targetLogicalWidth;
+
+        // Key by the effective decode width: two scales that clamp to the same
+        // width share one bitmap instead of decoding duplicates.
+        string cacheKey = $"{uriString}_{targetPhysicalWidth}";
+
+        lock (CacheLock)
+        {
+            if (Cache.TryGetValue(cacheKey, out var entry))
+            {
+                LruList.Remove(entry.Node);
+                LruList.AddFirst(entry.Node);
+                return entry.Image;
+            }
+
+            var newImage = new BitmapImage
+            {
+                DecodePixelType = DecodePixelType.Physical,
+                DecodePixelWidth = targetPhysicalWidth,
+                UriSource = new Uri(uriString)
+            };
+            SourceContexts.AddOrUpdate(newImage, new SourceContext(artworkUrl, parameterString));
+
+            if (Cache.Count >= MaxCacheSize && LruList.Last != null)
+            {
+                string oldestKey = LruList.Last.Value;
+                LruList.RemoveLast();
+                Cache.Remove(oldestKey);
+            }
+
+            var node = new LinkedListNode<string>(cacheKey);
+            LruList.AddFirst(node);
+            Cache[cacheKey] = new CacheEntry { Node = node, Image = newImage };
+            return newImage;
+        }
+    }
+
+    private static string ResolveUri(string? artworkUrl, string parameterString)
+    {
+        if (string.IsNullOrWhiteSpace(artworkUrl))
+        {
+            return IsArtistParameter(parameterString)
+                ? "ms-appx:///Assets/PlaceholderArtist.png"
+                : "ms-appx:///Assets/PlaceholderAlbum.png";
+        }
+
+        if (artworkUrl.StartsWith("ArtworkCache/", StringComparison.OrdinalIgnoreCase))
+        {
+            // NF-09 (Batch 10): the token→absolute-path mapping belongs to the
+            // manager that owns the token layout — this used to re-implement
+            // "<LocalFolder>\ArtworkCache" here and would break silently if
+            // the cache root ever moved.
+            // WinUI's BitmapImage decodes ms-appdata:///local/ asynchronously on a background worker thread
+            return App.Services.GetRequiredService<Octave.Core.Interfaces.IArtworkCacheManager>()
+                .ResolveTokenPath(artworkUrl);
+        }
+
+        if (artworkUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase) ||
+            artworkUrl.StartsWith("ms-appx", StringComparison.OrdinalIgnoreCase) ||
+            artworkUrl.StartsWith("ms-appdata", StringComparison.OrdinalIgnoreCase))
+        {
+            return artworkUrl;
+        }
+
+        return IsArtistParameter(parameterString)
+            ? "ms-appx:///Assets/PlaceholderArtist.png"
+            : "ms-appx:///Assets/PlaceholderAlbum.png";
+    }
+
+    private static bool IsArtistParameter(string parameterString) =>
+        parameterString.Equals("Artist", StringComparison.OrdinalIgnoreCase);
+
+    // ==================================================================
+    // NF-28: display-scale change handling.
+    //
+    // Decoded bitmaps are cached per scale; nothing used to react when the
+    // user dragged the window onto a monitor with a different DPI, so every
+    // artwork stayed bound to its old-density decode (soft or pixelated)
+    // until some navigation happened to re-run its binding.
+    // AttachDisplayScaleMonitor watches the window's XamlRoot; on a real
+    // scale change it drops the stale decodes and walks the visual tree,
+    // re-decoding every image this converter produced (Images AND ImageBrush
+    // fills) at the NEW scale.
+    // ==================================================================
+
+    // "Already monitoring" set that cannot pin closed windows - entries die
+    // with their framework elements.
+    private static readonly ConditionalWeakTable<FrameworkElement, object> MonitoredScopes = new();
+
+    public static void AttachDisplayScaleMonitor(FrameworkElement scope)
+    {
+        if (!MonitoredScopes.TryGetValue(scope, out _))
+        {
+            MonitoredScopes.AddOrUpdate(scope, true);
+            scope.Loaded += Scope_Loaded;
+        }
+
+        // Already-loaded scopes (attached after layout) wire immediately.
+        if (scope.XamlRoot != null)
+        {
+            WireRootChanged(scope);
+        }
+    }
+
+    private static void Scope_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement scope)
+        {
+            WireRootChanged(scope);
+        }
+    }
+
+    private static void WireRootChanged(FrameworkElement scope)
+    {
+        var root = scope.XamlRoot;
+        if (root == null) return;
+
+        double lastScale = root.RasterizationScale;
+        root.Changed += (s, e) =>
+        {
+            // XamlRootChangedEventArgs carries no values - read the live scale
+            // off the captured root.
+            double newScale = root.RasterizationScale;
+            if (Math.Abs(newScale - lastScale) < 0.01) return;
+            lastScale = newScale;
+
+            HandleDisplayScaleChanged();
+
+            // Refresh from the window content down so EVERY visible surface
+            // re-decodes, not just the subtree the scope anchors.
+            var refreshRoot = scope;
+            while (refreshRoot.Parent is FrameworkElement parent)
+            {
+                refreshRoot = parent;
+            }
+            RefreshBoundArtwork(refreshRoot, newScale);
+        };
+    }
+
+    public static void HandleDisplayScaleChanged()
+    {
+        ClearCache();
+    }
+
+    /// <summary>
+    /// Re-runs the converter for every Image / ImageBrush fill under <paramref name="root"/>
+    /// whose current source came from this converter, replacing sources decoded for an
+    /// older display scale. Direct property assignment bypasses bindings safely regardless
+    /// of binding mode (OneTime included); images NOT decoded by this converter are left alone.
+    /// </summary>
+    public static void RefreshBoundArtwork(UIElement root, double newScale)
+    {
+        WalkAndRefresh(root, newScale);
+    }
+
+    private static void WalkAndRefresh(DependencyObject node, double newScale)
+    {
+        if (node is Image image &&
+            image.Source is BitmapImage imageBitmap &&
+            SourceContexts.TryGetValue(imageBitmap, out var imageCtx))
+        {
+            var fresh = GetImageAtScale(imageCtx.Uri, imageCtx.Parameter, newScale);
+            if (!ReferenceEquals(fresh, imageBitmap))
+            {
+                image.Source = fresh;
+            }
+        }
+
+        if (node is Shape shape &&
+            shape.Fill is ImageBrush shapeBrush &&
+            shapeBrush.ImageSource is BitmapImage shapeBitmap &&
+            SourceContexts.TryGetValue(shapeBitmap, out var shapeCtx))
+        {
+            var freshFill = GetImageAtScale(shapeCtx.Uri, shapeCtx.Parameter, newScale);
+            if (!ReferenceEquals(freshFill, shapeBitmap))
+            {
+                shapeBrush.ImageSource = freshFill;
+            }
+        }
+
+        if (node is Border border &&
+            border.Background is ImageBrush borderBrush &&
+            borderBrush.ImageSource is BitmapImage borderBitmap &&
+            SourceContexts.TryGetValue(borderBitmap, out var borderCtx))
+        {
+            var freshBackground = GetImageAtScale(borderCtx.Uri, borderCtx.Parameter, newScale);
+            if (!ReferenceEquals(freshBackground, borderBitmap))
+            {
+                borderBrush.ImageSource = freshBackground;
+            }
+        }
+
+        if (node is Panel panel &&
+            panel.Background is ImageBrush panelBrush &&
+            panelBrush.ImageSource is BitmapImage panelBitmap &&
+            SourceContexts.TryGetValue(panelBitmap, out var panelCtx))
+        {
+            var freshPanelFill = GetImageAtScale(panelCtx.Uri, panelCtx.Parameter, newScale);
+            if (!ReferenceEquals(freshPanelFill, panelBitmap))
+            {
+                panelBrush.ImageSource = freshPanelFill;
+            }
+        }
+
+        int count = VisualTreeHelper.GetChildrenCount(node);
+        for (int i = 0; i < count; i++)
+        {
+            WalkAndRefresh(VisualTreeHelper.GetChild(node, i), newScale);
+        }
     }
 }

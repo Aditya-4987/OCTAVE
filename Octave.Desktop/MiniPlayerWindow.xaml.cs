@@ -26,6 +26,19 @@ public sealed partial class MiniPlayerWindow : Window
         // (mirrors MainWindow's RequestedTheme assignment).
         RootGrid.RequestedTheme = ThemeHelper.GetSavedTheme();
 
+        // NF-29: artwork here decoded at the MAIN window's rasterization scale -
+        // wrong whenever this compact window sits on a monitor with a different
+        // DPI. This window's converter instance now measures ITS OWN XamlRoot.
+        // WinUI Window has no Resources of its own - the converter instance lives
+        // in the content root's resource dictionary.
+        if (RootGrid.Resources["ArtworkPathConverter"] is Converters.ArtworkPathConverter converter)
+        {
+            converter.ScaleProvider = () => RootGrid?.XamlRoot?.RasterizationScale ?? 1.0;
+        }
+
+        // NF-28: and re-decodes its artwork when dragged across DPI boundaries.
+        Converters.ArtworkPathConverter.AttachDisplayScaleMonitor(RootGrid);
+
         // Compact, always-on-top, non-resizable overlay.
         if (AppWindow.Presenter is OverlappedPresenter presenter)
         {
