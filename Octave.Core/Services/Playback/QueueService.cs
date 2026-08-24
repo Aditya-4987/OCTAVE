@@ -892,12 +892,15 @@ public class QueueService : IQueueService, IDisposable
             // QUEUE-02: a track that ended at ~zero position never actually played —
             // the file exists but fails to decode. Count consecutive failures; after
             // one lap of the queue (bounded) stop instead of looping forever.
+            // NF-22: a HEALTHY end must advance too. The old if/else-if/else turned
+            // the healthy branch into a counter-reset no-op, so auto-advance never
+            // ran for any track that played past 0.75s.
             double endedAtPosition = _audioPlayer.PositionSeconds;
-            if (endedAtPosition >= LoadFailurePositionThresholdSeconds)
-            {
-                _consecutiveLoadFailures = 0;
-            }
-            else if (++_consecutiveLoadFailures >= Math.Min(_activeQueue.Count, MaxConsecutiveLoadFailures))
+            _consecutiveLoadFailures = endedAtPosition >= LoadFailurePositionThresholdSeconds
+                ? 0
+                : _consecutiveLoadFailures + 1;
+
+            if (_consecutiveLoadFailures >= Math.Min(_activeQueue.Count, MaxConsecutiveLoadFailures))
             {
                 _consecutiveLoadFailures = 0;
                 System.Diagnostics.Debug.WriteLine(

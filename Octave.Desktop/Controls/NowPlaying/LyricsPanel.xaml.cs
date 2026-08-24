@@ -87,12 +87,25 @@ public sealed partial class LyricsPanel : UserControl
 
     private int _lastHighlightedIndex = -2;
 
+    // NF-25: auto-follow state. While the user is scrolled away from the active
+    // line, highlighting keeps running but the panel stops repositioning itself;
+    // the sync button appears to jump back and resume following.
+    private bool _followEnabled = true;
+
+    // True while a programmatic ChangeView animation is in flight, so its own
+    // ViewChanged callbacks are not mistaken for user scrolling.
+    private bool _autoScrollInFlight;
+
     private static void OnSyncedLinesChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         if (d is LyricsPanel panel)
         {
             panel._lineElements.Clear();
             panel._lastHighlightedIndex = -2;
+            // NF-25: a fresh lyric sheet starts following again.
+            panel._followEnabled = true;
+            panel._autoScrollInFlight = false;
+            panel.SyncLyricsButton.Visibility = Visibility.Collapsed;
             panel.SyncedItemsControl.ItemsSource = panel.SyncedLines;
             panel.UpdateStateViews();
         }
@@ -125,6 +138,11 @@ public sealed partial class LyricsPanel : UserControl
         // UI-NP-06: the nudge/copy toolbar only makes sense while lyrics are shown.
         bool hasLyrics = State == LyricsState.Synced || State == LyricsState.Unsynced;
         ToolbarRow.Visibility = hasLyrics ? Visibility.Visible : Visibility.Collapsed;
+        // NF-25: the sync button exists only in the synced view - and only while
+        // the user has scrolled away from the active line.
+        SyncLyricsButton.Visibility = (State == LyricsState.Synced && !_followEnabled)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         if (hasLyrics)
         {
             UpdateOffsetLabel();
@@ -165,20 +183,77 @@ public sealed partial class LyricsPanel : UserControl
             var tb = _lineElements[targetIdx];
             ApplyLineHighlight(tb, active: true);
 
-            // NP-16 / UI-NP-03: exactly one scroll mechanism. The old code fired
-            // ListView.ScrollIntoView (Leading) AND StartBringIntoView
-            // (ratio 0.4) at the same time - two competing scroll targets caused
-            // the visible stutter. StartBringIntoView alone animates smoothly.
-            try
+            // NF-25: highlight always runs; repositioning only while following.
+            if (_followEnabled)
             {
-                tb.StartBringIntoView(new BringIntoViewOptions
-                {
-                    AnimationDesired = true,
-                    VerticalAlignmentRatio = 0.4
-                });
+                ScrollActiveLineIntoView();
             }
-            catch { }
         }
+    }
+
+    // NP-16 successor: scrolls the ACTIVE line to ~40% of the viewport with
+    // ChangeView on THIS panel's own viewer. StartBringIntoView was replaced
+    // because it bubbles through EVERY ancestor ScrollViewer - each lyric tick
+    // yanked the whole Now Playing page (NF-25). UpdateLayout() first so the
+    // just-applied 18->22px font change is reflected in the offsets.
+    private void ScrollActiveLineIntoView()
+    {
+        try
+        {
+            int idx = CurrentLyricIndex;
+            if (idx < 0 || idx >= _lineElements.Count) return;
+            var tb = _lineElements[idx];
+
+            tb.UpdateLayout();
+
+            double contentY = tb.TransformToVisual(SyncedItemsControl)
+                                 .TransformPoint(new Windows.Foundation.Point(0, 0)).Y;
+            double target = contentY + SyncedScrollViewer.Padding.Top
+                            - (SyncedScrollViewer.ViewportHeight * 0.4);
+            target = Math.Clamp(target, 0, Math.Max(0, SyncedScrollViewer.ScrollableHeight));
+
+            _autoScrollInFlight = true;
+            SyncedScrollViewer.ChangeView(null, target, null, disableAnimation: false);
+        }
+        catch { }
+    }
+
+    // NF-25: any view movement that is not our own auto-scroll animation is the
+    // user - suspend following and surface the sync button.
+    private void SyncedScrollViewer_ViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
+    {
+        if (_autoScrollInFlight)
+        {
+            if (!e.IsIntermediate) _autoScrollInFlight = false;
+            return;
+        }
+
+        SuspendFollow();
+    }
+
+    // Mouse wheel over the lyrics suspends following immediately (ViewChanged
+    // alone cannot distinguish a wheel tick from the tail of our own animation).
+    private void SyncedScrollViewer_PointerWheelChanged(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        SuspendFollow();
+    }
+
+    private void SuspendFollow()
+    {
+        if (!_followEnabled || State != LyricsState.Synced) return;
+
+        _followEnabled = false;
+        SyncLyricsButton.Visibility = Visibility.Visible;
+    }
+
+    private void SyncLyricsButton_Click(object sender, RoutedEventArgs e)
+    {
+        // Resume following and jump straight back to the active line - even when
+        // the index itself has not moved since the user scrolled away.
+        _followEnabled = true;
+        SyncLyricsButton.Visibility = Visibility.Collapsed;
+        _lastHighlightedIndex = -2; // force the scroll path to run again
+        UpdateLyricHighlighting();
     }
 
     private void ApplyLineHighlight(TextBlock tb, bool active)
@@ -234,6 +309,16 @@ public sealed partial class LyricsPanel : UserControl
     private void IncreaseOffsetButton_Click(object sender, RoutedEventArgs e)
     {
         OffsetChangeRequested?.Invoke(this, 500);
+    }
+
+    // NF-26: undo all +/- nudges in one click - the delta that returns OffsetMs
+    // to exactly zero, through the same pipeline the nudges use.
+    private void ResetOffsetButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (OffsetMs != 0)
+        {
+            OffsetChangeRequested?.Invoke(this, -OffsetMs);
+        }
     }
 
     private void CopyLyricsButton_Click(object sender, RoutedEventArgs e)

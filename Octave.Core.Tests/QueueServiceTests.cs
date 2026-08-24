@@ -89,6 +89,78 @@ public class QueueServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task TrackEnded_NaturalHealthyEnd_AdvancesToNextTrack()
+    {
+        // NF-22 regression: a NATURAL end past the load-failure threshold used to
+        // only reset the failure counter - the queue silently stopped instead of
+        // advancing. (The stale-session test above passed by accident: its mocked
+        // PositionSeconds defaulted to 0, so it exercised the FAILURE branch,
+        // which still advanced while under the cap.)
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+        _audioPlayerMock.Setup(a => a.PositionSeconds).Returns(120.0); // genuinely played
+
+        var track1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
+        var track2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", "web", 2, 2024, DateTime.UtcNow);
+
+        await _dbContext.UpsertTrackAsync(track1);
+        await _dbContext.UpsertTrackAsync(track2);
+
+        queueService.EnqueueRange(new[] { track1, track2 });
+        queueService.PlayIndex(0);
+
+        var advanced = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _audioPlayerMock.Setup(a => a.Play(It.IsAny<string>(), It.IsAny<double>()))
+            .Returns(100L)
+            .Callback(() => advanced.TrySetResult());
+
+        _audioPlayerMock.Raise(a => a.TrackEnded += null, new TrackEndedEventArgs(100L, track1.SourceUri));
+        await advanced.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal("t2", queueService.CurrentState.CurrentTrack?.Id);
+    }
+
+    [Fact]
+    public async Task TrackEnded_HealthyEnd_ResetsConsecutiveLoadFailureStreak()
+    {
+        // NF-22 companion pin: a healthy end must reset QUEUE-02's failure streak.
+        // 12 tracks so the breaker cap is Math.Min(12, 10) = 10; RepeatMode.Track
+        // replays index 0 forever, keeping every raise valid (session 100).
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+        queueService.SetRepeatMode(RepeatMode.Track);
+
+        var tracks = new List<Track>();
+        for (int i = 0; i < 12; i++)
+        {
+            tracks.Add(new Track($"hs{i}", $"Track {i}", "ar1", "Artist", "al1", "Album", 180, $"http://test/{i}.mp3", "web", i, 2024, DateTime.UtcNow));
+            await _dbContext.UpsertTrackAsync(tracks[i]);
+        }
+
+        queueService.EnqueueRange(tracks);
+        queueService.PlayIndex(0);
+
+        int replays = 0;
+        for (int i = 0; i < 19; i++)
+        {
+            // 9 undecodable ends, one HEALTHY end (resets the streak), 9 more
+            // undecodable ends. Without the reset the 10th failure would trip.
+            _audioPlayerMock.Setup(a => a.PositionSeconds).Returns(i == 9 ? 150.0 : 0.0);
+
+            var replayed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _audioPlayerMock.Setup(a => a.Play(It.IsAny<string>(), It.IsAny<double>()))
+                .Returns(100L)
+                .Callback(() => { replays++; replayed.TrySetResult(); });
+
+            _audioPlayerMock.Raise(a => a.TrackEnded += null, new TrackEndedEventArgs(100L, tracks[0].SourceUri));
+            await replayed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+
+        // All 19 ends were handled as recoverable: every one triggered a replay
+        // and the breaker never tripped.
+        Assert.Equal(19, replays);
+        _audioPlayerMock.Verify(a => a.Stop(), Times.Never);
+    }
+
+    [Fact]
     public void SetShuffle_WithSeededRandom_IsDeterministicAcrossInstances()
     {
         // TEST-08: shuffle used to be untestable because Random.Shared made the

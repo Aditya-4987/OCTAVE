@@ -167,6 +167,14 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
     {
         var state = _queueService.CurrentState;
         UpdateFromState(state);
+
+        // NF-24: QueueChanged alone owned the mirror rebuild (VM-03), but that
+        // event fires from the SINGLETON queue service - it had already happened
+        // before this transient view model subscribed, so a freshly opened
+        // Now Playing page showed an empty Up Next panel until the next queue
+        // mutation. Hydrate once here; the NP-09 identical-window early-return
+        // keeps repeat calls (every Loaded) cheap.
+        RefreshUpNextQueue();
     }
 
     private void UpdateFromState(PlaybackState state)
