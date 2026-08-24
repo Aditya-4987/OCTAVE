@@ -414,6 +414,130 @@ public class SmartLibraryEnrichmentTests : IDisposable
     }
 
     // =================================================================
+    // 6b. ONLINE SCAN PREFERENCES: Re-check policy for prior decisions (NF-35)
+    // =================================================================
+
+    private SmartLibraryEnrichmentService BuildService(
+        ExternalDataSettingsService settingsService,
+        HttpService httpService,
+        Mock<ITrackMetadataMatcher> mockMatcher) =>
+        new SmartLibraryEnrichmentService(
+            _dbContext,
+            mockMatcher.Object,
+            new Mock<ITrackMetadataEditor>().Object,
+            new Mock<IExternalArtworkOrchestrator>().Object,
+            new Mock<IArtistEnrichmentService>().Object,
+            new Mock<IOnlineLyricsOrchestrator>().Object,
+            settingsService,
+            new Mock<ILibraryService>().Object,
+            _artworkCacheManager,
+            httpService);
+
+    [Fact]
+    public async Task RescanPolicy_PriorNoMatch_DefaultSettings_SkipsWithoutMatching()
+    {
+        string filePath = CreateTestMp3("rescan_nomatch_default.mp3", "Ghost Track", "Nobody", "Nowhere");
+        var track = new Track("t_rescan_nm", "Ghost Track", "a1", "Nobody", "alb1", "Nowhere", 150.0, filePath, "Local", 0, 0, DateTime.UtcNow);
+        await _dbContext.UpsertTrackAsync(track);
+
+        // Seed a prior definitive "no online match" decision.
+        await _dbContext.SetEnrichmentStateRecordAsync(track.Id, "seed_session", (int)EnrichmentTrackStatus.NoMatch, 0.0, false, null, null);
+
+        var httpService = new HttpService(new ProviderRateLimiterRegistry(), new HttpClient(new MockHttpMessageHandler()));
+        var settingsService = new ExternalDataSettingsService(_dbContext, httpService, new TheAudioDbOptions());
+        await settingsService.LoadSettingsAsync(); // default: RecheckPreviouslyFailedMatches = false
+
+        var mockMatcher = new Mock<ITrackMetadataMatcher>();
+        var service = BuildService(settingsService, httpService, mockMatcher);
+
+        await service.RunEnrichmentScanAsync(dryRun: false);
+
+        // Default rescan policy leaves prior no-match/failed decisions alone -> no network hit.
+        mockMatcher.Verify(m => m.FindMatchesForTrackAsync(It.IsAny<Track>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RescanPolicy_PriorNoMatch_RecheckEnabled_ReprocessesTrack()
+    {
+        string filePath = CreateTestMp3("rescan_nomatch_recheck.mp3", "Ghost Track", "Nobody", "Nowhere");
+        var track = new Track("t_rescan_nm2", "Ghost Track", "a1", "Nobody", "alb1", "Nowhere", 150.0, filePath, "Local", 0, 0, DateTime.UtcNow);
+        await _dbContext.UpsertTrackAsync(track);
+
+        await _dbContext.SetEnrichmentStateRecordAsync(track.Id, "seed_session", (int)EnrichmentTrackStatus.NoMatch, 0.0, false, null, null);
+
+        var httpService = new HttpService(new ProviderRateLimiterRegistry(), new HttpClient(new MockHttpMessageHandler()));
+        var settingsService = new ExternalDataSettingsService(_dbContext, httpService, new TheAudioDbOptions());
+        await settingsService.LoadSettingsAsync();
+
+        // User opts in to re-checking previously failed / unmatched tracks.
+        var s = settingsService.CurrentSettings;
+        s.RecheckPreviouslyFailedMatches = true;
+        await settingsService.UpdateSettingsAsync(s);
+
+        var mockMatcher = new Mock<ITrackMetadataMatcher>();
+        mockMatcher.Setup(m => m.FindMatchesForTrackAsync(It.IsAny<Track>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<TrackMatchCandidate>());
+        var service = BuildService(settingsService, httpService, mockMatcher);
+
+        await service.RunEnrichmentScanAsync(dryRun: false);
+
+        // Toggle on -> the previously-unmatched track is queried again.
+        mockMatcher.Verify(m => m.FindMatchesForTrackAsync(It.IsAny<Track>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RescanPolicy_PriorNeedsReview_DefaultSettings_SkipsWithoutMatching()
+    {
+        string filePath = CreateTestMp3("rescan_review_default.mp3", "Maybe Track", "Someone", "Somewhere");
+        var track = new Track("t_rescan_nr", "Maybe Track", "a1", "Someone", "alb1", "Somewhere", 150.0, filePath, "Local", 0, 0, DateTime.UtcNow);
+        await _dbContext.UpsertTrackAsync(track);
+
+        // Seed a prior low-confidence "needs review" decision.
+        await _dbContext.SetEnrichmentStateRecordAsync(track.Id, "seed_session", (int)EnrichmentTrackStatus.NeedsReview, 0.5, false, null, null);
+
+        var httpService = new HttpService(new ProviderRateLimiterRegistry(), new HttpClient(new MockHttpMessageHandler()));
+        var settingsService = new ExternalDataSettingsService(_dbContext, httpService, new TheAudioDbOptions());
+        await settingsService.LoadSettingsAsync(); // default: RecheckAmbiguousMatches = false
+
+        var mockMatcher = new Mock<ITrackMetadataMatcher>();
+        var service = BuildService(settingsService, httpService, mockMatcher);
+
+        await service.RunEnrichmentScanAsync(dryRun: false);
+
+        // A track already parked in the review queue is not re-queried by default.
+        mockMatcher.Verify(m => m.FindMatchesForTrackAsync(It.IsAny<Track>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RescanPolicy_PriorNeedsReview_RecheckAmbiguousEnabled_ReprocessesTrack()
+    {
+        string filePath = CreateTestMp3("rescan_review_recheck.mp3", "Maybe Track", "Someone", "Somewhere");
+        var track = new Track("t_rescan_nr2", "Maybe Track", "a1", "Someone", "alb1", "Somewhere", 150.0, filePath, "Local", 0, 0, DateTime.UtcNow);
+        await _dbContext.UpsertTrackAsync(track);
+
+        await _dbContext.SetEnrichmentStateRecordAsync(track.Id, "seed_session", (int)EnrichmentTrackStatus.NeedsReview, 0.5, false, null, null);
+
+        var httpService = new HttpService(new ProviderRateLimiterRegistry(), new HttpClient(new MockHttpMessageHandler()));
+        var settingsService = new ExternalDataSettingsService(_dbContext, httpService, new TheAudioDbOptions());
+        await settingsService.LoadSettingsAsync();
+
+        // User opts in to re-checking ambiguous matches.
+        var s = settingsService.CurrentSettings;
+        s.RecheckAmbiguousMatches = true;
+        await settingsService.UpdateSettingsAsync(s);
+
+        var mockMatcher = new Mock<ITrackMetadataMatcher>();
+        mockMatcher.Setup(m => m.FindMatchesForTrackAsync(It.IsAny<Track>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<TrackMatchCandidate>());
+        var service = BuildService(settingsService, httpService, mockMatcher);
+
+        await service.RunEnrichmentScanAsync(dryRun: false);
+
+        // Toggle on -> the ambiguous track is re-evaluated against providers.
+        mockMatcher.Verify(m => m.FindMatchesForTrackAsync(It.IsAny<Track>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // =================================================================
     // 7. MULTI-DIMENSIONAL COMPLETENESS: Artwork Only Plan
     // =================================================================
 

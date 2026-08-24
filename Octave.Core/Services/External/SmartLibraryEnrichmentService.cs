@@ -165,9 +165,10 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
 
                 try
                 {
-                    // Check persistent state for prior exclusion
+                    // Check persistent state for prior exclusion / rescan policy.
                     var existingState = await _dbContext.GetEnrichmentStateRecordAsync(track.Id).ConfigureAwait(false);
-                    if (existingState.HasValue && existingState.Value.Status == (int)EnrichmentTrackStatus.NeverAskAgain)
+                    if (existingState.HasValue &&
+                        ShouldSkipByPriorState((EnrichmentTrackStatus)existingState.Value.Status, settings))
                     {
                         Interlocked.Increment(ref scannedCount);
                         return;
@@ -337,6 +338,38 @@ public class SmartLibraryEnrichmentService : ISmartLibraryEnrichmentService
 
         ScanCompleted?.Invoke(this, summary);
         return summary;
+    }
+
+    // NF-35: honour the "Online Scan Preferences" toggles when RE-scanning a
+    // track that already has a persisted enrichment state. Before this, only
+    // NeverAskAgain was respected — "Re-check previously failed matches" and
+    // "Re-check ambiguous matches" were dead UI, so a re-scan always re-hit the
+    // network for every already-decided track regardless of those switches.
+    // Only prior states are considered here; a track with no record (never
+    // scanned) is never skipped.
+    private static bool ShouldSkipByPriorState(EnrichmentTrackStatus priorStatus, ExternalDataSettings settings)
+    {
+        switch (priorStatus)
+        {
+            // User explicitly excluded the track — always skip, ignore rescan toggles.
+            case EnrichmentTrackStatus.NeverAskAgain:
+                return true;
+
+            // Prior definitive "no online match" / hard failure. Re-check only when
+            // the user opted in; otherwise leave the decision as-is.
+            case EnrichmentTrackStatus.NoMatch:
+            case EnrichmentTrackStatus.Failed:
+                return !settings.RecheckPreviouslyFailedMatches;
+
+            // Prior low-confidence / ambiguous match parked in the review queue.
+            // Re-check only when the user opted in.
+            case EnrichmentTrackStatus.NeedsReview:
+                return !settings.RecheckAmbiguousMatches;
+
+            // Pending / already-applied / completed states are re-evaluated normally.
+            default:
+                return false;
+        }
     }
 
     public async Task<TrackEnrichmentExecutionPlan> BuildPlanForTrackAsync(
