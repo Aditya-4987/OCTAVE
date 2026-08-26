@@ -54,7 +54,11 @@
                                 UnsyncedText="{x:Bind ViewModel.UnsyncedText, Mode=OneWay}"
                                 CurrentLyricIndex="{x:Bind ViewModel.CurrentLyricIndex, Mode=OneWay}"
                                 OffsetMs="{x:Bind ViewModel.LyricsOffsetMs, Mode=OneWay}"
-                                OffsetChangeRequested="LyricsPanelControl_OffsetChangeRequested">
+                                SelectedMode="{x:Bind ViewModel.SelectedLyricMode, Mode=OneWay}"
+                                HasSyncedLyrics="{x:Bind ViewModel.HasSyncedLyrics, Mode=OneWay}"
+                                HasPlainLyrics="{x:Bind ViewModel.HasPlainLyrics, Mode=OneWay}"
+                                OffsetChangeRequested="LyricsPanelControl_OffsetChangeRequested"
+                                LyricModeChangeRequested="LyricsPanelControl_LyricModeChangeRequested">
                     <np:LyricsPanel.RenderTransform>
                         <TranslateTransform x:Name="LyricsPanelTransform" />
                     </np:LyricsPanel.RenderTransform>

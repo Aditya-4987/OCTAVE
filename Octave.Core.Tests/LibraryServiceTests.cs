@@ -43,7 +43,7 @@ public class LibraryServiceTests : IDisposable
     [Fact]
     public async Task ToggleFavoriteAsync_FlipsStateAndRaisesEventEachTime()
     {
-        var track = new Track("fav1", "Fav Song", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
+        var track = new Track("fav1", "Fav Song", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", 1, 2024, DateTime.UtcNow);
         await _dbContext.UpsertTrackAsync(track);
 
         int favoritesEvents = 0;
@@ -93,9 +93,9 @@ public class LibraryServiceTests : IDisposable
         await _dbContext.AddMonitoredFolderAsync(folder);
 
         var underRoot = new Track("under1", "Under", "ar1", "Artist", "al1", "Album", 180,
-            Path.Combine(folder, "a.mp3"), "Local", 1, 2024, DateTime.UtcNow);
+            Path.Combine(folder, "a.mp3"), 1, 2024, DateTime.UtcNow);
         var elsewhere = new Track("elsewhere1", "Elsewhere", "ar2", "Artist2", "al2", "Album2", 180,
-            Path.Combine(_tempDir, "keep.mp3"), "Local", 2, 2024, DateTime.UtcNow);
+            Path.Combine(_tempDir, "keep.mp3"), 2, 2024, DateTime.UtcNow);
         await _dbContext.UpsertTrackAsync(underRoot);
         await _dbContext.UpsertTrackAsync(elsewhere);
 
@@ -145,5 +145,42 @@ public class LibraryServiceTests : IDisposable
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => _service.RescanAllAsync(cts.Token));
 
         _scannerMock.Verify(s => s.ScanAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task ClearDatabaseAsync_UnregistersMonitoredPaths_WipesDb_RaisesEvents()
+    {
+        string f1 = Path.Combine(_tempDir, "clear1");
+        string f2 = Path.Combine(_tempDir, "clear2");
+        Directory.CreateDirectory(f1);
+        Directory.CreateDirectory(f2);
+        await _dbContext.AddMonitoredFolderAsync(f1);
+        await _dbContext.AddMonitoredFolderAsync(f2);
+
+        var track = new Track("tr_libclear", "Track", "ar1", "Artist", "al1", "Album", 180, Path.Combine(f1, "song.mp3"), 1, 2024, DateTime.UtcNow);
+        await _dbContext.UpsertTrackAsync(track);
+        await _dbContext.AddFavoriteAsync(track.Id);
+
+        int libraryUpdatedEvents = 0;
+        int favoritesChangedEvents = 0;
+        _service.LibraryUpdated += (_, _) => libraryUpdatedEvents++;
+        _service.FavoritesChanged += (_, _) => favoritesChangedEvents++;
+
+        await _service.ClearDatabaseAsync(preserveSettings: false);
+
+        // Verify scanner & watcher unregistrations
+        _scannerMock.Verify(s => s.RemoveMonitoredPath(f1), Times.Once);
+        _scannerMock.Verify(s => s.RemoveMonitoredPath(f2), Times.Once);
+        _watcherMock.Verify(w => w.RemoveMonitoredPath(f1), Times.Once);
+        _watcherMock.Verify(w => w.RemoveMonitoredPath(f2), Times.Once);
+
+        // Verify DB was cleared
+        Assert.Empty(await _dbContext.GetAllTracksAsync());
+        Assert.Empty(await _dbContext.GetMonitoredFoldersAsync());
+        Assert.Empty(await _dbContext.GetFavoritesAsync());
+
+        // Verify events were fired
+        Assert.Equal(1, libraryUpdatedEvents);
+        Assert.Equal(1, favoritesChangedEvents);
     }
 }

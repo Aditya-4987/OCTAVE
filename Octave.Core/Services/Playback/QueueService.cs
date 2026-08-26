@@ -876,7 +876,14 @@ public class QueueService : IQueueService, IDisposable
 
         if (trackId != null)
         {
-            await _dbContext.LogPlaybackHistoryAsync(trackId);
+            try
+            {
+                await _dbContext.LogPlaybackHistoryAsync(trackId);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[QueueService] History logging failed: {ex.Message}");
+            }
         }
 
         PlaybackState? state = null;
@@ -889,16 +896,16 @@ public class QueueService : IQueueService, IDisposable
             if (_activeQueue.Count == 0 || _currentIndex < 0 || _currentIndex >= _activeQueue.Count)
                 return;
 
-            // QUEUE-02: a track that ended at ~zero position never actually played —
-            // the file exists but fails to decode. Count consecutive failures; after
-            // one lap of the queue (bounded) stop instead of looping forever.
-            // NF-22: a HEALTHY end must advance too. The old if/else-if/else turned
-            // the healthy branch into a counter-reset no-op, so auto-advance never
-            // ran for any track that played past 0.75s.
-            double endedAtPosition = _audioPlayer.PositionSeconds;
-            _consecutiveLoadFailures = endedAtPosition >= LoadFailurePositionThresholdSeconds
-                ? 0
-                : _consecutiveLoadFailures + 1;
+            // QUEUE-02 / NF-22: A natural track completion resets consecutive load failure streak.
+            // Only actual stream load failures increment the breaker counter.
+            if (e.IsNaturalEnd)
+            {
+                _consecutiveLoadFailures = 0;
+            }
+            else
+            {
+                _consecutiveLoadFailures++;
+            }
 
             if (_consecutiveLoadFailures >= Math.Min(_activeQueue.Count, MaxConsecutiveLoadFailures))
             {

@@ -24,6 +24,7 @@ public partial class ShellViewModel : ObservableObject
     private readonly ILibraryScanner _scanner;
     private readonly SqliteDbContext _dbContext;
     private readonly IPlaylistService _playlistService;
+    private readonly IArtworkCacheManager? _artworkCacheManager;
     private readonly Microsoft.UI.Dispatching.DispatcherQueue _dispatcher;
 
     private CancellationTokenSource? _searchCts;
@@ -123,7 +124,8 @@ public partial class ShellViewModel : ObservableObject
         IAudioPlayerService audioPlayer,
         ILibraryScanner scanner,
         SqliteDbContext dbContext,
-        IPlaylistService playlistService)
+        IPlaylistService playlistService,
+        IArtworkCacheManager? artworkCacheManager = null)
     {
         _libraryService = libraryService ?? throw new ArgumentNullException(nameof(libraryService));
         _queueService = queueService ?? throw new ArgumentNullException(nameof(queueService));
@@ -131,6 +133,7 @@ public partial class ShellViewModel : ObservableObject
         _scanner = scanner ?? throw new ArgumentNullException(nameof(scanner));
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
         _playlistService = playlistService ?? throw new ArgumentNullException(nameof(playlistService));
+        _artworkCacheManager = artworkCacheManager;
 
         _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
 
@@ -389,6 +392,49 @@ public partial class ShellViewModel : ObservableObject
         catch (Exception ex)
         {
             AppendConsole($"[Folders] Rescan failed: {ex.Message}");
+        }
+        finally
+        {
+            IsProcessing = false;
+        }
+    }
+
+    [RelayCommand]
+    public async Task ClearDatabaseAsync()
+    {
+        IsProcessing = true;
+        AppendConsole("[Database] Clearing entire library database and caches...");
+        try
+        {
+            // 1. Stop playback and clear the active/unshuffled queue
+            _audioPlayer.Stop();
+            _queueService.Clear(keepCurrentTrack: false);
+
+            // 2. Wipe all library database tables and monitored folders
+            await _libraryService.ClearDatabaseAsync(preserveSettings: false);
+
+            // 3. Clear disk artwork cache files
+            if (_artworkCacheManager != null)
+            {
+                await _artworkCacheManager.ClearCacheAsync();
+            }
+
+            // 5. Reload monitored folders in UI
+            await LoadFoldersAsync();
+
+            // 6. Reset duplicates collection and summary
+            _dispatcher.TryEnqueue(() =>
+            {
+                Duplicates.Clear();
+                DuplicatesSummary = "";
+            });
+
+            AppendConsole("[Database] Library database and all caches cleared successfully.");
+        }
+        catch (Exception ex)
+        {
+            AppendConsole($"[Database] Failed to clear database: {ex.Message}");
+            throw;
         }
         finally
         {

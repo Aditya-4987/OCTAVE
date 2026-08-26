@@ -47,24 +47,6 @@ public static class TrackContextMenu
 
         flyout.Items.Add(new MenuFlyoutSeparator());
 
-        // Edit Metadata & Enrich
-        var editMetadataItem = new MenuFlyoutItem { Text = "Edit Metadata & Enrich...", Icon = new SymbolIcon(Symbol.Edit) };
-        editMetadataItem.Click += async (s, e) =>
-        {
-            try
-            {
-                var enrichDialog = new Controls.MetadataEnrichmentDialog(track) { XamlRoot = xamlRoot };
-                await enrichDialog.ShowAsync();
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Metadata enrichment dialog failed: {ex}");
-            }
-        };
-        flyout.Items.Add(editMetadataItem);
-
-        flyout.Items.Add(new MenuFlyoutSeparator());
-
         // Playlists SubMenu
         var addToPlaylistSub = new MenuFlyoutSubItem { Text = "Add to Playlist...", Icon = new SymbolIcon(Symbol.List) };
         

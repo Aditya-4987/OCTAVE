@@ -125,4 +125,26 @@ public class ArtworkCacheManager : IArtworkCacheManager
         };
         return exists;
     }
+
+    public Task ClearCacheAsync()
+    {
+        _existenceCache.Clear();
+        if (Directory.Exists(CacheRoot))
+        {
+            try
+            {
+                var dirInfo = new DirectoryInfo(CacheRoot);
+                foreach (var file in dirInfo.EnumerateFiles())
+                {
+                    try { file.Delete(); } catch { }
+                }
+                foreach (var dir in dirInfo.EnumerateDirectories())
+                {
+                    try { dir.Delete(true); } catch { }
+                }
+            }
+            catch { }
+        }
+        return Task.CompletedTask;
+    }
 }

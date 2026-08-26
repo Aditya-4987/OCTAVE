@@ -45,7 +45,7 @@ public class SqliteDbContextTests : IDisposable
     [Fact]
     public async Task Playlist_SurrogateKey_SupportsMultipleEntriesAndRemovalByEntryId()
     {
-        var track = new Track("t1", "Song Title", "ar1", "Artist", "al1", "Album", 180, "C:\\test\\song.mp3", "local", 1, 2024, DateTime.UtcNow);
+        var track = new Track("t1", "Song Title", "ar1", "Artist", "al1", "Album", 180, "C:\\test\\song.mp3", 1, 2024, DateTime.UtcNow);
         await _dbContext.UpsertTrackAsync(track);
 
         var playlist = await _dbContext.CreatePlaylistAsync("My Playlist", null);
@@ -78,7 +78,7 @@ public class SqliteDbContextTests : IDisposable
         string oldId = Octave.Core.Helpers.IdGenerator.FromTrackUri(oldPath);
         string newId = Octave.Core.Helpers.IdGenerator.FromTrackUri(newPath);
 
-        var track = new Track(oldId, "Track 1", "ar1", "Artist", "al1", "Album", 200, oldPath, "local", 1, 2024, DateTime.UtcNow);
+        var track = new Track(oldId, "Track 1", "ar1", "Artist", "al1", "Album", 200, oldPath, 1, 2024, DateTime.UtcNow);
         await _dbContext.UpsertTrackAsync(track);
 
         var playlist = await _dbContext.CreatePlaylistAsync("Test Playlist", null);
@@ -125,9 +125,9 @@ public class SqliteDbContextTests : IDisposable
     [Fact]
     public async Task GetDuplicatesAsync_FiltersVersionAnnotationsAndSortsByQuality()
     {
-        var flac = new Track("id1", "Song Title", "ar1", "Artist", "al1", "Album", 180.0, "C:\\test\\song.flac", "local", 1, 2024, DateTime.UtcNow);
-        var mp3 = new Track("id2", "Song Title", "ar1", "Artist", "al1", "Album", 180.2, "C:\\test\\song.mp3", "local", 1, 2024, DateTime.UtcNow);
-        var live = new Track("id3", "Song Title (Live)", "ar1", "Artist", "al1", "Album", 185.0, "C:\\test\\song_live.flac", "local", 1, 2024, DateTime.UtcNow);
+        var flac = new Track("id1", "Song Title", "ar1", "Artist", "al1", "Album", 180.0, "C:\\test\\song.flac", 1, 2024, DateTime.UtcNow);
+        var mp3 = new Track("id2", "Song Title", "ar1", "Artist", "al1", "Album", 180.2, "C:\\test\\song.mp3", 1, 2024, DateTime.UtcNow);
+        var live = new Track("id3", "Song Title (Live)", "ar1", "Artist", "al1", "Album", 185.0, "C:\\test\\song_live.flac", 1, 2024, DateTime.UtcNow);
 
         await _dbContext.UpsertTrackAsync(flac);
         await _dbContext.UpsertTrackAsync(mp3);
@@ -146,7 +146,7 @@ public class SqliteDbContextTests : IDisposable
     [Fact]
     public async Task RemoveTrackFromPlaylistAsync_WhenTrackIsDuplicated_DeletesOnlyOneInstance()
     {
-        var track = new Track("t_dup", "Dup Song", "ar1", "Artist", "al1", "Album", 180, "C:\\test\\dup.mp3", "local", 1, 2024, DateTime.UtcNow);
+        var track = new Track("t_dup", "Dup Song", "ar1", "Artist", "al1", "Album", 180, "C:\\test\\dup.mp3", 1, 2024, DateTime.UtcNow);
         await _dbContext.UpsertTrackAsync(track);
 
         var playlist = await _dbContext.CreatePlaylistAsync("Dup Playlist", null);
@@ -167,9 +167,9 @@ public class SqliteDbContextTests : IDisposable
     [Fact]
     public async Task GetAlbumsByIdsAsync_ReturnsMatchingAlbumsInBatch()
     {
-        var artist = new Artist("ar_batch", "Batch Artist", null, null, true);
-        var album1 = new Album("al_batch_1", "Album 1", "ar_batch", "Batch Artist", 2023, "http://art1.png", "local");
-        var album2 = new Album("al_batch_2", "Album 2", "ar_batch", "Batch Artist", 2024, "http://art2.png", "local");
+        var artist = new Artist("ar_batch", "Batch Artist", null, null);
+        var album1 = new Album("al_batch_1", "Album 1", "ar_batch", "Batch Artist", 2023, "http://art1.png");
+        var album2 = new Album("al_batch_2", "Album 2", "ar_batch", "Batch Artist", 2024, "http://art2.png");
 
         await _dbContext.UpsertArtistAsync(artist);
         await _dbContext.UpsertAlbumAsync(album1);
@@ -184,13 +184,13 @@ public class SqliteDbContextTests : IDisposable
     [Fact]
     public async Task CompilationAlbum_GuestArtists_ArePreservedAcrossOrphanSweeps()
     {
-        var albumArtist = new Artist("ar_va", "Various Artists", null, null, true);
-        var guestArtist1 = new Artist("ar_guest1", "Guest Artist 1", null, null, true);
-        var guestArtist2 = new Artist("ar_guest2", "Guest Artist 2", null, null, true);
+        var albumArtist = new Artist("ar_va", "Various Artists", null, null);
+        var guestArtist1 = new Artist("ar_guest1", "Guest Artist 1", null, null);
+        var guestArtist2 = new Artist("ar_guest2", "Guest Artist 2", null, null);
 
-        var compilationAlbum = new Album("al_comp", "Greatest Hits Comp", "ar_va", "Various Artists", 2024, null, "local");
-        var track1 = new Track("t_comp1", "Guest Track 1", "ar_guest1", "Guest Artist 1", "al_comp", "Greatest Hits Comp", 200, "C:\\music\\comp1.mp3", "local", 1, 2024, DateTime.UtcNow);
-        var track2 = new Track("t_comp2", "Guest Track 2", "ar_guest2", "Guest Artist 2", "al_comp", "Greatest Hits Comp", 210, "C:\\music\\comp2.mp3", "local", 2, 2024, DateTime.UtcNow);
+        var compilationAlbum = new Album("al_comp", "Greatest Hits Comp", "ar_va", "Various Artists", 2024, null);
+        var track1 = new Track("t_comp1", "Guest Track 1", "ar_guest1", "Guest Artist 1", "al_comp", "Greatest Hits Comp", 200, "C:\\music\\comp1.mp3", 1, 2024, DateTime.UtcNow);
+        var track2 = new Track("t_comp2", "Guest Track 2", "ar_guest2", "Guest Artist 2", "al_comp", "Greatest Hits Comp", 210, "C:\\music\\comp2.mp3", 2, 2024, DateTime.UtcNow);
 
         await _dbContext.UpsertArtistAsync(albumArtist);
         await _dbContext.UpsertArtistAsync(guestArtist1);
@@ -238,10 +238,10 @@ public class SqliteDbContextTests : IDisposable
     [Fact]
     public async Task SearchLibraryAsync_Fts5Matching_FindsTracksAccurately()
     {
-        var artist = new Artist("ar_fts", "Pink Floyd", null, null, true);
-        var album = new Album("al_fts", "The Dark Side of the Moon", "ar_fts", "Pink Floyd", 1973, null, "Local");
-        var track1 = new Track("tr_fts1", "Time", "ar_fts", "Pink Floyd", "al_fts", "The Dark Side of the Moon", 413, "C:/music/time.flac", "Local", 4, 1973, DateTime.UtcNow);
-        var track2 = new Track("tr_fts2", "Money", "ar_fts", "Pink Floyd", "al_fts", "The Dark Side of the Moon", 382, "C:/music/money.flac", "Local", 6, 1973, DateTime.UtcNow);
+        var artist = new Artist("ar_fts", "Pink Floyd", null, null);
+        var album = new Album("al_fts", "The Dark Side of the Moon", "ar_fts", "Pink Floyd", 1973, null);
+        var track1 = new Track("tr_fts1", "Time", "ar_fts", "Pink Floyd", "al_fts", "The Dark Side of the Moon", 413, "C:/music/time.flac", 4, 1973, DateTime.UtcNow);
+        var track2 = new Track("tr_fts2", "Money", "ar_fts", "Pink Floyd", "al_fts", "The Dark Side of the Moon", 382, "C:/music/money.flac", 6, 1973, DateTime.UtcNow);
 
         await _dbContext.UpsertArtistAsync(artist);
         await _dbContext.UpsertAlbumAsync(album);
@@ -260,8 +260,8 @@ public class SqliteDbContextTests : IDisposable
     [Fact]
     public async Task GetArtistByNameAsync_And_GetAlbumByTitleAsync_ReturnAccurateRecords()
     {
-        var artist = new Artist("ar_queen", "Queen", "Legendary Rock Band", null, true);
-        var album = new Album("al_night_opera", "A Night at the Opera", "ar_queen", "Queen", 1975, null, "Local");
+        var artist = new Artist("ar_queen", "Queen", "Legendary Rock Band", null);
+        var album = new Album("al_night_opera", "A Night at the Opera", "ar_queen", "Queen", 1975, null);
 
         await _dbContext.UpsertArtistAsync(artist);
         await _dbContext.UpsertAlbumAsync(album);
@@ -278,5 +278,45 @@ public class SqliteDbContextTests : IDisposable
 
         Assert.Null(await _dbContext.GetArtistByNameAsync("Nonexistent Artist"));
         Assert.Null(await _dbContext.GetAlbumByTitleAsync("Nonexistent Album"));
+    }
+
+    [Fact]
+    public async Task ClearDatabaseAsync_WipesAllTables_IncludingCachesAndSettings()
+    {
+        var artist = new Artist("ar_clear", "Artist Clear", null, null);
+        var album = new Album("al_clear", "Album Clear", "ar_clear", "Artist Clear", 2024, null);
+        var track = new Track("tr_clear", "Track Clear", "ar_clear", "Artist Clear", "al_clear", "Album Clear", 200, "C:/music/clear.mp3", 1, 2024, DateTime.UtcNow);
+
+        await _dbContext.UpsertArtistAsync(artist);
+        await _dbContext.UpsertAlbumAsync(album);
+        await _dbContext.UpsertTrackAsync(track);
+        await _dbContext.AddFavoriteAsync(track.Id);
+        await _dbContext.AddMonitoredFolderAsync("C:/music");
+        await _dbContext.SetSettingAsync("TestSettingKey", "TestSettingValue");
+
+        var playlist = await _dbContext.CreatePlaylistAsync("Test Playlist", null);
+        await _dbContext.AddTrackToPlaylistAsync(playlist.Id, track.Id);
+
+        // Verify data was populated
+        Assert.Single(await _dbContext.GetAllTracksAsync());
+        Assert.Single(await _dbContext.GetAllAlbumsAsync());
+        Assert.Single(await _dbContext.GetAllArtistsAsync());
+        Assert.Single(await _dbContext.GetFavoritesAsync());
+        Assert.Single(await _dbContext.GetMonitoredFoldersAsync());
+        Assert.Equal("TestSettingValue", await _dbContext.GetSettingAsync("TestSettingKey"));
+
+        // Clear everything including settings
+        await _dbContext.ClearDatabaseAsync(preserveSettings: false);
+
+        // Assert all tables are wiped
+        Assert.Empty(await _dbContext.GetAllTracksAsync());
+        Assert.Empty(await _dbContext.GetAllAlbumsAsync());
+        Assert.Empty(await _dbContext.GetAllArtistsAsync());
+        Assert.Empty(await _dbContext.GetFavoritesAsync());
+        Assert.Empty(await _dbContext.GetMonitoredFoldersAsync());
+        Assert.Empty(await _dbContext.GetPlaylistsAsync());
+        Assert.Null(await _dbContext.GetSettingAsync("TestSettingKey"));
+        var searchResults = await _dbContext.SearchLibraryAsync("Track Clear");
+        Assert.Empty(searchResults.Tracks);
     }
 }

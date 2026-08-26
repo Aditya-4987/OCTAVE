@@ -7,11 +7,13 @@ public class TrackEndedEventArgs : EventArgs
 {
     public long SessionId { get; }
     public string SourceUri { get; }
+    public bool IsNaturalEnd { get; }
 
-    public TrackEndedEventArgs(long sessionId, string sourceUri)
+    public TrackEndedEventArgs(long sessionId, string sourceUri, bool isNaturalEnd = true)
     {
         SessionId = sessionId;
         SourceUri = sourceUri;
+        IsNaturalEnd = isNaturalEnd;
     }
 }
 

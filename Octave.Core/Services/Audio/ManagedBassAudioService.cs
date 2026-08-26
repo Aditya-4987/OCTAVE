@@ -361,7 +361,7 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
                     {
                         try
                         {
-                            handler.Invoke(this, new TrackEndedEventArgs(sessionId, urlOrPath));
+                            handler.Invoke(this, new TrackEndedEventArgs(sessionId, urlOrPath, isNaturalEnd: false));
                         }
                         catch (Exception ex)
                         {
@@ -907,7 +907,10 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
     // `channel` argument instead of reading global state (AUDIO-07).
     private void RegisterEndSyncUnlocked(int stream, long sessionId, string uri)
     {
-        int syncHandle = Bass.ChannelSetSync(stream, SyncFlags.End | SyncFlags.Mixtime, 0, _endSyncCallback, IntPtr.Zero);
+        // Standard SyncFlags.End fires after the full buffer has completed audible playback
+        // (NOT SyncFlags.Mixtime, which fires prematurely during decoding and causes deadlock
+        // when BASS holds internal mixer locks).
+        int syncHandle = Bass.ChannelSetSync(stream, SyncFlags.End, 0, _endSyncCallback, IntPtr.Zero);
         if (syncHandle != 0)
         {
             _endSyncs[stream] = new EndSyncIdentity(syncHandle, sessionId, uri);
@@ -942,8 +945,6 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         // (0xC000027B). Nothing in here may throw outward.
         try
         {
-            StopPositionTimer();
-
             EndSyncIdentity identity;
             lock (_streamLock)
             {
@@ -956,6 +957,8 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
                     return;
                 }
             }
+
+            StopPositionTimer();
 
             var handler = TrackEnded;
             if (handler != null)

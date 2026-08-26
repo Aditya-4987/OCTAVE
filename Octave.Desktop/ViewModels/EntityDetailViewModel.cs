@@ -1,11 +1,8 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Octave.Core.Interfaces;
-using Octave.Core.Interfaces.External;
 using Octave.Core.Models;
 using Octave.Core.Services.Database;
-using Octave.Core.Services.External;
-using Octave.Core.Services.External.Artist;
 using Octave.Core.Services.Library;
 using System;
 using System.Collections.Generic;
@@ -19,8 +16,6 @@ public partial class EntityDetailViewModel : ObservableObject
     private readonly ILibraryService _libraryService;
     private readonly IQueueService _queueService;
     private readonly SqliteDbContext _dbContext;
-    private readonly IArtistEnrichmentService? _artistEnrichmentService;
-    private readonly IExternalArtworkOrchestrator? _artworkOrchestrator;
     private readonly Microsoft.UI.Dispatching.DispatcherQueue _dispatcher;
 
     [ObservableProperty]
@@ -44,9 +39,6 @@ public partial class EntityDetailViewModel : ObservableObject
     [ObservableProperty]
     public partial bool IsCurrentlyPlaying { get; set; }
 
-    [ObservableProperty]
-    public partial bool IsEnriching { get; set; }
-
     public ObservableCollection<Track> Tracks { get; } = new();
 
     private readonly EventHandler _libraryUpdatedHandler;
@@ -54,23 +46,18 @@ public partial class EntityDetailViewModel : ObservableObject
     private EntityNavigationParameter? _currentParam;
 
     // VM-04: incremented per LoadEntityAsync request; completions from an older
-    // generation are dropped so a refresh triggered mid-load (e.g. the
-    // re-entrant LibraryUpdated fired by EnrichEntityAsync) can't interleave
+    // generation are dropped so a refresh triggered mid-load can't interleave
     // with or overwrite the newer run.
     private int _loadGeneration;
 
     public EntityDetailViewModel(
         ILibraryService libraryService,
         IQueueService queueService,
-        SqliteDbContext dbContext,
-        IArtistEnrichmentService? artistEnrichmentService = null,
-        IExternalArtworkOrchestrator? artworkOrchestrator = null)
+        SqliteDbContext dbContext)
     {
         _libraryService = libraryService ?? throw new ArgumentNullException(nameof(libraryService));
         _queueService = queueService ?? throw new ArgumentNullException(nameof(queueService));
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
-        _artistEnrichmentService = artistEnrichmentService;
-        _artworkOrchestrator = artworkOrchestrator;
         _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
 
         var initialState = _queueService.CurrentState;
@@ -189,63 +176,6 @@ public partial class EntityDetailViewModel : ObservableObject
             // VM-04: fire-and-forget callers previously surfaced nothing when
             // the load threw - at least leave a debug trace.
             System.Diagnostics.Debug.WriteLine($"[EntityDetailViewModel] LoadEntityAsync failed: {ex.Message}");
-        }
-    }
-
-    [RelayCommand]
-    public async Task EnrichEntityAsync()
-    {
-        if (_currentParam == null || IsEnriching) return;
-
-        IsEnriching = true;
-        try
-        {
-            if (_currentParam.Type == EntityType.Artist && _artistEnrichmentService != null)
-            {
-                var profile = await _artistEnrichmentService.GetEnrichedArtistAsync(Title).ConfigureAwait(false);
-                if (profile != null)
-                {
-                    string? newImage = profile.LocalImageToken ?? ArtworkUrl;
-                    var updatedArtist = new Artist(_currentParam.Id, Title, profile.Biography, newImage, true);
-                    await _dbContext.UpsertArtistAsync(updatedArtist).ConfigureAwait(false);
-
-                    _dispatcher.TryEnqueue(() =>
-                    {
-                        if (!string.IsNullOrWhiteSpace(profile.Biography)) Description = profile.Biography;
-                        if (!string.IsNullOrWhiteSpace(newImage)) ArtworkUrl = newImage;
-                    });
-
-                    _libraryService.NotifyLibraryUpdated();
-                }
-            }
-            else if (_currentParam.Type == EntityType.Album && _artworkOrchestrator != null)
-            {
-                var album = await _libraryService.GetAlbumByIdAsync(_currentParam.Id).ConfigureAwait(false);
-                if (album != null)
-                {
-                    var token = await _artworkOrchestrator.ResolveAndCacheAlbumArtworkAsync(album.Title, album.ArtistName).ConfigureAwait(false);
-                    if (!string.IsNullOrWhiteSpace(token))
-                    {
-                        var updatedAlbum = album with { ArtworkUrl = token };
-                        await _dbContext.UpsertAlbumAsync(updatedAlbum).ConfigureAwait(false);
-
-                        _dispatcher.TryEnqueue(() =>
-                        {
-                            ArtworkUrl = token;
-                        });
-
-                        _libraryService.NotifyLibraryUpdated();
-                    }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"[EntityDetailViewModel] EnrichEntityAsync failed: {ex.Message}");
-        }
-        finally
-        {
-            _dispatcher.TryEnqueue(() => IsEnriching = false);
         }
     }
 

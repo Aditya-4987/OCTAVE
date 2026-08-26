@@ -18,4 +18,9 @@ public interface IArtworkCacheManager
     /// per resolve; writes through CacheBytesAsync prime the cache positive.
     /// </summary>
     bool CachedFileExists(string relativeToken);
+
+    /// <summary>
+    /// Purges all cached artwork files from disk and clears the in-memory probe cache.
+    /// </summary>
+    Task ClearCacheAsync();
 }

@@ -104,9 +104,9 @@
                                 <FontIcon Glyph="{x:Bind GetNowPlayingGlyph(ViewModel.IsPlaying), Mode=OneWay}" />
                             </NavigationViewItem.Icon>
                         </NavigationViewItem>
-                        <NavigationViewItem Content="Audio FX" Tag="AudioFX" x:Name="AudioFxItem">
+                        <NavigationViewItem Content="Download Songs" Tag="DownloadSongs" x:Name="DownloadSongsItem">
                             <NavigationViewItem.Icon>
-                                <FontIcon Glyph="&#xE9D9;" />
+                                <FontIcon Glyph="&#xE896;" />
                             </NavigationViewItem.Icon>
                         </NavigationViewItem>
                     </NavigationView.MenuItems>

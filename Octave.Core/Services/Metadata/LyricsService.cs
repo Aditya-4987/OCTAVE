@@ -28,67 +28,247 @@ public class LyricsService : ILyricsService
         @"^\[offset:\s*(?<offset>[+-]?\d+)\s*\]",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    public static readonly TimeSpan NegativeCacheExpiration = TimeSpan.FromDays(7);
+
+    private readonly ILrclibClient? _lrclibClient;
+    private readonly ILyricsRepository? _lyricsRepository;
+
+    public LyricsService(ILrclibClient? lrclibClient = null, ILyricsRepository? lyricsRepository = null)
+    {
+        _lrclibClient = lrclibClient;
+        _lyricsRepository = lyricsRepository;
+    }
+
     public async Task<LyricsData> GetLyricsAsync(Track track, CancellationToken cancellationToken = default)
     {
-        if (track == null || string.IsNullOrWhiteSpace(track.SourceUri))
+        if (track == null || string.IsNullOrWhiteSpace(track.Id))
         {
             return new LyricsData(track?.Id, LyricsState.Unavailable, null, null);
         }
 
-        // Local file check only for local URIs
-        if (track.SourceUri.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+        // 1. Check local file (embedded tags and sidecar .lrc)
+        if (!string.IsNullOrWhiteSpace(track.SourceUri) && !track.SourceUri.StartsWith("http", StringComparison.OrdinalIgnoreCase))
         {
-            return new LyricsData(track.Id, LyricsState.Unavailable, null, null);
+            // 1a. Check embedded tag lyrics first
+            if (File.Exists(track.SourceUri))
+            {
+                try
+                {
+                    using var tagFile = TagLib.File.Create(track.SourceUri);
+                    string? embedded = tagFile.Tag.Lyrics;
+                    if (!string.IsNullOrWhiteSpace(embedded))
+                    {
+                        var parsedEmbedded = ParseLrcContent(track.Id, embedded);
+                        if (parsedEmbedded.State == LyricsState.Synced || parsedEmbedded.State == LyricsState.Unsynced)
+                        {
+                            if (_lyricsRepository != null)
+                            {
+                                try
+                                {
+                                    await _lyricsRepository.UpsertCachedLyricsAsync(
+                                        track.Id,
+                                        parsedEmbedded.PlainText,
+                                        parsedEmbedded.RawSyncedLyrics,
+                                        parsedEmbedded.HasPlainLyrics,
+                                        parsedEmbedded.HasSyncedLyrics,
+                                        isNotFound: false,
+                                        cancellationToken);
+                                }
+                                catch (Exception ex)
+                                {
+                                    System.Diagnostics.Debug.WriteLine($"[LyricsService] Caching local embedded lyrics failed: {ex.Message}");
+                                }
+                            }
+                            return parsedEmbedded;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[LyricsService] Embedded tag reading failed for '{track.SourceUri}': {ex.Message}");
+                }
+            }
+
+            // 1b. Check local LRC sidecar files
+            string? lrcPath = FindLocalLrcFile(track.SourceUri);
+            if (!string.IsNullOrEmpty(lrcPath) && File.Exists(lrcPath))
+            {
+                try
+                {
+                    string rawContent = await File.ReadAllTextAsync(lrcPath, cancellationToken);
+                    if (!string.IsNullOrWhiteSpace(rawContent))
+                    {
+                        var parsedLrc = ParseLrcContent(track.Id, rawContent);
+                        if (parsedLrc.State == LyricsState.Synced || parsedLrc.State == LyricsState.Unsynced)
+                        {
+                            if (_lyricsRepository != null)
+                            {
+                                try
+                                {
+                                    await _lyricsRepository.UpsertCachedLyricsAsync(
+                                        track.Id,
+                                        parsedLrc.PlainText,
+                                        parsedLrc.RawSyncedLyrics,
+                                        parsedLrc.HasPlainLyrics,
+                                        parsedLrc.HasSyncedLyrics,
+                                        isNotFound: false,
+                                        cancellationToken);
+                                }
+                                catch (Exception ex)
+                                {
+                                    System.Diagnostics.Debug.WriteLine($"[LyricsService] Caching local sidecar lyrics failed: {ex.Message}");
+                                }
+                            }
+                            return parsedLrc;
+                        }
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[LyricsService] Error reading LRC file '{lrcPath}': {ex.Message}");
+                }
+            }
         }
 
-        // 1. Check embedded tag lyrics first
-        if (File.Exists(track.SourceUri))
+        // 2. Check local database lyrics cache via repository
+        if (_lyricsRepository != null)
         {
             try
             {
-                using var tagFile = TagLib.File.Create(track.SourceUri);
-                string? embedded = tagFile.Tag.Lyrics;
-                if (!string.IsNullOrWhiteSpace(embedded))
+                var cached = await _lyricsRepository.GetCachedLyricsAsync(track.Id, cancellationToken);
+                if (cached != null)
                 {
-                    var parsedEmbedded = ParseLrcContent(track.Id, embedded);
-                    if (parsedEmbedded.State == LyricsState.Synced || parsedEmbedded.State == LyricsState.Unsynced)
+                    if (cached.IsNotFound)
                     {
-                        return parsedEmbedded;
+                        // Negative cache: verify whether it's within the refresh window
+                        if (DateTimeOffset.UtcNow - cached.LastCheckedAt < NegativeCacheExpiration)
+                        {
+                            return new LyricsData(track.Id, LyricsState.Unavailable, null, null, false, false, null, false);
+                        }
+                        // Expired negative cache entry -> fall through to retry LRCLIB below
+                    }
+                    else if (cached.HasSyncedLyrics || cached.HasPlainLyrics)
+                    {
+                        IReadOnlyList<LyricLine>? syncedLines = null;
+                        if (cached.HasSyncedLyrics && !string.IsNullOrWhiteSpace(cached.SyncedLyrics))
+                        {
+                            var parsed = ParseLrcContent(track.Id, cached.SyncedLyrics);
+                            syncedLines = parsed.SyncedLines;
+                        }
+
+                        string? plainText = cached.PlainLyrics;
+                        bool hasSynced = cached.HasSyncedLyrics && syncedLines != null && syncedLines.Count > 0;
+                        bool hasPlain = cached.HasPlainLyrics && !string.IsNullOrWhiteSpace(plainText);
+
+                        var state = hasSynced ? LyricsState.Synced : (hasPlain ? LyricsState.Unsynced : LyricsState.Unavailable);
+                        return new LyricsData(track.Id, state, syncedLines, plainText, hasSynced, hasPlain, cached.SyncedLyrics, false);
                     }
                 }
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[LyricsService] Embedded tag reading failed for '{track.SourceUri}': {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[LyricsService] Database cache lookup failed: {ex.Message}");
             }
         }
 
-        // 2. Check local LRC sidecar files
-        string? lrcPath = FindLocalLrcFile(track.SourceUri);
-        if (string.IsNullOrEmpty(lrcPath) || !File.Exists(lrcPath))
+        // 3. Query remote LRCLIB API
+        if (_lrclibClient != null && !string.IsNullOrWhiteSpace(track.Title) && !string.IsNullOrWhiteSpace(track.ArtistName))
         {
-            return new LyricsData(track.Id, LyricsState.Unavailable, null, null);
-        }
-
-        try
-        {
-            string rawContent = await File.ReadAllTextAsync(lrcPath, cancellationToken);
-            if (string.IsNullOrWhiteSpace(rawContent))
+            try
             {
-                return new LyricsData(track.Id, LyricsState.Unavailable, null, null);
-            }
+                var response = await _lrclibClient.GetLyricsAsync(
+                    track.Title,
+                    track.ArtistName,
+                    track.AlbumTitle,
+                    track.DurationSeconds,
+                    cancellationToken);
 
-            return ParseLrcContent(track.Id, rawContent);
+                if (response == null || response.Instrumental ||
+                    (string.IsNullOrWhiteSpace(response.PlainLyrics) && string.IsNullOrWhiteSpace(response.SyncedLyrics)))
+                {
+                    // Track not found or instrumental: cache as NOT FOUND
+                    if (_lyricsRepository != null)
+                    {
+                        try
+                        {
+                            await _lyricsRepository.UpsertCachedLyricsAsync(
+                                track.Id,
+                                null,
+                                null,
+                                hasPlainLyrics: false,
+                                hasSyncedLyrics: false,
+                                isNotFound: true,
+                                cancellationToken);
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[LyricsService] Negative cache upsert failed: {ex.Message}");
+                        }
+                    }
+
+                    return new LyricsData(track.Id, LyricsState.Unavailable, null, null, false, false, null, false);
+                }
+
+                // Successful response with lyrics
+                bool hasSynced = !string.IsNullOrWhiteSpace(response.SyncedLyrics);
+                bool hasPlain = !string.IsNullOrWhiteSpace(response.PlainLyrics);
+                IReadOnlyList<LyricLine>? syncedLines = null;
+
+                if (hasSynced)
+                {
+                    var parsed = ParseLrcContent(track.Id, response.SyncedLyrics!);
+                    syncedLines = parsed.SyncedLines;
+                    if (syncedLines == null || syncedLines.Count == 0)
+                    {
+                        hasSynced = false;
+                    }
+                }
+
+                string? plainLyrics = response.PlainLyrics;
+
+                if (_lyricsRepository != null)
+                {
+                    try
+                    {
+                        await _lyricsRepository.UpsertCachedLyricsAsync(
+                            track.Id,
+                            plainLyrics,
+                            response.SyncedLyrics,
+                            hasPlain,
+                            hasSynced,
+                            isNotFound: false,
+                            cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[LyricsService] Caching LRCLIB lyrics failed: {ex.Message}");
+                    }
+                }
+
+                var resolvedState = hasSynced ? LyricsState.Synced : (hasPlain ? LyricsState.Unsynced : LyricsState.Unavailable);
+                return new LyricsData(track.Id, resolvedState, syncedLines, plainLyrics, hasSynced, hasPlain, response.SyncedLyrics, false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[LyricsService] LRCLIB request failed for '{track.Title}': {ex.Message}");
+                // On temporary network failure / error, DO NOT mark as not found in DB
+                return new LyricsData(track.Id, LyricsState.Unavailable, null, null, false, false, null, IsNetworkError: true);
+            }
         }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"[LyricsService] Error reading LRC file '{lrcPath}': {ex.Message}");
-            return new LyricsData(track.Id, LyricsState.Unavailable, null, null);
-        }
+
+        return new LyricsData(track.Id, LyricsState.Unavailable, null, null, false, false, null, false);
     }
 
     private static string? FindLocalLrcFile(string audioPath)
@@ -140,7 +320,7 @@ public class LyricsService : ILyricsService
     // LyricsServiceTests that could never catch a regression). Extracted here as the
     // single production implementation: returns the index of the last line whose
     // Start is at or before the position, or -1 when every line starts later.
-    public static int FindActiveLineIndex(IReadOnlyList<LyricLine> lines, TimeSpan position)
+    public static int FindActiveLineIndex(IReadOnlyList<LyricLine>? lines, TimeSpan position)
     {
         if (lines == null || lines.Count == 0) return -1;
 
@@ -169,7 +349,7 @@ public class LyricsService : ILyricsService
     {
         if (string.IsNullOrWhiteSpace(rawContent))
         {
-            return new LyricsData(trackId, LyricsState.Unavailable, null, null);
+            return new LyricsData(trackId, LyricsState.Unavailable, null, null, false, false, null, false);
         }
 
         string[] lines = rawContent.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.RemoveEmptyEntries);
@@ -251,14 +431,35 @@ public class LyricsService : ILyricsService
                 resultLines.Add(new LyricLine(start, end, sorted[i].Text));
             }
 
-            return new LyricsData(trackId, LyricsState.Synced, resultLines.AsReadOnly(), null);
+            // Generate plain text version from the synced lines or plain lines
+            string plainText = plainLines.Count > 0
+                ? string.Join(Environment.NewLine, plainLines)
+                : string.Join(Environment.NewLine, resultLines.Select(l => l.Text).Where(t => !string.IsNullOrWhiteSpace(t)));
+
+            return new LyricsData(
+                trackId,
+                LyricsState.Synced,
+                resultLines.AsReadOnly(),
+                plainText,
+                HasSyncedLyrics: true,
+                HasPlainLyrics: !string.IsNullOrWhiteSpace(plainText),
+                RawSyncedLyrics: rawContent,
+                IsNetworkError: false);
         }
         else if (plainLines.Count > 0)
         {
             string fullText = string.Join(Environment.NewLine, plainLines);
-            return new LyricsData(trackId, LyricsState.Unsynced, null, fullText);
+            return new LyricsData(
+                trackId,
+                LyricsState.Unsynced,
+                null,
+                fullText,
+                HasSyncedLyrics: false,
+                HasPlainLyrics: true,
+                RawSyncedLyrics: null,
+                IsNetworkError: false);
         }
 
-        return new LyricsData(trackId, LyricsState.Unavailable, null, null);
+        return new LyricsData(trackId, LyricsState.Unavailable, null, null, false, false, null, false);
     }
 }

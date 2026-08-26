@@ -58,7 +58,7 @@ public class LocalLibraryScannerTests : IDisposable
 
     private static Track MakeTrack(string id, string title, string sourceUri) =>
         new(id, title, "ar_" + id, "Artist " + id, "al_" + id, "Album", 180.0,
-            sourceUri, "Local", 1, 2024, DateTime.UtcNow);
+            sourceUri, 1, 2024, DateTime.UtcNow);
 
     /// <summary>Writes a minimal MP3 and stamps tags onto it via TagLib.</summary>
     private static void WriteTaggedFile(

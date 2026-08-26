@@ -69,6 +69,15 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
     public partial LyricsState LyricsState { get; set; } = LyricsState.Loading;
 
     [ObservableProperty]
+    public partial LyricDisplayMode SelectedLyricMode { get; set; } = LyricDisplayMode.Synced;
+
+    [ObservableProperty]
+    public partial bool HasSyncedLyrics { get; set; } = false;
+
+    [ObservableProperty]
+    public partial bool HasPlainLyrics { get; set; } = false;
+
+    [ObservableProperty]
     public partial IReadOnlyList<LyricLine>? SyncedLines { get; set; }
 
     [ObservableProperty]
@@ -76,6 +85,9 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     public partial int CurrentLyricIndex { get; set; } = -1;
+
+    private LyricDisplayMode? _userSelectedMode;
+    private LyricsData? _cachedLyricsData;
 
     // UI-NP-06: user-applied sync offset for out-of-sync LRC files, in ms.
     // Positive values make lyric lines fire LATER (the effective position is
@@ -214,8 +226,11 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
         {
             long genToken = ++_generationToken;
 
-            // UI-NP-06: lyric drift is a per-file property - a nudge applied to the
-            // previous track's LRC must not leak into this one.
+            // Reset per-track lyrics selection and offset
+            _userSelectedMode = null;
+            _cachedLyricsData = null;
+            HasSyncedLyrics = false;
+            HasPlainLyrics = false;
             LyricsOffsetMs = 0;
 
             // CRIT-02: cancel AND dispose the old sources - they were cancelled
@@ -254,6 +269,8 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
         SyncedLines = null;
         UnsyncedText = null;
         CurrentLyricIndex = -1;
+        HasSyncedLyrics = false;
+        HasPlainLyrics = false;
 
         var data = await _lyricsService.GetLyricsAsync(track, ct);
 
@@ -267,38 +284,99 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
         // other mutation in this VM.
         _dispatcher.TryEnqueue(() =>
         {
-            LyricsState = data.State;
-
-            if (data.State == LyricsState.Synced)
+            if (ct.IsCancellationRequested || genToken != _generationToken || track.Id != CurrentTrack?.Id)
             {
-                SyncedLines = data.SyncedLines;
-                IsLyricsPanelVisible = true;
-                UpdateLyricPosition(PositionSeconds);
+                return;
             }
-            else if (data.State == LyricsState.Unsynced)
+
+            _cachedLyricsData = data;
+            HasSyncedLyrics = data.HasSyncedLyrics;
+            HasPlainLyrics = data.HasPlainLyrics;
+            SyncedLines = data.SyncedLines;
+            UnsyncedText = data.PlainText;
+
+            // Determine display mode: respect user selection for this track if valid, otherwise default to Synced then Static
+            LyricDisplayMode targetMode;
+            if (_userSelectedMode.HasValue)
             {
-                UnsyncedText = data.PlainText;
-                IsLyricsPanelVisible = true;
+                if (_userSelectedMode.Value == LyricDisplayMode.Synced && data.HasSyncedLyrics)
+                    targetMode = LyricDisplayMode.Synced;
+                else if (_userSelectedMode.Value == LyricDisplayMode.Static && data.HasPlainLyrics)
+                    targetMode = LyricDisplayMode.Static;
+                else
+                    targetMode = data.HasSyncedLyrics ? LyricDisplayMode.Synced : (data.HasPlainLyrics ? LyricDisplayMode.Static : LyricDisplayMode.Synced);
             }
             else
             {
-                // Lyrics unavailable: keep visible for 2 seconds, then slide out
-                // (the delayed hide below).
+                targetMode = data.HasSyncedLyrics ? LyricDisplayMode.Synced : (data.HasPlainLyrics ? LyricDisplayMode.Static : LyricDisplayMode.Synced);
+            }
+
+            SelectedLyricMode = targetMode;
+
+            if (data.HasSyncedLyrics || data.HasPlainLyrics)
+            {
+                IsLyricsPanelVisible = true;
+                if (targetMode == LyricDisplayMode.Synced && data.HasSyncedLyrics)
+                {
+                    LyricsState = LyricsState.Synced;
+                    UpdateLyricPosition(PositionSeconds);
+                }
+                else if (targetMode == LyricDisplayMode.Static && data.HasPlainLyrics)
+                {
+                    LyricsState = LyricsState.Unsynced;
+                }
+                else
+                {
+                    LyricsState = data.State;
+                }
+            }
+            else
+            {
+                LyricsState = LyricsState.Unavailable;
                 IsLyricsPanelVisible = true;
             }
         });
 
-        if (data.State != LyricsState.Synced && data.State != LyricsState.Unsynced)
+        if (!data.HasSyncedLyrics && !data.HasPlainLyrics)
         {
             try
             {
                 await Task.Delay(2000, ct);
                 if (!ct.IsCancellationRequested && genToken == _generationToken && track.Id == CurrentTrack?.Id)
                 {
-                    _dispatcher.TryEnqueue(() => IsLyricsPanelVisible = false);
+                    _dispatcher.TryEnqueue(() =>
+                    {
+                        if (!ct.IsCancellationRequested && genToken == _generationToken && track.Id == CurrentTrack?.Id)
+                        {
+                            IsLyricsPanelVisible = false;
+                        }
+                    });
                 }
             }
             catch (OperationCanceledException) { }
+        }
+    }
+
+    [RelayCommand]
+    public void SelectLyricMode(LyricDisplayMode mode)
+    {
+        _userSelectedMode = mode;
+        SelectedLyricMode = mode;
+
+        if (mode == LyricDisplayMode.Synced)
+        {
+            if (HasSyncedLyrics)
+            {
+                LyricsState = LyricsState.Synced;
+                UpdateLyricPosition(PositionSeconds);
+            }
+        }
+        else
+        {
+            if (HasPlainLyrics)
+            {
+                LyricsState = LyricsState.Unsynced;
+            }
         }
     }
 

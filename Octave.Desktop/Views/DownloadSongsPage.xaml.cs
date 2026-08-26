@@ -2,9 +2,9 @@ using Microsoft.UI.Xaml.Controls;
 
 namespace Octave_Desktop.Views;
 
-public sealed partial class AudioFxPage : Page
+public sealed partial class DownloadSongsPage : Page
 {
-    public AudioFxPage()
+    public DownloadSongsPage()
     {
         InitializeComponent();
     }

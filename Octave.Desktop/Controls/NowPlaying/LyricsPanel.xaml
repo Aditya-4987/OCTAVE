@@ -15,60 +15,77 @@
             Padding="24,16,24,20"
             VerticalAlignment="Stretch">
         <Grid RowDefinitions="Auto,*" VerticalAlignment="Stretch">
-            <!-- Toolbar (UI-NP-06): lyric sync nudge + copy. Shown only when
+            <!-- Toolbar (UI-NP-06): lyric mode selector (Synced / Static) + lyric sync nudge + copy. Shown only when
                  there are lyrics on screen to act on. -->
             <Grid Grid.Row="0" x:Name="ToolbarRow" Margin="-8,0,-8,10" Visibility="Collapsed">
-                <TextBlock x:Name="OffsetLabel"
-                           HorizontalAlignment="Left"
-                           VerticalAlignment="Center"
-                           FontSize="11"
-                           CharacterSpacing="60"
-                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                <ComboBox x:Name="LyricModeComboBox"
+                          HorizontalAlignment="Left"
+                          VerticalAlignment="Center"
+                          FontSize="12"
+                          Padding="10,4"
+                          MinHeight="28"
+                          CornerRadius="6"
+                          SelectionChanged="LyricModeComboBox_SelectionChanged">
+                    <ComboBoxItem x:Name="SyncedModeItem" Content="Synced Lyrics" FontSize="12" />
+                    <ComboBoxItem x:Name="StaticModeItem" Content="Static Lyrics" FontSize="12" />
+                </ComboBox>
+
                 <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Right" VerticalAlignment="Center">
-                    <!-- NF-25: appears only while the user has scrolled the lyrics
-                         off the auto-follow position - clicking re-syncs. -->
-                    <Button x:Name="SyncLyricsButton"
-                            Click="SyncLyricsButton_Click"
-                            Visibility="Collapsed"
-                            Background="Transparent"
-                            BorderBrush="Transparent"
-                            Padding="7,3,7,3"
-                            CornerRadius="6"
-                            ToolTipService.ToolTip="Back to the current line (resume auto-scroll)">
-                        <FontIcon Glyph="&#xE895;" FontFamily="Segoe MDL2 Assets" FontSize="12"
-                                  Foreground="{ThemeResource SystemControlHighlightAccentBrush}"/>
-                    </Button>
-                    <Button x:Name="DecreaseOffsetButton"
-                            Click="DecreaseOffsetButton_Click"
-                            Background="Transparent"
-                            BorderBrush="Transparent"
-                            Padding="7,3,7,3"
-                            CornerRadius="6"
-                            ToolTipService.ToolTip="Shift lyrics 500 ms earlier">
-                        <FontIcon Glyph="&#xE738;" FontFamily="Segoe MDL2 Assets" FontSize="12"
-                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                    </Button>
-                    <Button x:Name="IncreaseOffsetButton"
-                            Click="IncreaseOffsetButton_Click"
-                            Background="Transparent"
-                            BorderBrush="Transparent"
-                            Padding="7,3,7,3"
-                            CornerRadius="6"
-                            ToolTipService.ToolTip="Shift lyrics 500 ms later">
-                        <FontIcon Glyph="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="12"
-                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                    </Button>
-                    <!-- NF-26: undo any +/- nudges back to 0 in one click. -->
-                    <Button x:Name="ResetOffsetButton"
-                            Click="ResetOffsetButton_Click"
-                            Background="Transparent"
-                            BorderBrush="Transparent"
-                            Padding="7,3,7,3"
-                            CornerRadius="6"
-                            ToolTipService.ToolTip="Reset sync offset to 0">
-                        <FontIcon Glyph="&#xE7A7;" FontFamily="Segoe MDL2 Assets" FontSize="12"
-                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                    </Button>
+                    <!-- Sync Controls (Visible ONLY in Synced Lyrics mode) -->
+                    <StackPanel x:Name="SyncControlsPanel" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                        <TextBlock x:Name="OffsetIndicator"
+                                   VerticalAlignment="Center"
+                                   FontSize="11"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                   Margin="0,0,4,0"
+                                   Visibility="Collapsed" />
+                        <!-- NF-25: appears only while the user has scrolled the lyrics
+                             off the auto-follow position - clicking re-syncs. -->
+                        <Button x:Name="SyncLyricsButton"
+                                Click="SyncLyricsButton_Click"
+                                Visibility="Collapsed"
+                                Background="Transparent"
+                                BorderBrush="Transparent"
+                                Padding="7,3,7,3"
+                                CornerRadius="6"
+                                ToolTipService.ToolTip="Back to the current line (resume auto-scroll)">
+                            <FontIcon Glyph="&#xE895;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                      Foreground="{ThemeResource SystemControlHighlightAccentBrush}"/>
+                        </Button>
+                        <Button x:Name="DecreaseOffsetButton"
+                                Click="DecreaseOffsetButton_Click"
+                                Background="Transparent"
+                                BorderBrush="Transparent"
+                                Padding="7,3,7,3"
+                                CornerRadius="6"
+                                ToolTipService.ToolTip="Shift lyrics 500 ms earlier">
+                            <FontIcon Glyph="&#xE738;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </Button>
+                        <Button x:Name="IncreaseOffsetButton"
+                                Click="IncreaseOffsetButton_Click"
+                                Background="Transparent"
+                                BorderBrush="Transparent"
+                                Padding="7,3,7,3"
+                                CornerRadius="6"
+                                ToolTipService.ToolTip="Shift lyrics 500 ms later">
+                            <FontIcon Glyph="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </Button>
+                        <!-- NF-26: undo any +/- nudges back to 0 in one click. -->
+                        <Button x:Name="ResetOffsetButton"
+                                Click="ResetOffsetButton_Click"
+                                Background="Transparent"
+                                BorderBrush="Transparent"
+                                Padding="7,3,7,3"
+                                CornerRadius="6"
+                                ToolTipService.ToolTip="Reset sync offset to 0">
+                            <FontIcon Glyph="&#xE7A7;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </Button>
+                    </StackPanel>
+
+                    <!-- Copy button: always accessible when lyrics exist -->
                     <Button x:Name="CopyLyricsButton"
                             Click="CopyLyricsButton_Click"
                             Background="Transparent"

@@ -14,7 +14,7 @@ public class QueueItemTests
 {
     private static Track MakeTrack(string id) => new(
         id, $"Track {id}", "ar1", "Artist", "al1", "Album",
-        180, $"C:\\music\\{id}.mp3", "Local", 1, 2024, DateTime.UtcNow);
+        180, $"C:\\music\\{id}.mp3", 1, 2024, DateTime.UtcNow);
 
     [Fact]
     public void IsPlaying_RaisesPropertyChanged_OnRealChange()

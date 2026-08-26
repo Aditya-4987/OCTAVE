@@ -12,7 +12,6 @@ namespace Octave_Desktop.Views;
 public sealed partial class SettingsPage : Page
 {
     public ShellViewModel ViewModel { get; }
-    public ExternalDataSettingsViewModel ExternalSettings { get; }
 
     public Visibility BoolToVisibility(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
     public Visibility BoolToVisibilityInverted(bool value) => value ? Visibility.Collapsed : Visibility.Visible;
@@ -34,68 +33,13 @@ public sealed partial class SettingsPage : Page
     public SettingsPage()
     {
         ViewModel = App.Services.GetRequiredService<ShellViewModel>();
-        ExternalSettings = App.Services.GetRequiredService<ExternalDataSettingsViewModel>();
         InitializeComponent();
-
-        // VM-01: the transient ExternalDataSettingsViewModel subscribes to the
-        // singleton settings service in its constructor - without this detach it
-        // (and its dispatcher closure) leaked on every navigation away.
-        Unloaded += (s, e) =>
-        {
-            ExternalSettings.Cleanup();
-            // ENR-06: same lifetime discipline for the enrichment panel's VM if
-            // the user navigates away while the card is expanded.
-            EnrichmentPanel.ViewModel?.Cleanup();
-            EnrichmentPanel.ViewModel = null;
-        };
-
-        // NF-38: the enrichment card intentionally has NO implicit composition
-        // show/hide animation. Arming one (ElementCompositionPreview.SetImplicit*)
-        // made XAML *play* it natively the instant EnrichmentPanelHost.Visibility
-        // flips to Visible - and on a machine with a degraded composition/COM stack
-        // that commit-time path activates a composition factory through combase that
-        // can return CLASS_E_CLASSNOTAVAILABLE (0x80040111), fast-failing the whole
-        // process (0xC000027B - a stowed exception no managed try/catch can catch,
-        // because the throw never crosses back into managed code). Creating the
-        // animation objects succeeded (it was guarded); *playing* them was the fatal
-        // step and was unguardable. The panel now shows/hides via the plain
-        // Visibility toggle in ToggleLibraryEnrichmentPanel_Click - a pure property
-        // set that touches no composition factory. The entrance fade/slide was
-        // documented as "purely visual", so dropping it costs no functionality.
-    }
-
-    // ENR-05/06: expands the card in place instead of opening the old modal
-    // ContentDialog. Each expansion gets a fresh transient view model (the same
-    // lifetime the dialog gave it); collapsing detaches its service events.
-    private void ToggleLibraryEnrichmentPanel_Click(object sender, RoutedEventArgs e)
-    {
-        bool opening = EnrichmentPanelHost.Visibility != Visibility.Visible;
-
-        if (opening)
-        {
-            EnrichmentPanel.ViewModel = App.Services.GetRequiredService<LibraryEnrichmentViewModel>();
-            EnrichmentPanelHost.Visibility = Visibility.Visible;
-            EnrichmentToggleButtonText.Text = "Hide Panel";
-        }
-        else
-        {
-            EnrichmentPanelHost.Visibility = Visibility.Collapsed;
-            EnrichmentPanel.ViewModel?.Cleanup();
-            EnrichmentPanel.ViewModel = null;
-            EnrichmentToggleButtonText.Text = "Scan & Enrich Library";
-        }
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
         await ViewModel.LoadFoldersAsync();
-        await ExternalSettings.InitializeAsync();
-    }
-
-    private void SettingToggled(object sender, RoutedEventArgs e)
-    {
-        _ = ExternalSettings.SaveCommand.ExecuteAsync(null);
     }
 
     // Remade sleep timer: one ComboBox instead of five loose buttons; the
@@ -115,35 +59,6 @@ public sealed partial class SettingsPage : Page
         ViewModel.SetSleepTimerCommand.Execute(minutes.ToString());
     }
 
-    private void SettingSelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        _ = ExternalSettings.SaveCommand.ExecuteAsync(null);
-    }
-
-    private void SettingSliderChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
-    {
-        _ = ExternalSettings.SaveCommand.ExecuteAsync(null);
-    }
-
-    private void SettingCheckBoxClicked(object sender, RoutedEventArgs e)
-    {
-        _ = ExternalSettings.SaveCommand.ExecuteAsync(null);
-    }
-
-    private void TheAudioDbPasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
-    {
-        if (sender is PasswordBox pb)
-        {
-            // Sync only - the save used to fire here too, rewriting the WHOLE
-            // ExternalDataSettings object once per typed character.
-            ExternalSettings.TheAudioDbApiKey = pb.Password;
-        }
-    }
-
-    private void TheAudioDbPasswordBox_LostFocus(object sender, RoutedEventArgs e)
-    {
-        _ = ExternalSettings.SaveCommand.ExecuteAsync(null);
-    }
 
     private async void AddFolder_Click(object sender, RoutedEventArgs e)
     {
@@ -349,6 +264,47 @@ public sealed partial class SettingsPage : Page
         if (ViewModel.FindDuplicatesCommand.CanExecute(null))
         {
             ViewModel.FindDuplicatesCommand.Execute(null);
+        }
+    }
+
+    private async void ClearDatabase_Click(object sender, RoutedEventArgs e)
+    {
+        var confirmDialog = new ContentDialog
+        {
+            Title = "Clear Library Database & Cache?",
+            Content = "Are you sure you want to completely clear the local music database and cache?\n\nThis will remove all indexed tracks, albums, artists, playlists, favorites, playback history, monitored folders, and cached artwork from OCTAVE.\n\nYour actual audio files on disk will NOT be deleted or modified.",
+            PrimaryButtonText = "Clear Database",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = this.XamlRoot
+        };
+
+        var result = await confirmDialog.ShowAsync();
+        if (result != ContentDialogResult.Primary) return;
+
+        try
+        {
+            await ViewModel.ClearDatabaseCommand.ExecuteAsync(null);
+
+            var doneDialog = new ContentDialog
+            {
+                Title = "Database Cleared",
+                Content = "The music library database and cache have been successfully cleared.\n\nYou can add music folders at any time to re-index your collection.",
+                CloseButtonText = "OK",
+                XamlRoot = this.XamlRoot
+            };
+            await doneDialog.ShowAsync();
+        }
+        catch (System.Exception ex)
+        {
+            var errorDialog = new ContentDialog
+            {
+                Title = "Clear Failed",
+                Content = $"Failed to clear database: {ex.Message}",
+                CloseButtonText = "OK",
+                XamlRoot = this.XamlRoot
+            };
+            await errorDialog.ShowAsync();
         }
     }
 }

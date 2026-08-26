@@ -50,7 +50,6 @@
                             <ColumnDefinition Width="40" />
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="2*" />
-                            <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="1*" />
                             <ColumnDefinition Width="80" />
                             <ColumnDefinition Width="40" />
@@ -84,23 +83,14 @@
                         <!-- Title -->
                         <TextBlock Grid.Column="2" Text="{x:Bind Title}" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="White" TextTrimming="CharacterEllipsis" Margin="8,0,0,0"/>
 
-                        <!-- Local/Cloud Provider Status -->
-                        <FontIcon Grid.Column="3"
-                                  Glyph="{x:Bind local:LibraryPage.GetProviderGlyph(Provider)}"
-                                  FontFamily="Segoe MDL2 Assets"
-                                  FontSize="14"
-                                  Foreground="#888888"
-                                  Margin="12,0"
-                                  VerticalAlignment="Center"/>
-
                         <!-- Artist -->
-                        <TextBlock Grid.Column="4" Text="{x:Bind ArtistName}" VerticalAlignment="Center" Foreground="#888888" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Grid.Column="3" Text="{x:Bind ArtistName}" VerticalAlignment="Center" Foreground="#888888" TextTrimming="CharacterEllipsis" Margin="8,0,0,0"/>
 
                         <!-- Duration -->
-                        <TextBlock Grid.Column="5" Text="{x:Bind local:LibraryPage.FormatDuration(DurationSeconds)}" VerticalAlignment="Center" Foreground="#888888" HorizontalAlignment="Right" Margin="0,0,8,0"/>
+                        <TextBlock Grid.Column="4" Text="{x:Bind local:LibraryPage.FormatDuration(DurationSeconds)}" VerticalAlignment="Center" Foreground="#888888" HorizontalAlignment="Right" Margin="0,0,8,0"/>
 
                         <!-- More Menu -->
-                        <Button Grid.Column="6"
+                        <Button Grid.Column="5"
                                 Background="Transparent"
                                 BorderBrush="Transparent"
                                 Padding="4"

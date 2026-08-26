@@ -112,11 +112,6 @@ public sealed partial class EntityDetailPage : Page
         }
     }
 
-    public static string GetProviderGlyph(string provider)
-    {
-        return provider.Equals("Local", StringComparison.OrdinalIgnoreCase) ? "\uE770" : "\uE774";
-    }
-
     private void BackButton_Click(object sender, RoutedEventArgs e)
     {
         if (Frame.CanGoBack)

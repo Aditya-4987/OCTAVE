@@ -26,6 +26,5 @@ public partial class LibraryTrackItem : ObservableObject
     public string Id => Track.Id;
     public string Title => Track.Title;
     public string ArtistName => Track.ArtistName;
-    public string Provider => Track.Provider;
     public double DurationSeconds => Track.DurationSeconds;
 }

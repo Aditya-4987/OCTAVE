@@ -1,13 +1,15 @@
 using Microsoft.Data.Sqlite;
+using Octave.Core.Interfaces;
 using Octave.Core.Models;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Octave.Core.Services.Database;
 
-public class SqliteDbContext
+public class SqliteDbContext : ILyricsRepository
 {
     private readonly string _connectionString;
 
@@ -62,8 +64,7 @@ public class SqliteDbContext
                 Id TEXT PRIMARY KEY,
                 Name TEXT NOT NULL COLLATE NOCASE,
                 Bio TEXT,
-                ArtworkUrl TEXT,
-                IsLocal INTEGER NOT NULL CHECK(IsLocal IN (0, 1))
+                ArtworkUrl TEXT
             ) STRICT;
 
             CREATE TABLE IF NOT EXISTS Albums (
@@ -73,7 +74,6 @@ public class SqliteDbContext
                 ArtistName TEXT NOT NULL,
                 Year INTEGER NOT NULL,
                 ArtworkUrl TEXT,
-                Provider TEXT NOT NULL,
                 FOREIGN KEY(ArtistId) REFERENCES Artists(Id) ON DELETE CASCADE
             ) STRICT;
 
@@ -86,7 +86,6 @@ public class SqliteDbContext
                 AlbumTitle TEXT NOT NULL,
                 DurationSeconds REAL NOT NULL,
                 SourceUri TEXT NOT NULL,
-                Provider TEXT NOT NULL,
                 TrackNumber INTEGER NOT NULL DEFAULT 1,
                 Year INTEGER NOT NULL,
                 DateAdded INTEGER NOT NULL, -- Stored explicitly as Unix Epoch Seconds
@@ -101,8 +100,7 @@ public class SqliteDbContext
                 Id TEXT PRIMARY KEY,
                 Title TEXT NOT NULL COLLATE NOCASE,
                 Description TEXT,
-                CreatedAt INTEGER NOT NULL, -- Stored explicitly as Unix Epoch Seconds
-                IsLocalOnly INTEGER NOT NULL CHECK(IsLocalOnly IN (0, 1))
+                CreatedAt INTEGER NOT NULL -- Stored explicitly as Unix Epoch Seconds
             ) STRICT;
 
             CREATE TABLE IF NOT EXISTS PlaylistTracks (
@@ -156,12 +154,16 @@ public class SqliteDbContext
                 FOREIGN KEY(TrackId) REFERENCES Tracks(Id) ON DELETE CASCADE
             ) STRICT;
 
-            CREATE TABLE IF NOT EXISTS ExternalDataCache (
-                CacheKey TEXT PRIMARY KEY,
-                DataJson TEXT NOT NULL,
-                TypeName TEXT NOT NULL,
-                CreatedAt INTEGER NOT NULL,
-                ExpiresAt INTEGER NOT NULL
+            CREATE TABLE IF NOT EXISTS LyricsCache (
+                TrackId TEXT PRIMARY KEY,
+                PlainLyrics TEXT,
+                SyncedLyrics TEXT,
+                HasPlainLyrics INTEGER NOT NULL CHECK(HasPlainLyrics IN (0, 1)),
+                HasSyncedLyrics INTEGER NOT NULL CHECK(HasSyncedLyrics IN (0, 1)),
+                IsNotFound INTEGER NOT NULL DEFAULT 0 CHECK(IsNotFound IN (0, 1)),
+                CachedAt INTEGER NOT NULL,
+                LastCheckedAt INTEGER NOT NULL,
+                FOREIGN KEY(TrackId) REFERENCES Tracks(Id) ON DELETE CASCADE
             ) STRICT;
 
             CREATE TABLE IF NOT EXISTS AppSettings (
@@ -169,35 +171,10 @@ public class SqliteDbContext
                 Value TEXT NOT NULL
             ) STRICT;
 
-            CREATE TABLE IF NOT EXISTS LibraryEnrichmentSessions (
-                SessionId TEXT PRIMARY KEY,
-                StartedAt INTEGER NOT NULL,
-                CompletedAt INTEGER,
-                IsDryRun INTEGER NOT NULL CHECK(IsDryRun IN (0, 1)),
-                TotalTracks INTEGER NOT NULL
-            ) STRICT;
-
-            CREATE TABLE IF NOT EXISTS LibraryEnrichmentState (
-                TrackId TEXT PRIMARY KEY,
-                SessionId TEXT NOT NULL,
-                Status INTEGER NOT NULL,
-                Confidence REAL NOT NULL DEFAULT 0.0,
-                HardGatesPassed INTEGER NOT NULL CHECK(HardGatesPassed IN (0, 1)),
-                PlanJson TEXT,
-                CandidatesJson TEXT,
-                UpdatedAt INTEGER NOT NULL,
-                FOREIGN KEY(TrackId) REFERENCES Tracks(Id) ON DELETE CASCADE
-            ) STRICT;
-
             CREATE TABLE IF NOT EXISTS SchemaVersion (
                 Version INTEGER PRIMARY KEY,
                 AppliedAt INTEGER NOT NULL
             ) STRICT;
-
-            CREATE INDEX IF NOT EXISTS idx_enrichstate_status ON LibraryEnrichmentState(Status);
-            CREATE INDEX IF NOT EXISTS idx_enrichstate_session ON LibraryEnrichmentState(SessionId);
-
-            CREATE INDEX IF NOT EXISTS idx_extcache_expires ON ExternalDataCache(ExpiresAt);
 
             CREATE INDEX IF NOT EXISTS idx_tracks_artist ON Tracks(ArtistId);
             CREATE INDEX IF NOT EXISTS idx_tracks_album ON Tracks(AlbumId);
@@ -259,6 +236,23 @@ public class SqliteDbContext
         await TryAddColumnAsync(conn, "Tracks", "ReplayGain", "REAL NOT NULL DEFAULT 0.0");
         // SCAN-11: existing libraries backfill disc 1; the scanner stamps the real value on rescan.
         await TryAddColumnAsync(conn, "Tracks", "Disc", "INTEGER NOT NULL DEFAULT 1");
+        await TryAddColumnAsync(conn, "LyricsCache", "LastCheckedAt", "INTEGER NOT NULL DEFAULT 0");
+
+        // Lightweight migrations for databases created with obsolete/removed columns.
+        await TryDropColumnAsync(conn, "Artists", "IsLocal");
+        await TryDropColumnAsync(conn, "Albums", "Provider");
+        await TryDropColumnAsync(conn, "Tracks", "Provider");
+        await TryDropColumnAsync(conn, "Playlists", "IsLocalOnly");
+
+        // Clean up obsolete external enrichment tables if present from older versions.
+        using (var dropObsoleteCmd = conn.CreateCommand())
+        {
+            dropObsoleteCmd.CommandText = @"
+                DROP TABLE IF EXISTS ExternalDataCache;
+                DROP TABLE IF EXISTS LibraryEnrichmentState;
+                DROP TABLE IF EXISTS LibraryEnrichmentSessions;";
+            await dropObsoleteCmd.ExecuteNonQueryAsync();
+        }
 
         // Migration for PlaylistTracks surrogate key (Id)
         bool hasPlaylistTrackId = await CheckColumnExistsAsync(conn, "PlaylistTracks", "Id");
@@ -319,6 +313,17 @@ public class SqliteDbContext
         await alter.ExecuteNonQueryAsync();
     }
 
+    // Drops a column if present (idempotent, SQLite 3.35+ safe).
+    private static async Task TryDropColumnAsync(SqliteConnection conn, string table, string column)
+    {
+        bool exists = await CheckColumnExistsAsync(conn, table, column);
+        if (!exists) return;
+
+        using var alter = conn.CreateCommand();
+        alter.CommandText = $"ALTER TABLE {table} DROP COLUMN {column};";
+        await alter.ExecuteNonQueryAsync();
+    }
+
     public async Task UpsertArtistAsync(Artist artist, SqliteTransaction? tx = null)
     {
         SqliteConnection? localConn = null;
@@ -339,19 +344,17 @@ public class SqliteDbContext
             if (tx != null) cmd.Transaction = tx;
 
             cmd.CommandText = @"
-                INSERT INTO Artists (Id, Name, Bio, ArtworkUrl, IsLocal)
-                VALUES (@id, @name, @bio, @artworkUrl, @isLocal)
+                INSERT INTO Artists (Id, Name, Bio, ArtworkUrl)
+                VALUES (@id, @name, @bio, @artworkUrl)
                 ON CONFLICT(Id) DO UPDATE SET
                     Name = excluded.Name,
                     Bio = excluded.Bio,
-                    ArtworkUrl = excluded.ArtworkUrl,
-                    IsLocal = excluded.IsLocal;";
+                    ArtworkUrl = excluded.ArtworkUrl;";
 
             cmd.Parameters.Add(new SqliteParameter("@id", artist.Id));
             cmd.Parameters.Add(new SqliteParameter("@name", artist.Name));
             cmd.Parameters.Add(new SqliteParameter("@bio", (object?)artist.Bio ?? DBNull.Value));
             cmd.Parameters.Add(new SqliteParameter("@artworkUrl", (object?)artist.ArtworkUrl ?? DBNull.Value));
-            cmd.Parameters.Add(new SqliteParameter("@isLocal", artist.IsLocal ? 1 : 0));
 
             await cmd.ExecuteNonQueryAsync();
         }
@@ -381,15 +384,14 @@ public class SqliteDbContext
             if (tx != null) cmd.Transaction = tx;
 
             cmd.CommandText = @"
-                INSERT INTO Albums (Id, Title, ArtistId, ArtistName, Year, ArtworkUrl, Provider)
-                VALUES (@id, @title, @artistId, @artistName, @year, @artworkUrl, @provider)
+                INSERT INTO Albums (Id, Title, ArtistId, ArtistName, Year, ArtworkUrl)
+                VALUES (@id, @title, @artistId, @artistName, @year, @artworkUrl)
                 ON CONFLICT(Id) DO UPDATE SET
                     Title = excluded.Title,
                     ArtistId = excluded.ArtistId,
                     ArtistName = excluded.ArtistName,
                     Year = excluded.Year,
-                    ArtworkUrl = COALESCE(excluded.ArtworkUrl, Albums.ArtworkUrl),
-                    Provider = excluded.Provider;";
+                    ArtworkUrl = COALESCE(excluded.ArtworkUrl, Albums.ArtworkUrl);";
 
             cmd.Parameters.Add(new SqliteParameter("@id", album.Id));
             cmd.Parameters.Add(new SqliteParameter("@title", album.Title));
@@ -397,7 +399,6 @@ public class SqliteDbContext
             cmd.Parameters.Add(new SqliteParameter("@artistName", album.ArtistName));
             cmd.Parameters.Add(new SqliteParameter("@year", album.Year));
             cmd.Parameters.Add(new SqliteParameter("@artworkUrl", (object?)album.ArtworkUrl ?? DBNull.Value));
-            cmd.Parameters.Add(new SqliteParameter("@provider", album.Provider));
 
             await cmd.ExecuteNonQueryAsync();
         }
@@ -434,7 +435,7 @@ public class SqliteDbContext
             using (var insertArtist = conn.CreateCommand())
             {
                 insertArtist.Transaction = effectiveTx;
-                insertArtist.CommandText = "INSERT OR IGNORE INTO Artists (Id, Name, IsLocal) VALUES (@id, @name, 1);";
+                insertArtist.CommandText = "INSERT OR IGNORE INTO Artists (Id, Name) VALUES (@id, @name);";
                 insertArtist.Parameters.Add(new SqliteParameter("@id", track.ArtistId));
                 insertArtist.Parameters.Add(new SqliteParameter("@name", track.ArtistName));
                 await insertArtist.ExecuteNonQueryAsync();
@@ -443,13 +444,12 @@ public class SqliteDbContext
             using (var insertAlbum = conn.CreateCommand())
             {
                 insertAlbum.Transaction = effectiveTx;
-                insertAlbum.CommandText = "INSERT OR IGNORE INTO Albums (Id, Title, ArtistId, ArtistName, Year, Provider) VALUES (@id, @title, @artistId, @artistName, @year, @provider);";
+                insertAlbum.CommandText = "INSERT OR IGNORE INTO Albums (Id, Title, ArtistId, ArtistName, Year) VALUES (@id, @title, @artistId, @artistName, @year);";
                 insertAlbum.Parameters.Add(new SqliteParameter("@id", track.AlbumId));
                 insertAlbum.Parameters.Add(new SqliteParameter("@title", track.AlbumTitle));
                 insertAlbum.Parameters.Add(new SqliteParameter("@artistId", track.ArtistId));
                 insertAlbum.Parameters.Add(new SqliteParameter("@artistName", track.ArtistName));
                 insertAlbum.Parameters.Add(new SqliteParameter("@year", track.Year));
-                insertAlbum.Parameters.Add(new SqliteParameter("@provider", track.Provider));
                 await insertAlbum.ExecuteNonQueryAsync();
             }
 
@@ -460,8 +460,8 @@ public class SqliteDbContext
             long epochSeconds = ((DateTimeOffset)track.DateAdded).ToUnixTimeSeconds();
 
             cmd.CommandText = @"
-                INSERT INTO Tracks (Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded, Genre, ReplayGain, Disc)
-                VALUES (@id, @title, @artistId, @artistName, @albumId, @albumTitle, @durationSeconds, @sourceUri, @provider, @trackNumber, @year, @dateAdded, @genre, @replayGain, @disc)
+                INSERT INTO Tracks (Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, TrackNumber, Year, DateAdded, Genre, ReplayGain, Disc)
+                VALUES (@id, @title, @artistId, @artistName, @albumId, @albumTitle, @durationSeconds, @sourceUri, @trackNumber, @year, @dateAdded, @genre, @replayGain, @disc)
                 ON CONFLICT(Id) DO UPDATE SET
                     Title = excluded.Title,
                     ArtistId = excluded.ArtistId,
@@ -470,7 +470,6 @@ public class SqliteDbContext
                     AlbumTitle = excluded.AlbumTitle,
                     DurationSeconds = excluded.DurationSeconds,
                     SourceUri = excluded.SourceUri,
-                    Provider = excluded.Provider,
                     TrackNumber = excluded.TrackNumber,
                     Year = excluded.Year,
                     DateAdded = excluded.DateAdded,
@@ -486,7 +485,6 @@ public class SqliteDbContext
             cmd.Parameters.Add(new SqliteParameter("@albumTitle", track.AlbumTitle));
             cmd.Parameters.Add(new SqliteParameter("@durationSeconds", track.DurationSeconds));
             cmd.Parameters.Add(new SqliteParameter("@sourceUri", track.SourceUri));
-            cmd.Parameters.Add(new SqliteParameter("@provider", track.Provider));
             cmd.Parameters.Add(new SqliteParameter("@trackNumber", track.TrackNumber));
             cmd.Parameters.Add(new SqliteParameter("@year", track.Year));
             cmd.Parameters.Add(new SqliteParameter("@dateAdded", epochSeconds));
@@ -547,7 +545,7 @@ public class SqliteDbContext
         var artists = new List<Artist>();
         using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT Id, Name, Bio, ArtworkUrl, IsLocal FROM Artists ORDER BY Name ASC;";
+        cmd.CommandText = "SELECT Id, Name, Bio, ArtworkUrl FROM Artists ORDER BY Name ASC;";
 
         using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
@@ -556,9 +554,8 @@ public class SqliteDbContext
             var name = reader.GetString(1);
             var bio = reader.IsDBNull(2) ? null : reader.GetString(2);
             var artworkUrl = reader.IsDBNull(3) ? null : reader.GetString(3);
-            var isLocal = reader.GetInt32(4) != 0;
 
-            artists.Add(new Artist(id, name, bio, artworkUrl, isLocal));
+            artists.Add(new Artist(id, name, bio, artworkUrl));
         }
         return artists;
     }
@@ -568,7 +565,7 @@ public class SqliteDbContext
         var albums = new List<Album>();
         using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT Id, Title, ArtistId, ArtistName, Year, ArtworkUrl, Provider FROM Albums ORDER BY Title ASC;";
+        cmd.CommandText = "SELECT Id, Title, ArtistId, ArtistName, Year, ArtworkUrl FROM Albums ORDER BY Title ASC;";
 
         using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
@@ -579,9 +576,8 @@ public class SqliteDbContext
             var artistName = reader.GetString(3);
             var year = reader.GetInt32(4);
             var artworkUrl = reader.IsDBNull(5) ? null : reader.GetString(5);
-            var provider = reader.GetString(6);
 
-            albums.Add(new Album(id, title, artistId, artistName, year, artworkUrl, provider));
+            albums.Add(new Album(id, title, artistId, artistName, year, artworkUrl));
         }
         return albums;
     }
@@ -661,7 +657,7 @@ public class SqliteDbContext
     {
         using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT Id, Title, ArtistId, ArtistName, Year, ArtworkUrl, Provider FROM Albums WHERE Id = @albumId LIMIT 1;";
+        cmd.CommandText = "SELECT Id, Title, ArtistId, ArtistName, Year, ArtworkUrl FROM Albums WHERE Id = @albumId LIMIT 1;";
         cmd.Parameters.Add(new SqliteParameter("@albumId", albumId));
 
         using var reader = await cmd.ExecuteReaderAsync();
@@ -673,9 +669,8 @@ public class SqliteDbContext
             var artistName = reader.GetString(3);
             var year = reader.GetInt32(4);
             var artworkUrl = reader.IsDBNull(5) ? null : reader.GetString(5);
-            var provider = reader.GetString(6);
 
-            return new Album(id, title, artistId, artistName, year, artworkUrl, provider);
+            return new Album(id, title, artistId, artistName, year, artworkUrl);
         }
         return null;
     }
@@ -687,13 +682,13 @@ public class SqliteDbContext
         using var cmd = conn.CreateCommand();
         if (!string.IsNullOrWhiteSpace(artistId))
         {
-            cmd.CommandText = "SELECT Id, Title, ArtistId, ArtistName, Year, ArtworkUrl, Provider FROM Albums WHERE Title = @title COLLATE NOCASE AND ArtistId = @artistId LIMIT 1;";
+            cmd.CommandText = "SELECT Id, Title, ArtistId, ArtistName, Year, ArtworkUrl FROM Albums WHERE Title = @title COLLATE NOCASE AND ArtistId = @artistId LIMIT 1;";
             cmd.Parameters.Add(new SqliteParameter("@title", title.Trim()));
             cmd.Parameters.Add(new SqliteParameter("@artistId", artistId));
         }
         else
         {
-            cmd.CommandText = "SELECT Id, Title, ArtistId, ArtistName, Year, ArtworkUrl, Provider FROM Albums WHERE Title = @title COLLATE NOCASE LIMIT 1;";
+            cmd.CommandText = "SELECT Id, Title, ArtistId, ArtistName, Year, ArtworkUrl FROM Albums WHERE Title = @title COLLATE NOCASE LIMIT 1;";
             cmd.Parameters.Add(new SqliteParameter("@title", title.Trim()));
         }
 
@@ -706,9 +701,8 @@ public class SqliteDbContext
             var artistName = reader.GetString(3);
             var year = reader.GetInt32(4);
             var artworkUrl = reader.IsDBNull(5) ? null : reader.GetString(5);
-            var provider = reader.GetString(6);
 
-            return new Album(id, albumTitle, artId, artistName, year, artworkUrl, provider);
+            return new Album(id, albumTitle, artId, artistName, year, artworkUrl);
         }
         return null;
     }
@@ -737,7 +731,7 @@ public class SqliteDbContext
             }
 
             cmd.CommandText = $@"
-                SELECT Id, Title, ArtistId, ArtistName, Year, ArtworkUrl, Provider 
+                SELECT Id, Title, ArtistId, ArtistName, Year, ArtworkUrl 
                 FROM Albums 
                 WHERE Id IN ({string.Join(",", paramNames)});";
 
@@ -750,9 +744,8 @@ public class SqliteDbContext
                 var artistName = reader.GetString(3);
                 var year = reader.GetInt32(4);
                 var artworkUrl = reader.IsDBNull(5) ? null : reader.GetString(5);
-                var provider = reader.GetString(6);
 
-                result.Add(new Album(id, title, artistId, artistName, year, artworkUrl, provider));
+                result.Add(new Album(id, title, artistId, artistName, year, artworkUrl));
             }
         }
 
@@ -763,7 +756,7 @@ public class SqliteDbContext
     {
         using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT Id, Name, Bio, ArtworkUrl, IsLocal FROM Artists WHERE Id = @artistId LIMIT 1;";
+        cmd.CommandText = "SELECT Id, Name, Bio, ArtworkUrl FROM Artists WHERE Id = @artistId LIMIT 1;";
         cmd.Parameters.Add(new SqliteParameter("@artistId", artistId));
 
         using var reader = await cmd.ExecuteReaderAsync();
@@ -773,9 +766,8 @@ public class SqliteDbContext
             var name = reader.GetString(1);
             var bio = reader.IsDBNull(2) ? null : reader.GetString(2);
             var artworkUrl = reader.IsDBNull(3) ? null : reader.GetString(3);
-            var isLocal = reader.GetInt32(4) != 0;
 
-            return new Artist(id, name, bio, artworkUrl, isLocal);
+            return new Artist(id, name, bio, artworkUrl);
         }
         return null;
     }
@@ -785,7 +777,7 @@ public class SqliteDbContext
         if (string.IsNullOrWhiteSpace(name)) return null;
         using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT Id, Name, Bio, ArtworkUrl, IsLocal FROM Artists WHERE Name = @name COLLATE NOCASE LIMIT 1;";
+        cmd.CommandText = "SELECT Id, Name, Bio, ArtworkUrl FROM Artists WHERE Name = @name COLLATE NOCASE LIMIT 1;";
         cmd.Parameters.Add(new SqliteParameter("@name", name.Trim()));
 
         using var reader = await cmd.ExecuteReaderAsync();
@@ -795,9 +787,8 @@ public class SqliteDbContext
             var artistName = reader.GetString(1);
             var bio = reader.IsDBNull(2) ? null : reader.GetString(2);
             var artworkUrl = reader.IsDBNull(3) ? null : reader.GetString(3);
-            var isLocal = reader.GetInt32(4) != 0;
 
-            return new Artist(id, artistName, bio, artworkUrl, isLocal);
+            return new Artist(id, artistName, bio, artworkUrl);
         }
         return null;
     }
@@ -984,17 +975,17 @@ public class SqliteDbContext
     // (ordinal order must match ReadTrack; Disc is last so pre-SCAN-11 column
     // indexes stay stable).
     private const string TrackColumns =
-        "Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded, Genre, ReplayGain, Disc";
+        "Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, TrackNumber, Year, DateAdded, Genre, ReplayGain, Disc";
 
     private static Track ReadTrack(SqliteDataReader reader)
     {
-        var dateAdded = DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(11)).UtcDateTime;
-        int disc = reader.IsDBNull(14) ? 1 : reader.GetInt32(14);
+        var dateAdded = DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(10)).UtcDateTime;
+        int disc = reader.IsDBNull(13) ? 1 : reader.GetInt32(13);
         return new Track(
             reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
             reader.GetString(4), reader.GetString(5), reader.GetDouble(6), reader.GetString(7),
-            reader.GetString(8), reader.GetInt32(9), reader.GetInt32(10), dateAdded,
-            reader.IsDBNull(12) ? "" : reader.GetString(12), (float)reader.GetDouble(13),
+            reader.GetInt32(8), reader.GetInt32(9), dateAdded,
+            reader.IsDBNull(11) ? "" : reader.GetString(11), (float)reader.GetDouble(12),
             Math.Max(1, disc));
     }
 
@@ -1114,14 +1105,14 @@ public class SqliteDbContext
 
         using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "INSERT INTO Playlists (Id, Title, Description, CreatedAt, IsLocalOnly) VALUES (@id, @title, @desc, @created, 1);";
+        cmd.CommandText = "INSERT INTO Playlists (Id, Title, Description, CreatedAt) VALUES (@id, @title, @desc, @created);";
         cmd.Parameters.Add(new SqliteParameter("@id", id));
         cmd.Parameters.Add(new SqliteParameter("@title", title));
         cmd.Parameters.Add(new SqliteParameter("@desc", (object?)description ?? DBNull.Value));
         cmd.Parameters.Add(new SqliteParameter("@created", created));
         await cmd.ExecuteNonQueryAsync();
 
-        return new Playlist(id, title, description, DateTimeOffset.FromUnixTimeSeconds(created).UtcDateTime, true, 0);
+        return new Playlist(id, title, description, DateTimeOffset.FromUnixTimeSeconds(created).UtcDateTime, 0);
     }
 
     public async Task DeletePlaylistAsync(string id)
@@ -1149,7 +1140,7 @@ public class SqliteDbContext
         using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
-            SELECT p.Id, p.Title, p.Description, p.CreatedAt, p.IsLocalOnly, COUNT(pt.TrackId)
+            SELECT p.Id, p.Title, p.Description, p.CreatedAt, COUNT(pt.TrackId)
             FROM Playlists p
             LEFT JOIN PlaylistTracks pt ON pt.PlaylistId = p.Id
             GROUP BY p.Id
@@ -1162,8 +1153,7 @@ public class SqliteDbContext
                 reader.GetString(1),
                 reader.IsDBNull(2) ? null : reader.GetString(2),
                 DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(3)).UtcDateTime,
-                reader.GetInt32(4) != 0,
-                reader.GetInt32(5)));
+                reader.GetInt32(4)));
         }
         return playlists;
     }
@@ -1173,7 +1163,7 @@ public class SqliteDbContext
         using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
-            SELECT p.Id, p.Title, p.Description, p.CreatedAt, p.IsLocalOnly, COUNT(pt.TrackId)
+            SELECT p.Id, p.Title, p.Description, p.CreatedAt, COUNT(pt.TrackId)
             FROM Playlists p
             LEFT JOIN PlaylistTracks pt ON pt.PlaylistId = p.Id
             WHERE p.Id = @id
@@ -1187,8 +1177,7 @@ public class SqliteDbContext
                 reader.GetString(1),
                 reader.IsDBNull(2) ? null : reader.GetString(2),
                 DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(3)).UtcDateTime,
-                reader.GetInt32(4) != 0,
-                reader.GetInt32(5));
+                reader.GetInt32(4));
         }
         return null;
     }
@@ -1246,11 +1235,9 @@ public class SqliteDbContext
         var entries = new List<PlaylistTrackEntry>();
         using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
-        // SCAN-11: t.* projection extended with t.Disc (ordinal 17) — entry columns
-        // stay at 0-2 so the manual Track construction below shifts by one index.
         cmd.CommandText = @"
             SELECT pt.Id, pt.PlaylistId, pt.SortOrder,
-                   t.Id, t.Title, t.ArtistId, t.ArtistName, t.AlbumId, t.AlbumTitle, t.DurationSeconds, t.SourceUri, t.Provider, t.TrackNumber, t.Year, t.DateAdded, t.Genre, t.ReplayGain, t.Disc
+                   t.Id, t.Title, t.ArtistId, t.ArtistName, t.AlbumId, t.AlbumTitle, t.DurationSeconds, t.SourceUri, t.TrackNumber, t.Year, t.DateAdded, t.Genre, t.ReplayGain, t.Disc
             FROM PlaylistTracks pt
             JOIN Tracks t ON t.Id = pt.TrackId
             WHERE pt.PlaylistId = @id
@@ -1262,13 +1249,13 @@ public class SqliteDbContext
             string entryId = reader.GetString(0);
             string pid = reader.GetString(1);
             int sortOrder = reader.GetInt32(2);
-            var dateAdded = DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(14)).UtcDateTime;
-            int disc = reader.IsDBNull(17) ? 1 : reader.GetInt32(17);
+            var dateAdded = DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(13)).UtcDateTime;
+            int disc = reader.IsDBNull(16) ? 1 : reader.GetInt32(16);
             var track = new Track(
                 reader.GetString(3), reader.GetString(4), reader.GetString(5), reader.GetString(6),
                 reader.GetString(7), reader.GetString(8), reader.GetDouble(9), reader.GetString(10),
-                reader.GetString(11), reader.GetInt32(12), reader.GetInt32(13), dateAdded,
-                reader.IsDBNull(15) ? "" : reader.GetString(15), (float)reader.GetDouble(16),
+                reader.GetInt32(11), reader.GetInt32(12), dateAdded,
+                reader.IsDBNull(14) ? "" : reader.GetString(14), (float)reader.GetDouble(15),
                 Math.Max(1, disc));
             entries.Add(new PlaylistTrackEntry(entryId, pid, track, sortOrder));
         }
@@ -1894,7 +1881,7 @@ public class SqliteDbContext
         {
             using var cmd = conn.CreateCommand();
             string sql = @"
-                SELECT Id, Title, ArtistId, ArtistName, Year, ArtworkUrl, Provider 
+                SELECT Id, Title, ArtistId, ArtistName, Year, ArtworkUrl 
                 FROM Albums 
                 WHERE Title LIKE @q OR ArtistName LIKE @q 
                 ORDER BY 
@@ -1923,9 +1910,8 @@ public class SqliteDbContext
                 var artistName = reader.GetString(3);
                 var year = reader.GetInt32(4);
                 var artworkUrl = reader.IsDBNull(5) ? null : reader.GetString(5);
-                var provider = reader.GetString(6);
 
-                albums.Add(new Album(id, title, artistId, artistName, year, artworkUrl, provider));
+                albums.Add(new Album(id, title, artistId, artistName, year, artworkUrl));
             }
         }
 
@@ -1933,7 +1919,7 @@ public class SqliteDbContext
         {
             using var cmd = conn.CreateCommand();
             string sql = @"
-                SELECT Id, Name, Bio, ArtworkUrl, IsLocal 
+                SELECT Id, Name, Bio, ArtworkUrl 
                 FROM Artists 
                 WHERE Name LIKE @q 
                 ORDER BY 
@@ -1960,9 +1946,8 @@ public class SqliteDbContext
                 var name = reader.GetString(1);
                 var bio = reader.IsDBNull(2) ? null : reader.GetString(2);
                 var artworkUrl = reader.IsDBNull(3) ? null : reader.GetString(3);
-                var isLocal = reader.GetInt32(4) != 0;
 
-                artists.Add(new Artist(id, name, bio, artworkUrl, isLocal));
+                artists.Add(new Artist(id, name, bio, artworkUrl));
             }
         }
 
@@ -1970,7 +1955,7 @@ public class SqliteDbContext
         {
             using var cmd = conn.CreateCommand();
             string sql = @"
-                SELECT p.Id, p.Title, p.Description, p.CreatedAt, p.IsLocalOnly, COUNT(pt.TrackId) AS TrackCount
+                SELECT p.Id, p.Title, p.Description, p.CreatedAt, COUNT(pt.TrackId) AS TrackCount
                 FROM Playlists p
                 LEFT JOIN PlaylistTracks pt ON p.Id = pt.PlaylistId
                 WHERE p.Title LIKE @q
@@ -1999,10 +1984,9 @@ public class SqliteDbContext
                 var title = reader.GetString(1);
                 var desc = reader.IsDBNull(2) ? null : reader.GetString(2);
                 var createdAt = DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(3)).UtcDateTime;
-                var isLocal = reader.GetInt32(4) != 0;
-                var trackCount = reader.GetInt32(5);
+                var trackCount = reader.GetInt32(4);
 
-                playlists.Add(new Playlist(id, title, desc, createdAt, isLocal, trackCount));
+                playlists.Add(new Playlist(id, title, desc, createdAt, trackCount));
             }
         }
 
@@ -2024,115 +2008,6 @@ public class SqliteDbContext
             }
         }
         return string.Join(" AND ", terms);
-    }
-
-    // =================================================================
-    // EXTERNAL DATA L2 PERSISTENT CACHE
-    // =================================================================
-
-    public async Task<string?> GetCachedExternalDataAsync(string cacheKey, bool allowStale = false)
-    {
-        if (string.IsNullOrWhiteSpace(cacheKey)) return null;
-
-        using var conn = await CreateConnectionAsync();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT DataJson, ExpiresAt FROM ExternalDataCache WHERE CacheKey = @key LIMIT 1;";
-        cmd.Parameters.Add(new SqliteParameter("@key", cacheKey));
-
-        using var reader = await cmd.ExecuteReaderAsync();
-        if (await reader.ReadAsync())
-        {
-            var dataJson = reader.GetString(0);
-            var expiresAt = reader.GetInt64(1);
-            long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-
-            if (!allowStale && expiresAt > 0 && expiresAt <= now)
-            {
-                return null;
-            }
-
-            return dataJson;
-        }
-
-        return null;
-    }
-
-    public async Task<(string DataJson, string TypeName, long CreatedAt, long ExpiresAt)?> GetCachedExternalDataRecordAsync(string cacheKey)
-    {
-        if (string.IsNullOrWhiteSpace(cacheKey)) return null;
-
-        using var conn = await CreateConnectionAsync();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT DataJson, TypeName, CreatedAt, ExpiresAt FROM ExternalDataCache WHERE CacheKey = @key LIMIT 1;";
-        cmd.Parameters.Add(new SqliteParameter("@key", cacheKey));
-
-        using var reader = await cmd.ExecuteReaderAsync();
-        if (await reader.ReadAsync())
-        {
-            return (
-                reader.GetString(0),
-                reader.GetString(1),
-                reader.GetInt64(2),
-                reader.GetInt64(3)
-            );
-        }
-
-        return null;
-    }
-
-    public async Task SetCachedExternalDataAsync(string cacheKey, string dataJson, string typeName, long createdAt, long expiresAt)
-    {
-        if (string.IsNullOrWhiteSpace(cacheKey) || string.IsNullOrWhiteSpace(dataJson)) return;
-
-        using var conn = await CreateConnectionAsync();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = @"
-            INSERT INTO ExternalDataCache (CacheKey, DataJson, TypeName, CreatedAt, ExpiresAt)
-            VALUES (@key, @data, @typeName, @created, @expires)
-            ON CONFLICT(CacheKey) DO UPDATE SET
-                DataJson = excluded.DataJson,
-                TypeName = excluded.TypeName,
-                CreatedAt = excluded.CreatedAt,
-                ExpiresAt = excluded.ExpiresAt;";
-
-        cmd.Parameters.Add(new SqliteParameter("@key", cacheKey));
-        cmd.Parameters.Add(new SqliteParameter("@data", dataJson));
-        cmd.Parameters.Add(new SqliteParameter("@typeName", typeName));
-        cmd.Parameters.Add(new SqliteParameter("@created", createdAt));
-        cmd.Parameters.Add(new SqliteParameter("@expires", expiresAt));
-
-        await cmd.ExecuteNonQueryAsync();
-    }
-
-    public async Task RemoveCachedExternalDataAsync(string cacheKey)
-    {
-        if (string.IsNullOrWhiteSpace(cacheKey)) return;
-
-        using var conn = await CreateConnectionAsync();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "DELETE FROM ExternalDataCache WHERE CacheKey = @key;";
-        cmd.Parameters.Add(new SqliteParameter("@key", cacheKey));
-
-        await cmd.ExecuteNonQueryAsync();
-    }
-
-    public async Task ClearExpiredCachedExternalDataAsync()
-    {
-        using var conn = await CreateConnectionAsync();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "DELETE FROM ExternalDataCache WHERE ExpiresAt > 0 AND ExpiresAt <= @now;";
-        cmd.Parameters.Add(new SqliteParameter("@now", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
-
-        await cmd.ExecuteNonQueryAsync();
-    }
-
-    public async Task ClearAllCachedExternalDataAsync()
-    {
-        using var conn = await CreateConnectionAsync();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "DELETE FROM ExternalDataCache;";
-
-        await cmd.ExecuteNonQueryAsync();
     }
 
     public async Task<string?> GetSettingAsync(string key)
@@ -2181,113 +2056,133 @@ public class SqliteDbContext
         return settings;
     }
 
-    public async Task SaveEnrichmentSessionAsync(string sessionId, long startedAt, long? completedAt, bool isDryRun, int totalTracks)
-    {
-        if (string.IsNullOrWhiteSpace(sessionId)) return;
-
-        using var conn = await CreateConnectionAsync();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = @"
-            INSERT INTO LibraryEnrichmentSessions (SessionId, StartedAt, CompletedAt, IsDryRun, TotalTracks)
-            VALUES (@sid, @started, @completed, @dry, @total)
-            ON CONFLICT(SessionId) DO UPDATE SET
-                CompletedAt = excluded.CompletedAt,
-                TotalTracks = excluded.TotalTracks;";
-
-        cmd.Parameters.Add(new SqliteParameter("@sid", sessionId));
-        cmd.Parameters.Add(new SqliteParameter("@started", startedAt));
-        cmd.Parameters.Add(new SqliteParameter("@completed", (object?)completedAt ?? DBNull.Value));
-        cmd.Parameters.Add(new SqliteParameter("@dry", isDryRun ? 1 : 0));
-        cmd.Parameters.Add(new SqliteParameter("@total", totalTracks));
-
-        await cmd.ExecuteNonQueryAsync();
-    }
-
-    public async Task SetEnrichmentStateRecordAsync(
-        string trackId,
-        string sessionId,
-        int status,
-        double confidence,
-        bool hardGatesPassed,
-        string? planJson,
-        string? candidatesJson)
-    {
-        if (string.IsNullOrWhiteSpace(trackId)) return;
-
-        using var conn = await CreateConnectionAsync();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = @"
-            INSERT INTO LibraryEnrichmentState (TrackId, SessionId, Status, Confidence, HardGatesPassed, PlanJson, CandidatesJson, UpdatedAt)
-            VALUES (@tid, @sid, @status, @conf, @gates, @plan, @cands, @now)
-            ON CONFLICT(TrackId) DO UPDATE SET
-                SessionId = excluded.SessionId,
-                Status = excluded.Status,
-                Confidence = excluded.Confidence,
-                HardGatesPassed = excluded.HardGatesPassed,
-                PlanJson = excluded.PlanJson,
-                CandidatesJson = excluded.CandidatesJson,
-                UpdatedAt = excluded.UpdatedAt;";
-
-        cmd.Parameters.Add(new SqliteParameter("@tid", trackId));
-        cmd.Parameters.Add(new SqliteParameter("@sid", sessionId ?? string.Empty));
-        cmd.Parameters.Add(new SqliteParameter("@status", status));
-        cmd.Parameters.Add(new SqliteParameter("@conf", confidence));
-        cmd.Parameters.Add(new SqliteParameter("@gates", hardGatesPassed ? 1 : 0));
-        cmd.Parameters.Add(new SqliteParameter("@plan", (object?)planJson ?? DBNull.Value));
-        cmd.Parameters.Add(new SqliteParameter("@cands", (object?)candidatesJson ?? DBNull.Value));
-        cmd.Parameters.Add(new SqliteParameter("@now", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
-
-        await cmd.ExecuteNonQueryAsync();
-    }
-
-    public async Task<(int Status, double Confidence, bool HardGatesPassed, string? PlanJson, string? CandidatesJson)?> GetEnrichmentStateRecordAsync(string trackId)
+    public async Task<CachedLyricsEntity?> GetCachedLyricsAsync(string trackId, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(trackId)) return null;
 
         using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT Status, Confidence, HardGatesPassed, PlanJson, CandidatesJson FROM LibraryEnrichmentState WHERE TrackId = @tid;";
-        cmd.Parameters.Add(new SqliteParameter("@tid", trackId));
+        cmd.CommandText = @"
+            SELECT TrackId, PlainLyrics, SyncedLyrics, HasPlainLyrics, HasSyncedLyrics, IsNotFound, CachedAt, LastCheckedAt
+            FROM LyricsCache
+            WHERE TrackId = @trackId
+            LIMIT 1;";
+        cmd.Parameters.Add(new SqliteParameter("@trackId", trackId));
 
-        using var reader = await cmd.ExecuteReaderAsync();
-        if (await reader.ReadAsync())
+        using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        if (await reader.ReadAsync(cancellationToken))
         {
-            int status = reader.GetInt32(0);
-            double conf = reader.GetDouble(1);
-            bool gates = reader.GetInt32(2) == 1;
-            string? planJson = !reader.IsDBNull(3) ? reader.GetString(3) : null;
-            string? candsJson = !reader.IsDBNull(4) ? reader.GetString(4) : null;
-            return (status, conf, gates, planJson, candsJson);
-        }
+            string id = reader.GetString(0);
+            string? plain = reader.IsDBNull(1) ? null : reader.GetString(1);
+            string? synced = reader.IsDBNull(2) ? null : reader.GetString(2);
+            bool hasPlain = reader.GetInt32(3) == 1;
+            bool hasSynced = reader.GetInt32(4) == 1;
+            bool isNotFound = reader.GetInt32(5) == 1;
+            var cachedAt = DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(6));
+            var lastCheckedAt = DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(7));
 
+            return new CachedLyricsEntity(id, plain, synced, hasPlain, hasSynced, isNotFound, cachedAt, lastCheckedAt);
+        }
         return null;
     }
 
-    public async Task<List<(string TrackId, string? PlanJson, string? CandidatesJson)>> GetEnrichmentRecordsByStatusAsync(int status)
+    public async Task UpsertCachedLyricsAsync(
+        string trackId,
+        string? plainLyrics,
+        string? syncedLyrics,
+        bool hasPlainLyrics,
+        bool hasSyncedLyrics,
+        bool isNotFound,
+        CancellationToken cancellationToken = default)
     {
-        var results = new List<(string TrackId, string? PlanJson, string? CandidatesJson)>();
+        if (string.IsNullOrWhiteSpace(trackId)) return;
+
         using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT TrackId, PlanJson, CandidatesJson FROM LibraryEnrichmentState WHERE Status = @status ORDER BY UpdatedAt DESC;";
-        cmd.Parameters.Add(new SqliteParameter("@status", status));
 
-        using var reader = await cmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
-        {
-            string tid = reader.GetString(0);
-            string? plan = !reader.IsDBNull(1) ? reader.GetString(1) : null;
-            string? cands = !reader.IsDBNull(2) ? reader.GetString(2) : null;
-            results.Add((tid, plan, cands));
-        }
+        long nowEpoch = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
-        return results;
+        cmd.CommandText = @"
+            INSERT INTO LyricsCache (TrackId, PlainLyrics, SyncedLyrics, HasPlainLyrics, HasSyncedLyrics, IsNotFound, CachedAt, LastCheckedAt)
+            VALUES (@trackId, @plainLyrics, @syncedLyrics, @hasPlainLyrics, @hasSyncedLyrics, @isNotFound, @now, @now)
+            ON CONFLICT(TrackId) DO UPDATE SET
+                PlainLyrics = excluded.PlainLyrics,
+                SyncedLyrics = excluded.SyncedLyrics,
+                HasPlainLyrics = excluded.HasPlainLyrics,
+                HasSyncedLyrics = excluded.HasSyncedLyrics,
+                IsNotFound = excluded.IsNotFound,
+                LastCheckedAt = excluded.LastCheckedAt;";
+
+        cmd.Parameters.Add(new SqliteParameter("@trackId", trackId));
+        cmd.Parameters.Add(new SqliteParameter("@plainLyrics", (object?)plainLyrics ?? DBNull.Value));
+        cmd.Parameters.Add(new SqliteParameter("@syncedLyrics", (object?)syncedLyrics ?? DBNull.Value));
+        cmd.Parameters.Add(new SqliteParameter("@hasPlainLyrics", hasPlainLyrics ? 1 : 0));
+        cmd.Parameters.Add(new SqliteParameter("@hasSyncedLyrics", hasSyncedLyrics ? 1 : 0));
+        cmd.Parameters.Add(new SqliteParameter("@isNotFound", isNotFound ? 1 : 0));
+        cmd.Parameters.Add(new SqliteParameter("@now", nowEpoch));
+
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    public async Task ClearEnrichmentStateAsync()
+    public async Task DeleteCachedLyricsAsync(string trackId, CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(trackId)) return;
+
         using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "DELETE FROM LibraryEnrichmentState WHERE Status != 8;"; // Preserves 8 (NeverAskAgain)
-        await cmd.ExecuteNonQueryAsync();
+        cmd.CommandText = "DELETE FROM LyricsCache WHERE TrackId = @trackId;";
+        cmd.Parameters.Add(new SqliteParameter("@trackId", trackId));
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task ClearDatabaseAsync(bool preserveSettings = false)
+    {
+        using var conn = await CreateConnectionAsync();
+        using var tx = (SqliteTransaction)await conn.BeginTransactionAsync();
+        try
+        {
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandText = @"
+                    DELETE FROM LyricsCache;
+                    DELETE FROM PlaylistTracks;
+                    DELETE FROM Playlists;
+                    DELETE FROM PlaybackHistory;
+                    DELETE FROM Favorites;
+                    DELETE FROM SavedQueue;
+                    DELETE FROM SavedUnshuffledQueue;
+                    DELETE FROM PlayerState;
+                    DELETE FROM Tracks;
+                    DELETE FROM Albums;
+                    DELETE FROM Artists;
+                    DELETE FROM MonitoredFolders;
+                    DELETE FROM TracksFts;";
+                await cmd.ExecuteNonQueryAsync();
+
+                if (!preserveSettings)
+                {
+                    cmd.CommandText = "DELETE FROM AppSettings;";
+                    await cmd.ExecuteNonQueryAsync();
+                }
+            }
+            await tx.CommitAsync();
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+
+        try
+        {
+            using var vacCmd = conn.CreateCommand();
+            vacCmd.CommandText = "VACUUM;";
+            await vacCmd.ExecuteNonQueryAsync();
+        }
+        catch
+        {
+            // Best-effort vacuum
+        }
     }
 }

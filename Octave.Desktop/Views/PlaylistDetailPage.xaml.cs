@@ -170,11 +170,6 @@ public sealed partial class PlaylistDetailPage : Page
         if (Frame.CanGoBack) Frame.GoBack();
     }
 
-    public static string GetProviderGlyph(string provider)
-    {
-        return provider.Equals("Local", StringComparison.OrdinalIgnoreCase) ? "" : "";
-    }
-
     public static string FormatDuration(double seconds)
     {
         if (double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds < 0)

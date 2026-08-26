@@ -47,12 +47,6 @@
                         <FontIcon Glyph="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="24" />
                     </Button>
 
-                    <Button Command="{x:Bind ViewModel.EnrichEntityCommand}" ToolTipService.ToolTip="Fetch Online Information / Artwork" Style="{StaticResource GhostIconButtonStyle}">
-                        <FontIcon Glyph="&#xE721;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="20" />
-                    </Button>
-
-                    <ProgressRing IsActive="{x:Bind ViewModel.IsEnriching, Mode=OneWay}" Width="20" Height="20" Visibility="{x:Bind local:EntityDetailPage.VisibleWhen(ViewModel.IsEnriching), Mode=OneWay}" Margin="0,0,8,0" />
-
                     <Button Click="BackButton_Click" Style="{StaticResource GhostIconButtonStyle}">
                         <FontIcon Glyph="&#xE72B;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="20" />
                     </Button>
@@ -72,7 +66,6 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="40" />
                             <ColumnDefinition Width="2*" />
-                            <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="1*" />
                             <ColumnDefinition Width="80" />
                             <ColumnDefinition Width="40" />
@@ -97,23 +90,14 @@
                         <!-- Title -->
                         <TextBlock Grid.Column="1" Text="{x:Bind Title}" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" Margin="8,0,0,0"/>
 
-                        <!-- Local/Cloud Provider Status -->
-                        <FontIcon Grid.Column="2" 
-                                  Glyph="{x:Bind local:EntityDetailPage.GetProviderGlyph(Provider)}" 
-                                  FontFamily="Segoe MDL2 Assets" 
-                                  FontSize="14" 
-                                  Foreground="{ThemeResource TextFillColorTertiaryBrush}" 
-                                  Margin="12,0" 
-                                  VerticalAlignment="Center"/>
-
                         <!-- Artist -->
-                        <TextBlock Grid.Column="3" Text="{x:Bind ArtistName}" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Grid.Column="2" Text="{x:Bind ArtistName}" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextTrimming="CharacterEllipsis" Margin="8,0,0,0"/>
 
                         <!-- Duration -->
-                        <TextBlock Grid.Column="4" Text="{x:Bind local:EntityDetailPage.FormatDuration(DurationSeconds)}" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Right" Margin="0,0,8,0"/>
+                        <TextBlock Grid.Column="3" Text="{x:Bind local:EntityDetailPage.FormatDuration(DurationSeconds)}" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Right" Margin="0,0,8,0"/>
 
                         <!-- More Menu -->
-                        <Button Grid.Column="5" 
+                        <Button Grid.Column="4" 
                                 Background="Transparent" 
                                 BorderBrush="Transparent" 
                                 Padding="4"

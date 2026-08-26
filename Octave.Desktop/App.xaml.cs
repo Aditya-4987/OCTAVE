@@ -18,15 +18,7 @@ using Octave.Core.Services.Library;
 using Octave.Core.Interfaces;
 using Octave.Core.Services.Playback;
 using Octave.Core.Services.Metadata;
-using Octave.Core.Services.Cache;
-using Octave.Core.Services.External;
-using Octave.Core.Services.External.MusicBrainz;
-using Octave.Core.Services.External.Artwork;
-using Octave.Core.Services.External.Lyrics;
 using Octave.Core.Models;
-using Octave.Core.Services.External.Artist;
-using Octave.Core.Interfaces.External;
-using Octave.Core.Services.Network;
 using Octave_Desktop.ViewModels;
 using Octave_Desktop.Services.System;
 using System.IO;
@@ -93,35 +85,16 @@ public partial class App : Application
                 System.IO.Directory.CreateDirectory(cachePath);
                 
                 // DB Context
-                services.AddSingleton(new SqliteDbContext($"Data Source={dbPath}"));
+                var dbContext = new SqliteDbContext($"Data Source={dbPath}");
+                services.AddSingleton(dbContext);
+                services.AddSingleton<ILyricsRepository>(dbContext);
+
+                // HTTP Client & LRCLIB Client
+                services.AddSingleton<System.Net.Http.HttpClient>();
+                services.AddSingleton<ILrclibClient, LrclibClient>();
 
                 // Artwork Cache Manager
                 services.AddSingleton<IArtworkCacheManager>(new ArtworkCacheManager(cachePath));
-
-                // Network & Two-Tier Cache Infrastructure
-                services.AddSingleton<IProviderRateLimiterRegistry, ProviderRateLimiterRegistry>();
-                services.AddSingleton<IHttpService, HttpService>();
-                services.AddSingleton<IExternalDataCache, TwoTierExternalDataCache>();
-
-                // External Providers & Orchestrators
-                services.AddSingleton<TheAudioDbOptions>();
-                services.AddSingleton<Octave.Core.Services.External.Settings.IExternalDataSettingsService, Octave.Core.Services.External.Settings.ExternalDataSettingsService>();
-                services.AddSingleton<IExternalMetadataProvider, MusicBrainzMetadataProvider>();
-                services.AddSingleton<IExternalAlbumArtworkProvider, CoverArtArchiveArtworkProvider>();
-                services.AddSingleton<TheAudioDbArtistEnrichmentProvider>();
-                services.AddSingleton<IArtistEnrichmentProvider>(sp => sp.GetRequiredService<TheAudioDbArtistEnrichmentProvider>());
-                services.AddSingleton<IExternalArtistImageProvider>(sp => sp.GetRequiredService<TheAudioDbArtistEnrichmentProvider>());
-                services.AddSingleton<IArtistEnrichmentService, ArtistEnrichmentService>();
-                services.AddSingleton<IExternalLyricsProvider, LrcLibLyricsProvider>();
-                services.AddSingleton<IOnlineLyricsOrchestrator, OnlineLyricsOrchestrator>();
-                services.AddSingleton<IExternalMetadataOrchestrator, ExternalMetadataOrchestrator>();
-                services.AddSingleton<IExternalArtworkOrchestrator, ExternalArtworkOrchestrator>();
-                services.AddSingleton<ITrackMetadataMatcher, TrackMetadataMatcher>();
-
-                // Local Tag Editor & Enrichment Workflow
-                services.AddSingleton<ITrackMetadataEditor, TrackMetadataEditor>();
-                services.AddSingleton<ITrackEnrichmentWorkflow, TrackEnrichmentWorkflow>();
-                services.AddSingleton<ISmartLibraryEnrichmentService, SmartLibraryEnrichmentService>();
 
                 // Engine
                 services.AddSingleton<IAudioPlayerService, ManagedBassAudioService>();
@@ -135,12 +108,9 @@ public partial class App : Application
                 services.AddSingleton<IQueueService, QueueService>();
                 services.AddSingleton<IPlaylistService, PlaylistService>();
                 services.AddSingleton<ISmtcService, WindowsSmtcService>();
-                services.AddSingleton<Octave.Core.Services.Metadata.LyricsService>();
-                services.AddSingleton<ILyricsService, CompositeLyricsService>();
+                services.AddSingleton<ILyricsService, LyricsService>();
 
-                // ViewModels (SHELL-02: the dead MainViewModel registration was
-                // removed - it flipped a local IsPlaying bool and never touched
-                // the audio service; nothing resolves it)
+                // ViewModels
                 services.AddSingleton<ShellViewModel>();
                 services.AddTransient<HomeViewModel>();
                 services.AddTransient<LibraryViewModel>();
@@ -151,9 +121,6 @@ public partial class App : Application
                 services.AddTransient<EntityDetailViewModel>();
                 services.AddTransient<SearchViewModel>();
                 services.AddTransient<NowPlayingViewModel>();
-                services.AddTransient<MetadataEnrichmentViewModel>();
-                services.AddTransient<ExternalDataSettingsViewModel>();
-                services.AddTransient<LibraryEnrichmentViewModel>();
             })
             .Build();
 
@@ -208,13 +175,6 @@ public partial class App : Application
             var dbContext = Services.GetRequiredService<SqliteDbContext>();
             await dbContext.InitializeAsync();
             System.Diagnostics.Debug.WriteLine("[Startup Diagnostics] Database Initialization: SUCCESS");
-
-            // INT-01: load persisted external-data settings BEFORE the watcher, queue
-            // restore, and first playback. Previously LoadSettingsAsync ran only when
-            // the Settings page was opened, so OfflineOnlyMode / provider toggles were
-            // silently replaced by model defaults (online) for the whole session.
-            await Services.GetRequiredService<Octave.Core.Services.External.Settings.IExternalDataSettingsService>().LoadSettingsAsync();
-            System.Diagnostics.Debug.WriteLine("[Startup Diagnostics] External Data Settings: LOADED");
 
             _ = InitializeWatcherAsync();
         }
@@ -296,23 +256,6 @@ public partial class App : Application
             {
                 watcher.AddMonitoredPath(folder);
             }
-
-            // EDITOR-04: sweep stray .octave_bak/.octave_tmp artifacts left by a
-            // crash during a metadata edit. Both are always safe to delete (a
-            // backup only exists after a successful atomic replace; a temp means
-            // the replace never ran). Fire-and-forget so startup never waits on
-            // a large library walk.
-            _ = System.Threading.Tasks.Task.Run(() =>
-            {
-                foreach (var folder in folders)
-                {
-                    int removed = Octave.Core.Services.Metadata.TrackMetadataEditor.SweepStaleEditorArtifacts(folder);
-                    if (removed > 0)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[Startup Diagnostics] Editor artifact sweep removed {removed} stale file(s) under '{folder}'.");
-                    }
-                }
-            });
 
             System.Diagnostics.Debug.WriteLine("[Startup Diagnostics] Library Watcher Service: INITIALIZED");
         }

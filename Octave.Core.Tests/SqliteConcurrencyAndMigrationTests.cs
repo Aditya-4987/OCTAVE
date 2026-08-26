@@ -5,7 +5,6 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
 using Octave.Core.Models;
-using Octave.Core.Services.Cache;
 using Octave.Core.Services.Database;
 using Xunit;
 
@@ -53,7 +52,7 @@ public class SqliteConcurrencyAndMigrationTests : IDisposable
 
     private static Track MakeTrack(string id, string title) =>
         new(id, title, "ar_" + id, "Artist " + id, "al_" + id, "Album", 180.0,
-            "C:\\music\\" + id + ".mp3", "local", 1, 2024, DateTime.UtcNow);
+            "C:\\music\\" + id + ".mp3", 1, 2024, DateTime.UtcNow);
 
     [Fact]
     public async Task ConcurrentWriters_DoNotThrowSqliteBusy_AndPreserveAllRows()
@@ -104,8 +103,7 @@ public class SqliteConcurrencyAndMigrationTests : IDisposable
                         Id TEXT PRIMARY KEY,
                         Title TEXT NOT NULL COLLATE NOCASE,
                         Description TEXT,
-                        CreatedAt INTEGER NOT NULL,
-                        IsLocalOnly INTEGER NOT NULL CHECK(IsLocalOnly IN (0, 1))
+                        CreatedAt INTEGER NOT NULL
                     ) STRICT;
                     CREATE TABLE Tracks (
                         Id TEXT PRIMARY KEY,
@@ -116,7 +114,6 @@ public class SqliteConcurrencyAndMigrationTests : IDisposable
                         AlbumTitle TEXT NOT NULL,
                         DurationSeconds REAL NOT NULL,
                         SourceUri TEXT NOT NULL,
-                        Provider TEXT NOT NULL,
                         TrackNumber INTEGER NOT NULL DEFAULT 1,
                         Year INTEGER NOT NULL,
                         DateAdded INTEGER NOT NULL,
@@ -128,8 +125,8 @@ public class SqliteConcurrencyAndMigrationTests : IDisposable
                         TrackId TEXT NOT NULL,
                         SortOrder INTEGER NOT NULL
                     ) STRICT;
-                    INSERT INTO Playlists VALUES ('pl1', 'Legacy Playlist', NULL, 1700000000, 1);
-                    INSERT INTO Tracks VALUES ('t1', 'Song', 'ar1', 'Artist', 'al1', 'Album', 180.0, 'C:\\x.mp3', 'local', 1, 2024, 1700000000, '', 0.0);
+                    INSERT INTO Playlists VALUES ('pl1', 'Legacy Playlist', NULL, 1700000000);
+                    INSERT INTO Tracks VALUES ('t1', 'Song', 'ar1', 'Artist', 'al1', 'Album', 180.0, 'C:\\x.mp3', 1, 2024, 1700000000, '', 0.0);
                     INSERT INTO PlaylistTracks VALUES ('pl1', 't1', 0);
                     INSERT INTO PlaylistTracks VALUES ('pl1', 't1', 1);
                     INSERT INTO PlaylistTracks VALUES ('pl1', 't1', 2);";
@@ -258,34 +255,6 @@ public class SqliteConcurrencyAndMigrationTests : IDisposable
         Assert.Equal("Money", prefix.Tracks[0].Title);
     }
 
-    [Fact]
-    public async Task TwoTierExternalDataCache_OnL2DatabaseFailure_ReturnsMissInsteadOfThrowing()
-    {
-        var cache = new TwoTierExternalDataCache(_dbContext);
-
-        var payload = new[] { "a", "b" };
-        await cache.SetAsync("key1", payload);
-        Assert.NotNull(await cache.GetAsync<string[]>("key1"));
-
-        // Simulate severe DB damage: the cache table itself disappears.
-        using (var raw = new SqliteConnection($"Data Source={_dbPath}"))
-        {
-            raw.Open();
-            using var cmd = raw.CreateCommand();
-            cmd.CommandText = "DROP TABLE ExternalDataCache;";
-            cmd.ExecuteNonQuery();
-        }
-
-        // A fresh instance has a cold L1, forcing the L2 read path: reads must degrade
-        // to a cache miss (CACHE-01), not throw SqliteException ("no such table").
-        var coldCache = new TwoTierExternalDataCache(_dbContext);
-        Assert.Null(await coldCache.GetAsync<string[]>("key1"));
-        Assert.Null(await coldCache.GetAsync<string[]>("never_cached"));
-
-        // Writes must stay non-fatal too.
-        await coldCache.SetAsync("key2", new[] { "c" });
-    }
-
     // =================================================================
     // Batch 9 (§15): SCAN-11 — the Tracks.Disc column exists via the
     // lightweight migration, backfills 1 for legacy rows, and persists the
@@ -311,10 +280,10 @@ public class SqliteConcurrencyAndMigrationTests : IDisposable
             await raw.OpenAsync();
             using var cmd = raw.CreateCommand();
             cmd.CommandText = @"
-                INSERT OR IGNORE INTO Artists (Id, Name, IsLocal) VALUES ('ar_l', 'Artist L', 1);
-                INSERT OR IGNORE INTO Albums (Id, Title, ArtistId, ArtistName, Year, Provider) VALUES ('al_l', 'Album L', 'ar_l', 'Artist L', 1999, 'Local');
-                INSERT INTO Tracks (Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, Provider, TrackNumber, Year, DateAdded, Genre, ReplayGain)
-                VALUES ('tr_legacy', 'Legacy Song', 'ar_l', 'Artist L', 'al_l', 'Album L', 100.0, 'C:\\music\\legacy.mp3', 'Local', 3, 1999, 0, '', 0.0);";
+                INSERT OR IGNORE INTO Artists (Id, Name) VALUES ('ar_l', 'Artist L');
+                INSERT OR IGNORE INTO Albums (Id, Title, ArtistId, ArtistName, Year) VALUES ('al_l', 'Album L', 'ar_l', 'Artist L', 1999);
+                INSERT INTO Tracks (Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, TrackNumber, Year, DateAdded, Genre, ReplayGain)
+                VALUES ('tr_legacy', 'Legacy Song', 'ar_l', 'Artist L', 'al_l', 'Album L', 100.0, 'C:\\music\\legacy.mp3', 3, 1999, 0, '', 0.0);";
             await cmd.ExecuteNonQueryAsync();
         }
 
@@ -328,5 +297,110 @@ public class SqliteConcurrencyAndMigrationTests : IDisposable
         var readBack = await _dbContext.GetTrackByIdAsync("tr_disc2");
         Assert.NotNull(readBack);
         Assert.Equal(2, readBack!.DiscNumber);
+    }
+
+    [Fact]
+    public async Task InitializeAsync_MigratesObsoleteProviderAndIsLocalColumns_WithoutErrors()
+    {
+        string legacyDbPath = Path.Combine(Path.GetTempPath(), $"octave_b1_provider_legacy_{Guid.NewGuid():N}.db");
+        try
+        {
+            // Build an old database containing Artists.IsLocal, Albums.Provider, Tracks.Provider, Playlists.IsLocalOnly, and external tables
+            using (var raw = new SqliteConnection($"Data Source={legacyDbPath}"))
+            {
+                raw.Open();
+                using var cmd = raw.CreateCommand();
+                cmd.CommandText = @"
+                    CREATE TABLE Artists (
+                        Id TEXT PRIMARY KEY,
+                        Name TEXT NOT NULL COLLATE NOCASE,
+                        Bio TEXT,
+                        ArtworkUrl TEXT,
+                        IsLocal INTEGER NOT NULL CHECK(IsLocal IN (0, 1))
+                    ) STRICT;
+                    CREATE TABLE Albums (
+                        Id TEXT PRIMARY KEY,
+                        Title TEXT NOT NULL COLLATE NOCASE,
+                        ArtistId TEXT NOT NULL,
+                        ArtistName TEXT NOT NULL,
+                        Year INTEGER NOT NULL,
+                        ArtworkUrl TEXT,
+                        Provider TEXT NOT NULL
+                    ) STRICT;
+                    CREATE TABLE Tracks (
+                        Id TEXT PRIMARY KEY,
+                        Title TEXT NOT NULL COLLATE NOCASE,
+                        ArtistId TEXT NOT NULL,
+                        ArtistName TEXT NOT NULL,
+                        AlbumId TEXT NOT NULL,
+                        AlbumTitle TEXT NOT NULL,
+                        DurationSeconds REAL NOT NULL,
+                        SourceUri TEXT NOT NULL,
+                        Provider TEXT NOT NULL,
+                        TrackNumber INTEGER NOT NULL DEFAULT 1,
+                        Year INTEGER NOT NULL,
+                        DateAdded INTEGER NOT NULL,
+                        Genre TEXT NOT NULL DEFAULT '',
+                        ReplayGain REAL NOT NULL DEFAULT 0.0
+                    ) STRICT;
+                    CREATE TABLE Playlists (
+                        Id TEXT PRIMARY KEY,
+                        Title TEXT NOT NULL COLLATE NOCASE,
+                        Description TEXT,
+                        CreatedAt INTEGER NOT NULL,
+                        IsLocalOnly INTEGER NOT NULL CHECK(IsLocalOnly IN (0, 1))
+                    ) STRICT;
+                    CREATE TABLE PlaylistTracks (
+                        Id TEXT PRIMARY KEY,
+                        PlaylistId TEXT NOT NULL,
+                        TrackId TEXT NOT NULL,
+                        SortOrder INTEGER NOT NULL
+                    ) STRICT;
+                    CREATE TABLE ExternalDataCache (
+                        CacheKey TEXT PRIMARY KEY,
+                        DataJson TEXT NOT NULL,
+                        TypeName TEXT NOT NULL,
+                        CreatedAt INTEGER NOT NULL,
+                        ExpiresAt INTEGER NOT NULL
+                    ) STRICT;
+                    INSERT INTO Artists VALUES ('ar_old', 'Old Artist', NULL, NULL, 1);
+                    INSERT INTO Albums VALUES ('al_old', 'Old Album', 'ar_old', 'Old Artist', 2020, NULL, 'Local');
+                    INSERT INTO Tracks VALUES ('tr_old', 'Old Song', 'ar_old', 'Old Artist', 'al_old', 'Old Album', 180.0, 'C:\\old.mp3', 'Local', 1, 2020, 1700000000, '', 0.0);
+                    INSERT INTO Playlists VALUES ('pl_old', 'Old Playlist', NULL, 1700000000, 1);
+                    INSERT INTO ExternalDataCache VALUES ('k1', '{}', 'Test', 1700000000, 1700000000);";
+                cmd.ExecuteNonQuery();
+            }
+
+            var migratedContext = new SqliteDbContext(legacyDbPath);
+            await migratedContext.InitializeAsync();
+
+            // Verify upserts and reads work without constraint errors
+            var artist = new Artist("ar_new", "New Artist", null, null);
+            await migratedContext.UpsertArtistAsync(artist);
+
+            var album = new Album("al_new", "New Album", "ar_new", "New Artist", 2024, null);
+            await migratedContext.UpsertAlbumAsync(album);
+
+            var track = new Track("tr_new", "New Song", "ar_new", "New Artist", "al_new", "New Album", 200, "C:\\new.mp3", 1, 2024, DateTime.UtcNow);
+            await migratedContext.UpsertTrackAsync(track);
+
+            var playlist = await migratedContext.CreatePlaylistAsync("New Playlist", null);
+            Assert.NotNull(playlist);
+
+            var readArtist = await migratedContext.GetArtistByIdAsync("ar_old");
+            Assert.NotNull(readArtist);
+            Assert.Equal("Old Artist", readArtist!.Name);
+
+            var readTrack = await migratedContext.GetTrackByIdAsync("tr_old");
+            Assert.NotNull(readTrack);
+            Assert.Equal("Old Song", readTrack!.Title);
+        }
+        finally
+        {
+            foreach (var file in new[] { legacyDbPath, legacyDbPath + "-wal", legacyDbPath + "-shm" })
+            {
+                try { if (File.Exists(file)) File.Delete(file); } catch { }
+            }
+        }
     }
 }

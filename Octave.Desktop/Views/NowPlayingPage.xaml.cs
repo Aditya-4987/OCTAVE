@@ -289,6 +289,11 @@ public sealed partial class NowPlayingPage : Page
         ViewModel.AdjustLyricsOffset(deltaMs);
     }
 
+    private void LyricsPanelControl_LyricModeChangeRequested(object? sender, LyricDisplayMode mode)
+    {
+        ViewModel.SelectLyricMode(mode);
+    }
+
     private void QueuePanelControl_ClearQueueRequested(object sender, RoutedEventArgs e)
     {
         ViewModel.ClearQueueCommand.Execute(null);

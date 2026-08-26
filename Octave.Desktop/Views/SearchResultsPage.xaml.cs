@@ -152,11 +152,6 @@ public sealed partial class SearchResultsPage : Page
 
     public static string TrackCountText(int count) => $"{count} tracks";
 
-    public static string GetProviderGlyph(string provider)
-    {
-        return provider.Equals("Local", StringComparison.OrdinalIgnoreCase) ? "\uE770" : "\uE774";
-    }
-
     public static string FormatDuration(double seconds)
     {
         if (double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds < 0)

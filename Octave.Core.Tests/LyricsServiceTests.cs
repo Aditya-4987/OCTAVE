@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using Moq;
+using Octave.Core.Interfaces;
 using Octave.Core.Models;
 using Octave.Core.Services.Metadata;
 using Xunit;
@@ -10,6 +13,23 @@ namespace Octave.Core.Tests;
 
 public class LyricsServiceTests
 {
+    private static Track CreateTestTrack(string id = "track_1", string title = "Test Song", string artist = "Test Artist", string album = "Test Album", double duration = 200)
+    {
+        return new Track(
+            Id: id,
+            Title: title,
+            ArtistId: "artist_1",
+            ArtistName: artist,
+            AlbumId: "album_1",
+            AlbumTitle: album,
+            DurationSeconds: duration,
+            SourceUri: "C:\\Music\\test.mp3",
+            TrackNumber: 1,
+            Year: 2024,
+            DateAdded: DateTime.UtcNow
+        );
+    }
+
     [Fact]
     public void ParseLrcContent_ValidTimestampedLrc_ReturnsSyncedLyricsWithOrderedLines()
     {
@@ -59,9 +79,6 @@ Line three of unsynced lyrics";
         Assert.Null(data.PlainText);
     }
 
-    // TEST-04: this used to re-implement the binary search locally, which meant a
-    // regression in the production lookup would never be caught. Drive the real
-    // LyricsService.FindActiveLineIndex instead — including the empty/null guards.
     [Fact]
     public void LyricSynchronization_BoundaryCheck_And_BinarySearchSeek_WorkAccurately()
     {
@@ -96,8 +113,6 @@ Line three of unsynced lyrics";
         Assert.True(idx is 1 or 2, $"expected an active-line index in [1,2], got {idx}");
     }
 
-    // TEST-10: fractional-timestamp variants and multi-timestamp lines that real
-    // .lrc files contain; plus the offset clamping rule for pre-zero results.
     [Theory]
     [InlineData("00:04.5", 4.5)]      // single millisecond digit → ×100
     [InlineData("00:04.50", 4.5)]     // two digits → ×10
@@ -158,9 +173,7 @@ Line three of unsynced lyrics";
         Assert.NotNull(data.SyncedLines);
         Assert.Equal(2, data.SyncedLines.Count);
 
-        // 5000ms - 500ms = 4500ms (4.5s)
         Assert.Equal(TimeSpan.FromSeconds(4.5), data.SyncedLines[0].Start);
-        // 10000ms - 500ms = 9500ms (9.5s)
         Assert.Equal(TimeSpan.FromSeconds(9.5), data.SyncedLines[1].Start);
     }
 
@@ -177,9 +190,269 @@ Line three of unsynced lyrics";
         Assert.NotNull(data.SyncedLines);
         Assert.Equal(2, data.SyncedLines.Count);
 
-        // 5000ms - (-1000ms) = 6000ms (6.0s)
         Assert.Equal(TimeSpan.FromSeconds(6.0), data.SyncedLines[0].Start);
-        // 10000ms - (-1000ms) = 11000ms (11.0s)
         Assert.Equal(TimeSpan.FromSeconds(11.0), data.SyncedLines[1].Start);
+    }
+
+    // ---- New LRCLIB & Dual-Caching Tests -------------------------------------
+
+    [Fact]
+    public async Task GetLyricsAsync_DbCacheHit_ReturnsCachedLyricsWithoutCallingLrclib()
+    {
+        var track = CreateTestTrack("track_cached");
+        var mockRepo = new Mock<ILyricsRepository>();
+        var mockLrclib = new Mock<ILrclibClient>();
+
+        var cached = new CachedLyricsEntity(
+            TrackId: "track_cached",
+            PlainLyrics: "Cached Plain Lyrics",
+            SyncedLyrics: "[00:10.00] Cached Synced Line",
+            HasPlainLyrics: true,
+            HasSyncedLyrics: true,
+            IsNotFound: false,
+            CachedAt: DateTimeOffset.UtcNow.AddDays(-1),
+            LastCheckedAt: DateTimeOffset.UtcNow.AddDays(-1)
+        );
+
+        mockRepo.Setup(r => r.GetCachedLyricsAsync("track_cached", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(cached);
+
+        var service = new LyricsService(mockLrclib.Object, mockRepo.Object);
+
+        var result = await service.GetLyricsAsync(track);
+
+        Assert.Equal(LyricsState.Synced, result.State);
+        Assert.True(result.HasSyncedLyrics);
+        Assert.True(result.HasPlainLyrics);
+        Assert.Equal("Cached Plain Lyrics", result.PlainText);
+        Assert.NotNull(result.SyncedLines);
+        Assert.Single(result.SyncedLines);
+
+        // LRCLIB client must not be called when DB cache hits
+        mockLrclib.Verify(l => l.GetLyricsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<double?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetLyricsAsync_NotInCache_QueriesLrclib_CachesBothAndReturns()
+    {
+        var track = CreateTestTrack("track_remote", "Remote Song", "Remote Artist", "Remote Album", 180);
+        var mockRepo = new Mock<ILyricsRepository>();
+        var mockLrclib = new Mock<ILrclibClient>();
+
+        mockRepo.Setup(r => r.GetCachedLyricsAsync("track_remote", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CachedLyricsEntity?)null);
+
+        var lrclibResponse = new LrclibResponse(
+            Id: 1001,
+            TrackName: "Remote Song",
+            ArtistName: "Remote Artist",
+            AlbumName: "Remote Album",
+            Duration: 180,
+            Instrumental: false,
+            PlainLyrics: "Remote Plain Lyrics",
+            SyncedLyrics: "[00:05.00] Remote Synced Line"
+        );
+
+        mockLrclib.Setup(l => l.GetLyricsAsync("Remote Song", "Remote Artist", "Remote Album", 180, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(lrclibResponse);
+
+        var service = new LyricsService(mockLrclib.Object, mockRepo.Object);
+
+        var result = await service.GetLyricsAsync(track);
+
+        Assert.Equal(LyricsState.Synced, result.State);
+        Assert.True(result.HasSyncedLyrics);
+        Assert.True(result.HasPlainLyrics);
+        Assert.Equal("Remote Plain Lyrics", result.PlainText);
+        Assert.NotNull(result.SyncedLines);
+
+        // Verify repository upsert was called with both forms
+        mockRepo.Verify(r => r.UpsertCachedLyricsAsync(
+            "track_remote",
+            "Remote Plain Lyrics",
+            "[00:05.00] Remote Synced Line",
+            true,
+            true,
+            false,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetLyricsAsync_LrclibReturns404_CachesAsNotFound_AndReturnsUnavailable()
+    {
+        var track = CreateTestTrack("track_404", "Missing Song", "Unknown Artist");
+        var mockRepo = new Mock<ILyricsRepository>();
+        var mockLrclib = new Mock<ILrclibClient>();
+
+        mockRepo.Setup(r => r.GetCachedLyricsAsync("track_404", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CachedLyricsEntity?)null);
+
+        mockLrclib.Setup(l => l.GetLyricsAsync("Missing Song", "Unknown Artist", It.IsAny<string>(), It.IsAny<double?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((LrclibResponse?)null);
+
+        var service = new LyricsService(mockLrclib.Object, mockRepo.Object);
+
+        var result = await service.GetLyricsAsync(track);
+
+        Assert.Equal(LyricsState.Unavailable, result.State);
+        Assert.False(result.HasSyncedLyrics);
+        Assert.False(result.HasPlainLyrics);
+
+        // Verify negative cache record saved
+        mockRepo.Verify(r => r.UpsertCachedLyricsAsync(
+            "track_404",
+            null,
+            null,
+            false,
+            false,
+            true,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetLyricsAsync_FreshNegativeCacheEntry_ReturnsUnavailableWithoutCallingLrclib()
+    {
+        var track = CreateTestTrack("track_neg");
+        var mockRepo = new Mock<ILyricsRepository>();
+        var mockLrclib = new Mock<ILrclibClient>();
+
+        var cachedNotFound = new CachedLyricsEntity(
+            TrackId: "track_neg",
+            PlainLyrics: null,
+            SyncedLyrics: null,
+            HasPlainLyrics: false,
+            HasSyncedLyrics: false,
+            IsNotFound: true,
+            CachedAt: DateTimeOffset.UtcNow.AddDays(-2),
+            LastCheckedAt: DateTimeOffset.UtcNow.AddDays(-2) // fresh (< 7 days)
+        );
+
+        mockRepo.Setup(r => r.GetCachedLyricsAsync("track_neg", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(cachedNotFound);
+
+        var service = new LyricsService(mockLrclib.Object, mockRepo.Object);
+
+        var result = await service.GetLyricsAsync(track);
+
+        Assert.Equal(LyricsState.Unavailable, result.State);
+        mockLrclib.Verify(l => l.GetLyricsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<double?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetLyricsAsync_ExpiredNegativeCacheEntry_QueriesLrclibAgain()
+    {
+        var track = CreateTestTrack("track_expired", "Previously Missing", "Artist");
+        var mockRepo = new Mock<ILyricsRepository>();
+        var mockLrclib = new Mock<ILrclibClient>();
+
+        var expiredNotFound = new CachedLyricsEntity(
+            TrackId: "track_expired",
+            PlainLyrics: null,
+            SyncedLyrics: null,
+            HasPlainLyrics: false,
+            HasSyncedLyrics: false,
+            IsNotFound: true,
+            CachedAt: DateTimeOffset.UtcNow.AddDays(-14),
+            LastCheckedAt: DateTimeOffset.UtcNow.AddDays(-10) // expired (> 7 days)
+        );
+
+        mockRepo.Setup(r => r.GetCachedLyricsAsync("track_expired", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expiredNotFound);
+
+        var freshResponse = new LrclibResponse(
+            Id: 2002,
+            TrackName: "Previously Missing",
+            ArtistName: "Artist",
+            AlbumName: null,
+            Duration: 200,
+            Instrumental: false,
+            PlainLyrics: "Newly added lyrics",
+            SyncedLyrics: null
+        );
+
+        mockLrclib.Setup(l => l.GetLyricsAsync("Previously Missing", "Artist", It.IsAny<string>(), It.IsAny<double?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(freshResponse);
+
+        var service = new LyricsService(mockLrclib.Object, mockRepo.Object);
+
+        var result = await service.GetLyricsAsync(track);
+
+        Assert.Equal(LyricsState.Unsynced, result.State);
+        Assert.True(result.HasPlainLyrics);
+        Assert.Equal("Newly added lyrics", result.PlainText);
+
+        // LRCLIB was queried again because negative cache was expired
+        mockLrclib.Verify(l => l.GetLyricsAsync("Previously Missing", "Artist", It.IsAny<string>(), It.IsAny<double?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetLyricsAsync_LrclibThrowsNetworkError_ReturnsUnavailableWithIsNetworkError_DoesNotCacheNotFound()
+    {
+        var track = CreateTestTrack("track_net_err");
+        var mockRepo = new Mock<ILyricsRepository>();
+        var mockLrclib = new Mock<ILrclibClient>();
+
+        mockRepo.Setup(r => r.GetCachedLyricsAsync("track_net_err", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CachedLyricsEntity?)null);
+
+        mockLrclib.Setup(l => l.GetLyricsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<double?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("No internet connection"));
+
+        var service = new LyricsService(mockLrclib.Object, mockRepo.Object);
+
+        var result = await service.GetLyricsAsync(track);
+
+        Assert.Equal(LyricsState.Unavailable, result.State);
+        Assert.True(result.IsNetworkError);
+
+        // Must NOT permanently cache negative result on temporary network error
+        mockRepo.Verify(r => r.UpsertCachedLyricsAsync(
+            It.IsAny<string>(),
+            It.IsAny<string?>(),
+            It.IsAny<string?>(),
+            It.IsAny<bool>(),
+            It.IsAny<bool>(),
+            true, // isNotFound
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetLyricsAsync_CancellationAndRaceCondition_CancelsGracefully()
+    {
+        var trackA = CreateTestTrack("track_A", "Song A", "Artist A");
+        var trackB = CreateTestTrack("track_B", "Song B", "Artist B");
+
+        var mockRepo = new Mock<ILyricsRepository>();
+        var mockLrclib = new Mock<ILrclibClient>();
+
+        var ctsA = new CancellationTokenSource();
+
+        // Track A simulates a slow remote fetch
+        mockLrclib.Setup(l => l.GetLyricsAsync("Song A", "Artist A", It.IsAny<string>(), It.IsAny<double?>(), ctsA.Token))
+            .Returns(async (string t, string a, string alb, double? d, CancellationToken ct) =>
+            {
+                await Task.Delay(500, ct);
+                return new LrclibResponse(1, "Song A", "Artist A", null, 200, false, "Lyrics A", null);
+            });
+
+        var service = new LyricsService(mockLrclib.Object, mockRepo.Object);
+
+        var taskA = service.GetLyricsAsync(trackA, ctsA.Token);
+
+        // User skips to Track B immediately
+        ctsA.Cancel();
+
+        // Track A must throw OperationCanceledException
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => taskA);
+
+        // Track B executes with its own CTS
+        using var ctsB = new CancellationTokenSource();
+        mockLrclib.Setup(l => l.GetLyricsAsync("Song B", "Artist B", It.IsAny<string>(), It.IsAny<double?>(), ctsB.Token))
+            .ReturnsAsync(new LrclibResponse(2, "Song B", "Artist B", null, 200, false, "Lyrics B", null));
+
+        var resultB = await service.GetLyricsAsync(trackB, ctsB.Token);
+
+        Assert.Equal("Lyrics B", resultB.PlainText);
+        Assert.Equal(LyricsState.Unsynced, resultB.State);
     }
 }

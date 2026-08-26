@@ -53,8 +53,8 @@ public class QueueServiceTests : IDisposable
     {
         var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
 
-        var track1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
-        var track2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", "web", 2, 2024, DateTime.UtcNow);
+        var track1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", 1, 2024, DateTime.UtcNow);
+        var track2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", 2, 2024, DateTime.UtcNow);
 
         await _dbContext.UpsertTrackAsync(track1);
         await _dbContext.UpsertTrackAsync(track2);
@@ -99,8 +99,8 @@ public class QueueServiceTests : IDisposable
         var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
         _audioPlayerMock.Setup(a => a.PositionSeconds).Returns(120.0); // genuinely played
 
-        var track1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
-        var track2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", "web", 2, 2024, DateTime.UtcNow);
+        var track1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", 1, 2024, DateTime.UtcNow);
+        var track2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", 2, 2024, DateTime.UtcNow);
 
         await _dbContext.UpsertTrackAsync(track1);
         await _dbContext.UpsertTrackAsync(track2);
@@ -131,7 +131,7 @@ public class QueueServiceTests : IDisposable
         var tracks = new List<Track>();
         for (int i = 0; i < 12; i++)
         {
-            tracks.Add(new Track($"hs{i}", $"Track {i}", "ar1", "Artist", "al1", "Album", 180, $"http://test/{i}.mp3", "web", i, 2024, DateTime.UtcNow));
+            tracks.Add(new Track($"hs{i}", $"Track {i}", "ar1", "Artist", "al1", "Album", 180, $"http://test/{i}.mp3", i, 2024, DateTime.UtcNow));
             await _dbContext.UpsertTrackAsync(tracks[i]);
         }
 
@@ -141,16 +141,14 @@ public class QueueServiceTests : IDisposable
         int replays = 0;
         for (int i = 0; i < 19; i++)
         {
-            // 9 undecodable ends, one HEALTHY end (resets the streak), 9 more
+            // 9 undecodable ends, one HEALTHY natural end (resets the streak), 9 more
             // undecodable ends. Without the reset the 10th failure would trip.
-            _audioPlayerMock.Setup(a => a.PositionSeconds).Returns(i == 9 ? 150.0 : 0.0);
-
             var replayed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             _audioPlayerMock.Setup(a => a.Play(It.IsAny<string>(), It.IsAny<double>()))
                 .Returns(100L)
                 .Callback(() => { replays++; replayed.TrySetResult(); });
 
-            _audioPlayerMock.Raise(a => a.TrackEnded += null, new TrackEndedEventArgs(100L, tracks[0].SourceUri));
+            _audioPlayerMock.Raise(a => a.TrackEnded += null, new TrackEndedEventArgs(100L, tracks[0].SourceUri, isNaturalEnd: i == 9));
             await replayed.Task.WaitAsync(TimeSpan.FromSeconds(10));
         }
 
@@ -169,7 +167,7 @@ public class QueueServiceTests : IDisposable
         var tracks = new List<Track>();
         for (int i = 0; i < 10; i++)
         {
-            tracks.Add(new Track($"sd{i}", $"Track {i}", "ar1", "Artist", "al1", "Album", 180, $"http://test/{i}.mp3", "web", i, 2024, DateTime.UtcNow));
+            tracks.Add(new Track($"sd{i}", $"Track {i}", "ar1", "Artist", "al1", "Album", 180, $"http://test/{i}.mp3", i, 2024, DateTime.UtcNow));
         }
 
         var first = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object, new Random(42));
@@ -199,7 +197,7 @@ public class QueueServiceTests : IDisposable
         var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
         queueService.RestorePositionOnStartup = true;
 
-        var track1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
+        var track1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", 1, 2024, DateTime.UtcNow);
         await _dbContext.UpsertTrackAsync(track1);
 
         await _dbContext.SavePlayerStateAsync(new[] { "t1" }, new[] { "t1" }, 0, 90.0, 0.8f, false, RepeatMode.None);
@@ -217,7 +215,7 @@ public class QueueServiceTests : IDisposable
         var tracks = new List<Track>();
         for (int i = 0; i < 10; i++)
         {
-            tracks.Add(new Track($"id{i}", $"Track {i}", "ar1", "Artist", "al1", "Album", 180, $"http://test/{i}.mp3", "web", i, 2024, DateTime.UtcNow));
+            tracks.Add(new Track($"id{i}", $"Track {i}", "ar1", "Artist", "al1", "Album", 180, $"http://test/{i}.mp3", i, 2024, DateTime.UtcNow));
         }
 
         queueService.EnqueueRange(tracks);
@@ -258,7 +256,7 @@ public class QueueServiceTests : IDisposable
         var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
         Assert.False(queueService.RestorePositionOnStartup);
 
-        var track1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
+        var track1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", 1, 2024, DateTime.UtcNow);
         await _dbContext.UpsertTrackAsync(track1);
 
         // Save state with position = 90.0s
@@ -287,9 +285,9 @@ public class QueueServiceTests : IDisposable
     public void Reorder_MovesTrackAndMaintainsSurrogateIds()
     {
         var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
-        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
-        var t2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", "web", 2, 2024, DateTime.UtcNow);
-        var t3 = new Track("t3", "Track 3", "ar1", "Artist", "al1", "Album", 180, "http://test/3.mp3", "web", 3, 2024, DateTime.UtcNow);
+        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", 1, 2024, DateTime.UtcNow);
+        var t2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", 2, 2024, DateTime.UtcNow);
+        var t3 = new Track("t3", "Track 3", "ar1", "Artist", "al1", "Album", 180, "http://test/3.mp3", 3, 2024, DateTime.UtcNow);
 
         queueService.EnqueueRange(new[] { t1, t2, t3 });
 
@@ -320,7 +318,7 @@ public class QueueServiceTests : IDisposable
         var tracks = new List<Track>();
         for (int i = 0; i < 8; i++)
         {
-            tracks.Add(new Track($"sq{i}", $"Track {i}", "ar1", "Artist", "al1", "Album", 180, $"http://test/{i}.mp3", "web", i, 2024, DateTime.UtcNow));
+            tracks.Add(new Track($"sq{i}", $"Track {i}", "ar1", "Artist", "al1", "Album", 180, $"http://test/{i}.mp3", i, 2024, DateTime.UtcNow));
         }
 
         queueService.EnqueueRange(tracks);
@@ -340,9 +338,9 @@ public class QueueServiceTests : IDisposable
         // active queue but was APPENDED to the unshuffled mirror — the two lists
         // disagreed and shuffle-off later surfaced the wrong order.
         var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
-        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
-        var t2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", "web", 2, 2024, DateTime.UtcNow);
-        var tx = new Track("tx", "Next Up", "ar1", "Artist", "al1", "Album", 180, "http://test/x.mp3", "web", 3, 2024, DateTime.UtcNow);
+        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", 1, 2024, DateTime.UtcNow);
+        var t2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", 2, 2024, DateTime.UtcNow);
+        var tx = new Track("tx", "Next Up", "ar1", "Artist", "al1", "Album", 180, "http://test/x.mp3", 3, 2024, DateTime.UtcNow);
 
         queueService.EnqueueRange(new[] { t1, t2 });
         queueService.EnqueueNext(tx); // nothing playing yet
@@ -363,9 +361,9 @@ public class QueueServiceTests : IDisposable
         // shuffled order to "original" — both queues were rebuilt from the saved
         // ACTIVE order even though UnshuffledTrackIds was persisted.
         var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
-        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
-        var t2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", "web", 2, 2024, DateTime.UtcNow);
-        var t3 = new Track("t3", "Track 3", "ar1", "Artist", "al1", "Album", 180, "http://test/3.mp3", "web", 3, 2024, DateTime.UtcNow);
+        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", 1, 2024, DateTime.UtcNow);
+        var t2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", 2, 2024, DateTime.UtcNow);
+        var t3 = new Track("t3", "Track 3", "ar1", "Artist", "al1", "Album", 180, "http://test/3.mp3", 3, 2024, DateTime.UtcNow);
         await _dbContext.UpsertTrackAsync(t1);
         await _dbContext.UpsertTrackAsync(t2);
         await _dbContext.UpsertTrackAsync(t3);
@@ -406,7 +404,7 @@ public class QueueServiceTests : IDisposable
                 string path = MissingLocalPath("undecodable_" + Guid.NewGuid().ToString("N"));
                 File.WriteAllText(path, "not audio"); // exists, but is not decodable
                 paths.Add(path);
-                tracks.Add(new Track($"ud{i}", $"Track {i}", "ar1", "Artist", "al1", "Album", 180, path, "Local", i, 2024, DateTime.UtcNow));
+                tracks.Add(new Track($"ud{i}", $"Track {i}", "ar1", "Artist", "al1", "Album", 180, path, i, 2024, DateTime.UtcNow));
             }
 
             await _dbContext.UpsertTrackAsync(tracks[0]);
@@ -447,9 +445,9 @@ public class QueueServiceTests : IDisposable
         // active-list instance against the unshuffled twin — never matched, so the
         // removed track survived in the natural order and came back on shuffle-off.
         var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
-        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
-        var t2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", "web", 2, 2024, DateTime.UtcNow);
-        var t3 = new Track("t3", "Track 3", "ar1", "Artist", "al1", "Album", 180, "http://test/3.mp3", "web", 3, 2024, DateTime.UtcNow);
+        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", 1, 2024, DateTime.UtcNow);
+        var t2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", 2, 2024, DateTime.UtcNow);
+        var t3 = new Track("t3", "Track 3", "ar1", "Artist", "al1", "Album", 180, "http://test/3.mp3", 3, 2024, DateTime.UtcNow);
 
         queueService.EnqueueRange(new[] { t1, t2, t3 });
         queueService.PlayIndex(0);
@@ -473,7 +471,7 @@ public class QueueServiceTests : IDisposable
         queueService.PlaybackStateChanged += (s, e) => stateChanges++;
         queueService.QueueChanged += (s, e) => queueChanges++;
 
-        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
+        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", 1, 2024, DateTime.UtcNow);
         queueService.EnqueueRange(new[] { t1 });
 
         stateChanges = 0;
@@ -501,7 +499,7 @@ public class QueueServiceTests : IDisposable
         var tracks = new List<Track>();
         for (int i = 0; i < 20000; i++)
         {
-            tracks.Add(new Track($"gone{i}", $"Track {i}", "ar1", "Artist", "al1", "Album", 180, MissingLocalPath($"gone_{i}"), "Local", i, 2024, DateTime.UtcNow));
+            tracks.Add(new Track($"gone{i}", $"Track {i}", "ar1", "Artist", "al1", "Album", 180, MissingLocalPath($"gone_{i}"), i, 2024, DateTime.UtcNow));
         }
         queueService.EnqueueRange(tracks);
 
@@ -517,8 +515,8 @@ public class QueueServiceTests : IDisposable
     {
         // NP-10: VM clicks now resolve the index under the queue lock by item Id.
         var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
-        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
-        var t2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", "web", 2, 2024, DateTime.UtcNow);
+        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", 1, 2024, DateTime.UtcNow);
+        var t2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", 2, 2024, DateTime.UtcNow);
         queueService.EnqueueRange(new[] { t1, t2 });
 
         string secondItemId = queueService.GetCurrentQueue()[1].Id;
@@ -536,9 +534,9 @@ public class QueueServiceTests : IDisposable
         // window is NOT the full-queue index). Removing a non-current entry must
         // leave the playing track and its IsPlaying flag untouched.
         var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
-        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
-        var t2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", "web", 2, 2024, DateTime.UtcNow);
-        var t3 = new Track("t3", "Track 3", "ar1", "Artist", "al1", "Album", 180, "http://test/3.mp3", "web", 3, 2024, DateTime.UtcNow);
+        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", 1, 2024, DateTime.UtcNow);
+        var t2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", 2, 2024, DateTime.UtcNow);
+        var t3 = new Track("t3", "Track 3", "ar1", "Artist", "al1", "Album", 180, "http://test/3.mp3", 3, 2024, DateTime.UtcNow);
         queueService.EnqueueRange(new[] { t1, t2, t3 });
 
         string thirdItemId = queueService.GetCurrentQueue()[2].Id;
@@ -557,8 +555,8 @@ public class QueueServiceTests : IDisposable
     public void RemoveById_RemovingCurrentTrack_StopsPlayback()
     {
         var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
-        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
-        var t2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", "web", 2, 2024, DateTime.UtcNow);
+        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", 1, 2024, DateTime.UtcNow);
+        var t2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", 2, 2024, DateTime.UtcNow);
         queueService.EnqueueRange(new[] { t1, t2 });
         queueService.PlayIndex(0);
 
@@ -573,7 +571,7 @@ public class QueueServiceTests : IDisposable
     public void RemoveById_UnknownOrEmptyId_IsANoOp()
     {
         var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
-        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", "web", 1, 2024, DateTime.UtcNow);
+        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", 1, 2024, DateTime.UtcNow);
         queueService.EnqueueRange(new[] { t1 });
 
         queueService.RemoveById("does-not-exist");
@@ -581,5 +579,60 @@ public class QueueServiceTests : IDisposable
 
         Assert.Single(queueService.GetCurrentQueue());
         _audioPlayerMock.Verify(a => a.Stop(), Times.Never);
+    }
+
+    [Fact]
+    public async Task AutoAdvance_SequenceOfMultipleTracks_AdvancesCorrectlyThroughEntireQueue()
+    {
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+        var t1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", 1, 2024, DateTime.UtcNow);
+        var t2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", 2, 2024, DateTime.UtcNow);
+        var t3 = new Track("t3", "Track 3", "ar1", "Artist", "al1", "Album", 180, "http://test/3.mp3", 3, 2024, DateTime.UtcNow);
+
+        await _dbContext.UpsertTrackAsync(t1);
+        await _dbContext.UpsertTrackAsync(t2);
+        await _dbContext.UpsertTrackAsync(t3);
+
+        queueService.EnqueueRange(new[] { t1, t2, t3 });
+
+        long currentSession = 100L;
+        _audioPlayerMock.Setup(a => a.Play(It.IsAny<string>(), It.IsAny<double>()))
+            .Returns(() => currentSession);
+
+        // Start playing track 1
+        queueService.PlayIndex(0);
+        Assert.Equal("t1", queueService.CurrentState.CurrentTrack?.Id);
+
+        // Track 1 ends naturally
+        currentSession = 200L;
+        var advancedToT2 = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _audioPlayerMock.Setup(a => a.Play("http://test/2.mp3", It.IsAny<double>()))
+            .Returns(() => currentSession)
+            .Callback(() => advancedToT2.TrySetResult());
+
+        _audioPlayerMock.Raise(a => a.TrackEnded += null, new TrackEndedEventArgs(100L, t1.SourceUri, isNaturalEnd: true));
+        await advancedToT2.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("t2", queueService.CurrentState.CurrentTrack?.Id);
+
+        // Track 2 ends naturally
+        currentSession = 300L;
+        var advancedToT3 = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _audioPlayerMock.Setup(a => a.Play("http://test/3.mp3", It.IsAny<double>()))
+            .Returns(() => currentSession)
+            .Callback(() => advancedToT3.TrySetResult());
+
+        _audioPlayerMock.Raise(a => a.TrackEnded += null, new TrackEndedEventArgs(200L, t2.SourceUri, isNaturalEnd: true));
+        await advancedToT3.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("t3", queueService.CurrentState.CurrentTrack?.Id);
+
+        // Track 3 ends naturally (end of queue with RepeatMode.None)
+        var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _audioPlayerMock.Setup(a => a.Stop()).Callback(() => stopped.TrySetResult());
+
+        _audioPlayerMock.Raise(a => a.TrackEnded += null, new TrackEndedEventArgs(300L, t3.SourceUri, isNaturalEnd: true));
+        await stopped.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal("t3", queueService.CurrentState.CurrentTrack?.Id);
+        _audioPlayerMock.Verify(a => a.Stop(), Times.Once);
     }
 }

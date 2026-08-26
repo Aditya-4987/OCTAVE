@@ -9,9 +9,8 @@ namespace Octave.Core.Models;
 public record Artist(
     string Id,
     string Name,
-    string? Bio,
-    string? ArtworkUrl,
-    bool IsLocal
+    string? Bio = null,
+    string? ArtworkUrl = null
 );
 
 public record ArtistDisplayItem(string? Id, string Name, string? ArtworkUrl);
@@ -22,8 +21,7 @@ public record Album(
     string ArtistId,
     string ArtistName,
     int Year,
-    string? ArtworkUrl,
-    string Provider
+    string? ArtworkUrl = null
 );
 
 public record Track(
@@ -34,8 +32,7 @@ public record Track(
     string AlbumId,
     string AlbumTitle,
     double DurationSeconds,
-    string SourceUri,       // Local absolute file path OR remote CDN URL
-    string Provider,        // "Local", "Qobuz", "Tidal", "YouTube"
+    string SourceUri,       // Local absolute file path
     int TrackNumber,
     int Year,
     DateTime DateAdded,
@@ -49,7 +46,6 @@ public record Playlist(
     string Title,
     string? Description,
     DateTime CreatedAt,
-    bool IsLocalOnly,
     int TrackCount = 0      // Hydrated dynamically by SQL COUNT()
 );
 

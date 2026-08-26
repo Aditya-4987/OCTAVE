@@ -138,4 +138,18 @@ public class LibraryService : ILibraryService
 
     public Task<SearchResults> SearchLibraryAsync(string query, int? limit = null) =>
         _dbContext.SearchLibraryAsync(query, limit);
+
+    public async Task ClearDatabaseAsync(bool preserveSettings = false)
+    {
+        var folders = await _dbContext.GetMonitoredFoldersAsync();
+        foreach (var folder in folders)
+        {
+            _scanner.RemoveMonitoredPath(folder);
+            _watcherService?.RemoveMonitoredPath(folder);
+        }
+
+        await _dbContext.ClearDatabaseAsync(preserveSettings);
+        LibraryUpdated?.Invoke(this, EventArgs.Empty);
+        FavoritesChanged?.Invoke(this, EventArgs.Empty);
+    }
 }

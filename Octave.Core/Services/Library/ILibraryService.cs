@@ -62,4 +62,5 @@ public interface ILibraryService
     Task RelocateTrackAsync(string oldTrackId, string newPath);
 
     Task<SearchResults> SearchLibraryAsync(string query, int? limit = null);
+    Task ClearDatabaseAsync(bool preserveSettings = false);
 }

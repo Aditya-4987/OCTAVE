@@ -331,7 +331,7 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
 
         string? artworkUrl = await ExtractHighestQualityArtworkAsync(tagFile, filePath);
 
-        var album = new Album(albumId, albumTitle, albumArtistId, albumArtistName, (int)tagFile.Tag.Year, artworkUrl, "Local");
+        var album = new Album(albumId, albumTitle, albumArtistId, albumArtistName, (int)tagFile.Tag.Year, artworkUrl);
 
         string trackTitle = string.IsNullOrWhiteSpace(tagFile.Tag.Title)
             ? Path.GetFileNameWithoutExtension(filePath)
@@ -353,7 +353,6 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
             albumTitle,
             tagFile.Properties.Duration.TotalSeconds,
             filePath,
-            "Local",
             (int)tagFile.Tag.Track,
             (int)tagFile.Tag.Year,
             dateAdded,
@@ -365,7 +364,7 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
         var artists = new System.Collections.Generic.List<Artist>();
         foreach (var aName in individualArtists)
         {
-            artists.Add(new Artist(IdGenerator.FromArtist(aName), aName, null, null, true));
+            artists.Add(new Artist(IdGenerator.FromArtist(aName), aName, null, null));
         }
 
         return new PreparedTrack(artists, album, track);
@@ -443,7 +442,7 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
                 // LIKE is case-insensitive for ASCII by default; a missed row can only
                 // fail SAFE (kept, never deleted). ESCAPE handles %/_/\ in real paths.
                 string likePattern = EscapeLikePrefix(normalizedRoot) + "%";
-                cmd.CommandText = "SELECT Id, SourceUri FROM Tracks WHERE Provider = 'Local' AND SourceUri LIKE @prefix ESCAPE '\\';";
+                cmd.CommandText = "SELECT Id, SourceUri FROM Tracks WHERE SourceUri LIKE @prefix ESCAPE '\\';";
                 cmd.Parameters.AddWithValue("@prefix", likePattern);
                 using (var reader = await cmd.ExecuteReaderAsync(ct))
                 {

@@ -131,7 +131,7 @@ public sealed partial class MainWindow : Window
                 "Artists" => typeof(Views.ArtistsPage),
                 "Playlists" => typeof(Views.PlaylistsPage),
                 "NowPlaying" => typeof(Views.NowPlayingPage),
-                "AudioFX" => typeof(Views.AudioFxPage),
+                "DownloadSongs" => typeof(Views.DownloadSongsPage),
                 _ => null
             };
 
@@ -194,7 +194,7 @@ public sealed partial class MainWindow : Window
         else if (ContentFrame.SourcePageType == typeof(Views.PlaylistsPage)) tag = "Playlists";
         else if (ContentFrame.SourcePageType == typeof(Views.PlaylistDetailPage)) tag = "Playlists";
         else if (ContentFrame.SourcePageType == typeof(Views.NowPlayingPage)) tag = "NowPlaying";
-        else if (ContentFrame.SourcePageType == typeof(Views.AudioFxPage)) tag = "AudioFX";
+        else if (ContentFrame.SourcePageType == typeof(Views.DownloadSongsPage)) tag = "DownloadSongs";
 
         if (tag != null)
         {

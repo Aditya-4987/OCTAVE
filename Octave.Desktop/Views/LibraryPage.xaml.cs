@@ -138,11 +138,6 @@ public sealed partial class LibraryPage : Page
         }
     }
 
-    public static string GetProviderGlyph(string provider)
-    {
-        return provider.Equals("Local", StringComparison.OrdinalIgnoreCase) ? "\uE770" : "\uE774";
-    }
-
     public static string FormatDuration(double seconds)
     {
         if (double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds < 0)

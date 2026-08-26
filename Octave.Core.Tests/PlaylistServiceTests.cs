@@ -38,7 +38,7 @@ public class PlaylistServiceTests : IDisposable
 
     private static Track MakeTrack(string id, int n) =>
         new(id, $"Song {id}", "ar" + id, $"Artist {id}", "al", "Shared Album", 180.0,
-            $"http://test/{id}.mp3", "web", n, 2024, DateTime.UtcNow);
+            $"http://test/{id}.mp3", n, 2024, DateTime.UtcNow);
 
     private async Task<Playlist> CreateWithTracksAsync(params string[] trackIds)
     {
