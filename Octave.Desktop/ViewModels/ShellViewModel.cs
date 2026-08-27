@@ -104,8 +104,22 @@ public partial class ShellViewModel : ObservableObject
     [ObservableProperty]
     public partial bool IsPlaying { get; set; }
 
-    [ObservableProperty]
-    public partial double PositionSeconds { get; set; }
+    private double _positionSeconds;
+    public double PositionSeconds
+    {
+        get => _positionSeconds;
+        set
+        {
+            double safe = value;
+            if (double.IsNaN(safe) || double.IsInfinity(safe) || safe < 0) safe = 0.0;
+            else if (DurationSeconds > 0 && safe > DurationSeconds) safe = DurationSeconds;
+
+            if (Math.Abs(_positionSeconds - safe) > 0.0001)
+            {
+                SetProperty(ref _positionSeconds, safe);
+            }
+        }
+    }
 
     [ObservableProperty]
     public partial double DurationSeconds { get; set; }
@@ -229,6 +243,7 @@ public partial class ShellViewModel : ObservableObject
         if (_isRefreshingQueue) return;
         if (e.Action == NotifyCollectionChangedAction.Move)
         {
+            _lastQueueSignature = string.Join("|", QueueItems.Select(i => i.Id));
             _queueService.Reorder(e.OldStartingIndex, e.NewStartingIndex);
         }
     }
@@ -936,11 +951,11 @@ public partial class ShellViewModel : ObservableObject
         }
 
         IsPlaying = state.Status == PlaybackStatus.Playing;
+        DurationSeconds = state.DurationSeconds > 0 ? state.DurationSeconds : (state.CurrentTrack?.DurationSeconds ?? 0);
         if (!IsDragging)
         {
             PositionSeconds = state.PositionSeconds;
         }
-        DurationSeconds = state.DurationSeconds;
         IsShuffle = state.IsShuffle;
         RepeatMode = state.RepeatMode;
         OnPropertyChanged(nameof(Volume));

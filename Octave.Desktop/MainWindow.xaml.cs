@@ -70,6 +70,7 @@ public sealed partial class MainWindow : Window
                         NavView.IsPaneOpen = true;
                     }
                 }
+                UpdateBottomBarButtonsState();
             }
         };
 
@@ -214,6 +215,25 @@ public sealed partial class MainWindow : Window
         if (SidebarQueuePanel != null) SidebarQueuePanel.Visibility = index == 1 ? Visibility.Visible : Visibility.Collapsed;
         if (SidebarLyricsPanelContainer != null) SidebarLyricsPanelContainer.Visibility = index == 2 ? Visibility.Visible : Visibility.Collapsed;
         UpdateSidebarTabStyles(index);
+        UpdateBottomBarButtonsState();
+    }
+
+    private void UpdateBottomBarButtonsState()
+    {
+        bool isOpen = ViewModel.IsNowPlayingOpen;
+        if (BottomQueueBtn?.Content is FontIcon queueIcon)
+        {
+            queueIcon.Foreground = (isOpen && _selectedSidebarTabIndex == 1)
+                ? (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"]
+                : ThemedBrush("TextFillColorPrimaryBrush", Windows.UI.Color.FromArgb(255, 255, 255, 255));
+        }
+
+        if (BottomLyricsBtn?.Content is FontIcon lyricsIcon)
+        {
+            lyricsIcon.Foreground = (isOpen && _selectedSidebarTabIndex == 2)
+                ? (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"]
+                : ThemedBrush("TextFillColorPrimaryBrush", Windows.UI.Color.FromArgb(255, 255, 255, 255));
+        }
     }
 
     private void TrackDetails_Click(object sender, RoutedEventArgs e)

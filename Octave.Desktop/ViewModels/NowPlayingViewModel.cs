@@ -54,8 +54,22 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     public partial string? CurrentArtworkUrl { get; set; }
 
-    [ObservableProperty]
-    public partial double PositionSeconds { get; set; }
+    private double _positionSeconds;
+    public double PositionSeconds
+    {
+        get => _positionSeconds;
+        set
+        {
+            double safe = value;
+            if (double.IsNaN(safe) || double.IsInfinity(safe) || safe < 0) safe = 0.0;
+            else if (DurationSeconds > 0 && safe > DurationSeconds) safe = DurationSeconds;
+
+            if (Math.Abs(_positionSeconds - safe) > 0.0001)
+            {
+                SetProperty(ref _positionSeconds, safe);
+            }
+        }
+    }
 
     [ObservableProperty]
     public partial double DurationSeconds { get; set; }
@@ -140,6 +154,8 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
 
         _dispatcher = DispatcherQueue.GetForCurrentThread();
+
+        UpNextQueue.CollectionChanged += OnUpNextQueueChanged;
 
         SubscribeEvents();
         RefreshState();
@@ -247,8 +263,8 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
 
         CurrentTrack = state.CurrentTrack;
         IsPlaying = state.Status == PlaybackStatus.Playing;
-        PositionSeconds = state.PositionSeconds;
         DurationSeconds = state.DurationSeconds > 0 ? state.DurationSeconds : (state.CurrentTrack?.DurationSeconds ?? 0);
+        PositionSeconds = state.PositionSeconds;
         QualityDetails = _audioPlayer.QualityDetails;
 
         if (state.CurrentTrack != null)
@@ -750,13 +766,45 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
         CurrentLyricIndex = Octave.Core.Services.Metadata.LyricsService.FindActiveLineIndex(SyncedLines, currentPos);
     }
 
+    private bool _isRefreshingUpNextQueue;
+
+    private void OnUpNextQueueChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    {
+        if (_isRefreshingUpNextQueue) return;
+        if (e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Move)
+        {
+            var fullQueue = _queueService.GetCurrentQueue();
+            int playingIdx = -1;
+            for (int i = 0; i < fullQueue.Count; i++)
+            {
+                if (fullQueue[i].IsPlaying || fullQueue[i].Track.Id == CurrentTrack?.Id)
+                {
+                    playingIdx = i;
+                    break;
+                }
+            }
+            int startIdx = (playingIdx >= 0) ? playingIdx : 0;
+            int actualOldIdx = startIdx + e.OldStartingIndex;
+            int actualNewIdx = startIdx + e.NewStartingIndex;
+            _queueService.Reorder(actualOldIdx, actualNewIdx);
+        }
+    }
+
     private void RefreshUpNextQueue()
     {
         var fullQueue = _queueService.GetCurrentQueue();
 
         if (fullQueue == null || fullQueue.Count == 0)
         {
-            UpNextQueue.Clear();
+            _isRefreshingUpNextQueue = true;
+            try
+            {
+                UpNextQueue.Clear();
+            }
+            finally
+            {
+                _isRefreshingUpNextQueue = false;
+            }
             IsQueuePanelVisible = false;
             return;
         }
@@ -790,10 +838,18 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
             }
         }
 
-        UpNextQueue.Clear();
-        for (int i = startIdx; i < fullQueue.Count; i++)
+        _isRefreshingUpNextQueue = true;
+        try
         {
-            UpNextQueue.Add(fullQueue[i]);
+            UpNextQueue.Clear();
+            for (int i = startIdx; i < fullQueue.Count; i++)
+            {
+                UpNextQueue.Add(fullQueue[i]);
+            }
+        }
+        finally
+        {
+            _isRefreshingUpNextQueue = false;
         }
 
         // NP-19: the visible window was rebuilt - resolve artwork for rows that

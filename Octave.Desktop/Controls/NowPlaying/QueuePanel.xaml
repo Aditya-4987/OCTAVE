@@ -72,6 +72,9 @@
                       ScrollViewer.VerticalScrollMode="Enabled"
                       SelectionMode="None"
                       IsItemClickEnabled="True"
+                      CanReorderItems="True"
+                      CanDragItems="True"
+                      AllowDrop="True"
                       ItemClick="QueueListView_ItemClick">
                 <ListView.ItemsPanel>
                     <ItemsPanelTemplate>
