@@ -243,6 +243,9 @@ public static class WindowsAudioDeviceHelper
                     _lastQueryFailed = true;
                     System.Diagnostics.Debug.WriteLine($"[WindowsAudioDeviceHelper] Query failed (cached {CacheTtl.TotalSeconds:0}s): {ex.Message}");
                 }
+                var fallback = GetBassDeviceFallback();
+                _cachedDeviceDetails = fallback;
+                return fallback;
             }
         }
         finally
@@ -255,6 +258,23 @@ public static class WindowsAudioDeviceHelper
         }
 #pragma warning restore CA1416
 
-        return ("Default Audio Device", "Unknown", 44.1, 16);
+        return GetBassDeviceFallback();
+    }
+
+    private static (string Name, string Format, double SampleRateKhz, ushort BitDepth) GetBassDeviceFallback()
+    {
+        try
+        {
+            for (int i = 1; ManagedBass.Bass.GetDeviceInfo(i, out var info); i++)
+            {
+                if (info.IsDefault && info.IsEnabled)
+                {
+                    string name = info.Name ?? "Default Audio Device";
+                    return (name, "Standard (44.1 kHz / 16-bit)", 44.1, 16);
+                }
+            }
+        }
+        catch { }
+        return ("Default Audio Device", "Standard (44.1 kHz / 16-bit)", 44.1, 16);
     }
 }

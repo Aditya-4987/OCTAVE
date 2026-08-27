@@ -72,9 +72,10 @@
                             <FontIcon Glyph="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="12"
                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                         </Button>
-                        <!-- NF-26: undo any +/- nudges back to 0 in one click. -->
+                        <!-- NF-26: undo any +/- nudges back to 0 in one click; visible only when OffsetMs != 0. -->
                         <Button x:Name="ResetOffsetButton"
                                 Click="ResetOffsetButton_Click"
+                                Visibility="Collapsed"
                                 Background="Transparent"
                                 BorderBrush="Transparent"
                                 Padding="7,3,7,3"
@@ -84,33 +85,39 @@
                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                         </Button>
                     </StackPanel>
-
-                    <!-- Copy button: always accessible when lyrics exist -->
-                    <Button x:Name="CopyLyricsButton"
-                            Click="CopyLyricsButton_Click"
-                            Background="Transparent"
-                            BorderBrush="Transparent"
-                            Padding="7,3,7,3"
-                            CornerRadius="6"
-                            Margin="6,0,0,0"
-                            ToolTipService.ToolTip="Copy lyrics to clipboard">
-                        <FontIcon Glyph="&#xE8C8;" FontFamily="Segoe MDL2 Assets" FontSize="12"
-                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                    </Button>
                 </StackPanel>
             </Grid>
 
             <Grid Grid.Row="1" VerticalAlignment="Stretch">
-                <!-- Loading State -->
+                <!-- Loading / Resolving State -->
                 <StackPanel x:Name="LoadingContainer" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="12" Visibility="Collapsed">
                     <ProgressRing IsActive="True" Width="36" Height="36" />
-                    <TextBlock Text="Searching lyrics..." Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="14" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Finding lyrics..." Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="14" HorizontalAlignment="Center"/>
                 </StackPanel>
 
-                <!-- Unavailable State -->
-                <StackPanel x:Name="UnavailableContainer" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8" Visibility="Collapsed">
+                <!-- Unavailable State (404 / no match) -->
+                <StackPanel x:Name="UnavailableContainer" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="12" Visibility="Collapsed">
                     <FontIcon Glyph="&#xE8D6;" FontFamily="Segoe MDL2 Assets" FontSize="32" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Center"/>
                     <TextBlock Text="Lyrics unavailable" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                    <Button Click="ReloadLyricsButton_Click"
+                            Content="Reload Lyrics"
+                            FontSize="12"
+                            Padding="12,6"
+                            CornerRadius="6"
+                            HorizontalAlignment="Center" />
+                </StackPanel>
+
+                <!-- Network Unavailable State (Timeout / Connection error) -->
+                <StackPanel x:Name="NetworkUnavailableContainer" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="12" Visibility="Collapsed">
+                    <FontIcon Glyph="&#xEB55;" FontFamily="Segoe MDL2 Assets" FontSize="32" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Couldn't reach lyrics provider" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Check your network connection and try again" Foreground="{ThemeResource TextFillColorTertiaryBrush}" FontSize="12" HorizontalAlignment="Center"/>
+                    <Button Click="ReloadLyricsButton_Click"
+                            Content="Try Again"
+                            FontSize="12"
+                            Padding="12,6"
+                            CornerRadius="6"
+                            HorizontalAlignment="Center" />
                 </StackPanel>
 
                 <!-- Unsynced Lyrics View -->
@@ -119,11 +126,20 @@
                               VerticalScrollMode="Enabled"
                               HorizontalScrollMode="Disabled"
                               Visibility="Collapsed">
-                    <TextBlock x:Name="UnsyncedTextBlock"
-                               FontSize="18"
-                               LineHeight="30"
-                               Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                               TextWrapping="Wrap"/>
+                    <StackPanel Spacing="16">
+                        <TextBlock x:Name="UnsyncedTextBlock"
+                                   FontSize="18"
+                                   LineHeight="30"
+                                   Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                   TextWrapping="Wrap"/>
+                        <TextBlock x:Name="UnsyncedSourceCommentTextBlock"
+                                   FontSize="12"
+                                   FontStyle="Italic"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                   HorizontalAlignment="Left"
+                                   Margin="0,8,0,16"
+                                   Visibility="Collapsed"/>
+                    </StackPanel>
                 </ScrollViewer>
 
                 <!-- Synced Lyrics View.
@@ -139,18 +155,27 @@
                               ViewChanged="SyncedScrollViewer_ViewChanged"
                               PointerWheelChanged="SyncedScrollViewer_PointerWheelChanged"
                               Visibility="Collapsed">
-                    <ItemsControl x:Name="SyncedItemsControl">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="models:LyricLine">
-                                <TextBlock Text="{x:Bind Text}"
-                                           FontSize="18"
-                                           FontWeight="Medium"
-                                           Margin="0,8,0,8"
-                                           TextWrapping="Wrap"
-                                           Loaded="LyricLineTextBlock_Loaded"/>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
+                    <StackPanel Spacing="8">
+                        <ItemsControl x:Name="SyncedItemsControl">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="models:LyricLine">
+                                    <TextBlock Text="{x:Bind Text}"
+                                               FontSize="18"
+                                               FontWeight="Medium"
+                                               Margin="0,8,0,8"
+                                               TextWrapping="Wrap"
+                                               Loaded="LyricLineTextBlock_Loaded"/>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock x:Name="SyncedSourceCommentTextBlock"
+                                   FontSize="12"
+                                   FontStyle="Italic"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                   HorizontalAlignment="Left"
+                                   Margin="0,16,0,16"
+                                   Visibility="Collapsed"/>
+                    </StackPanel>
                 </ScrollViewer>
             </Grid>
         </Grid>

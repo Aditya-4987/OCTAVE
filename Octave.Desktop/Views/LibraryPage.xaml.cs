@@ -81,6 +81,154 @@ public sealed partial class LibraryPage : Page
 
     public Visibility VisibleWhen(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
 
+    public Visibility NormalHeaderVisibility(bool isSelectionMode) =>
+        isSelectionMode ? Visibility.Collapsed : Visibility.Visible;
+
+    public Visibility SelectionHeaderVisibility(bool isSelectionMode) =>
+        isSelectionMode ? Visibility.Visible : Visibility.Collapsed;
+
+    public ListViewSelectionMode ResolveSelectionMode(bool isSelectionMode) =>
+        isSelectionMode ? ListViewSelectionMode.Multiple : ListViewSelectionMode.None;
+
+    public bool IsClickEnabled(bool isSelectionMode) => !isSelectionMode;
+
+    private void ToggleSelectionMode_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.IsSelectionMode)
+        {
+            try { TracksListView.SelectedItems?.Clear(); } catch { }
+            ViewModel.IsSelectionMode = false;
+        }
+        else
+        {
+            ViewModel.IsSelectionMode = true;
+        }
+    }
+
+    private void ExitSelectionMode_Click(object sender, RoutedEventArgs e)
+    {
+        try { TracksListView.SelectedItems?.Clear(); } catch { }
+        ViewModel.IsSelectionMode = false;
+    }
+
+    private void SelectAll_Click(object sender, RoutedEventArgs e)
+    {
+        if (TracksListView.SelectionMode == ListViewSelectionMode.None) return;
+        if (TracksListView.SelectedItems.Count >= ViewModel.Items.Count && ViewModel.Items.Count > 0)
+        {
+            try { TracksListView.SelectedItems.Clear(); } catch { }
+        }
+        else
+        {
+            try { TracksListView.SelectAll(); } catch { }
+        }
+    }
+
+    private void TracksListView_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        int count = TracksListView.SelectedItems.Count;
+        if (SelectedCountTextBlock != null)
+        {
+            SelectedCountTextBlock.Text = count == 1 ? "1 song selected" : $"{count} songs selected";
+        }
+        if (PlaySelectedBtn != null) PlaySelectedBtn.IsEnabled = count > 0;
+        if (QueueSelectedBtn != null) QueueSelectedBtn.IsEnabled = count > 0;
+        if (PlaylistSelectedBtn != null) PlaylistSelectedBtn.IsEnabled = count > 0;
+    }
+
+    private void PlaySelected_Click(object sender, RoutedEventArgs e)
+    {
+        var tracks = TracksListView.SelectedItems.OfType<LibraryTrackItem>().Select(i => i.Track).ToList();
+        if (tracks.Count > 0)
+        {
+            ViewModel.PlaySelectedTracks(tracks);
+            try { TracksListView.SelectedItems?.Clear(); } catch { }
+            ViewModel.IsSelectionMode = false;
+        }
+    }
+
+    private void AddSelectedToQueue_Click(object sender, RoutedEventArgs e)
+    {
+        var tracks = TracksListView.SelectedItems.OfType<LibraryTrackItem>().Select(i => i.Track).ToList();
+        if (tracks.Count > 0)
+        {
+            ViewModel.AddSelectedTracksToQueue(tracks);
+            try { TracksListView.SelectedItems?.Clear(); } catch { }
+            ViewModel.IsSelectionMode = false;
+        }
+    }
+
+    private async void AddSelectedToPlaylist_Click(object sender, RoutedEventArgs e)
+    {
+        var tracks = TracksListView.SelectedItems.OfType<LibraryTrackItem>().Select(i => i.Track).ToList();
+        if (tracks.Count == 0) return;
+
+        if (sender is FrameworkElement fe)
+        {
+            var playlists = await ViewModel.GetPlaylistsAsync();
+            var flyout = new MenuFlyout();
+
+            var newPlaylistItem = new MenuFlyoutItem { Text = "+ New Playlist..." };
+            newPlaylistItem.Click += async (s, a) =>
+            {
+                await PromptCreatePlaylistWithTracksAsync(tracks);
+            };
+            flyout.Items.Add(newPlaylistItem);
+
+            if (playlists.Count > 0)
+            {
+                flyout.Items.Add(new MenuFlyoutSeparator());
+                foreach (var pl in playlists)
+                {
+                    var item = new MenuFlyoutItem { Text = pl.Title };
+                    item.Click += async (s, a) =>
+                    {
+                        try { TracksListView.SelectedItems?.Clear(); } catch { }
+                        ViewModel.IsSelectionMode = false;
+                        await ViewModel.AddSelectedTracksToPlaylistAsync(pl.Id, tracks);
+                    };
+                    flyout.Items.Add(item);
+                }
+            }
+
+            flyout.ShowAt(fe);
+        }
+    }
+
+    private async Task PromptCreatePlaylistWithTracksAsync(System.Collections.Generic.List<Track> tracks)
+    {
+        try
+        {
+            if (this.XamlRoot is null) return;
+
+            var input = new TextBox { PlaceholderText = "Playlist name" };
+            var dialog = new ContentDialog
+            {
+                Title = "New Playlist",
+                Content = input,
+                PrimaryButtonText = "Create",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Primary,
+                IsPrimaryButtonEnabled = false,
+                XamlRoot = this.XamlRoot
+            };
+            input.TextChanged += (s, args) =>
+                dialog.IsPrimaryButtonEnabled = !string.IsNullOrWhiteSpace(input.Text);
+
+            var result = await dialog.ShowAsync();
+            if (result == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(input.Text))
+            {
+                await ViewModel.CreatePlaylistWithTracksAsync(input.Text, tracks);
+                ViewModel.IsSelectionMode = false;
+                TracksListView.SelectedItems.Clear();
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Library] Create playlist with tracks failed: {ex}");
+        }
+    }
+
     private void ListView_ItemClick(object sender, ItemClickEventArgs e)
     {
         if (e.ClickedItem is LibraryTrackItem item)
@@ -135,6 +283,15 @@ public sealed partial class LibraryPage : Page
             {
                 ViewModel.PlayTrackCommand.Execute(item.Track);
             }
+        }
+    }
+
+    private async void FavoriteButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button btn && btn.DataContext is LibraryTrackItem item)
+        {
+            bool newFav = await ViewModel.ToggleFavoriteAsync(item.Track.Id);
+            item.IsFavorite = newFav;
         }
     }
 

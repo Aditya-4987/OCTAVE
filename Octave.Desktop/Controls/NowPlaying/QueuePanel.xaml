@@ -74,7 +74,7 @@
                              play button flips to a pause glyph (NP-21). Both re-evaluate
                              live because QueueItem.IsPlaying raises PropertyChanged. -->
                         <Grid Padding="8,8,4,8"
-                              ColumnDefinitions="Auto,Auto,*,Auto,Auto"
+                              ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto"
                               CornerRadius="10"
                               Background="{Binding IsPlaying, Converter={StaticResource QueuePlayStateBrushConverter}, ConverterParameter=Background}">
                             <!-- Play / Pause Button (NP-21) -->
@@ -92,15 +92,13 @@
                             </Button>
 
                             <!-- Artwork (NP-19: binds the album artwork token resolved by
-                                 the view model - NOT Track.SourceUri, which is the audio
-                                 file path and always rendered as placeholder). -->
+                                 the view model - NOT Track.SourceUri, technical audio path). -->
                             <Border Grid.Column="1" CornerRadius="6" Width="40" Height="40" Margin="0,0,12,0" Background="{ThemeResource LayerFillColorDefaultBrush}">
                                 <Image Source="{x:Bind ArtworkUrl, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=40, Mode=OneWay}" Stretch="UniformToFill"/>
                             </Border>
 
                             <!-- Track Info -->
                             <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="2">
-                                <!-- MC-06: were hardcoded White / #888888 -->
                                 <TextBlock Text="{x:Bind Track.Title}" FontSize="14" FontWeight="Medium" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis"/>
                                 <TextBlock Text="{x:Bind Track.ArtistName}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis"/>
                             </StackPanel>
@@ -113,8 +111,20 @@
                                        VerticalAlignment="Center"
                                        Margin="12,0,4,0"/>
 
-                            <!-- UI-NP-02: per-row remove, mirroring the sidebar queue -->
+                            <!-- Favorite Button -->
                             <Button Grid.Column="4"
+                                    Click="ItemFavoriteButton_Click"
+                                    Loaded="ItemFavoriteButton_Loaded"
+                                    DataContextChanged="ItemFavoriteButton_DataContextChanged"
+                                    Style="{StaticResource GhostIconButtonStyle}"
+                                    ToolTipService.ToolTip="Favorite"
+                                    VerticalAlignment="Center">
+                                <FontIcon Glyph="&#xEB51;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                          Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                            </Button>
+
+                            <!-- UI-NP-02: per-row remove, mirroring the sidebar queue -->
+                            <Button Grid.Column="5"
                                     Click="ItemRemoveButton_Click"
                                     Style="{StaticResource GhostIconButtonStyle}"
                                     ToolTipService.ToolTip="Remove from queue"

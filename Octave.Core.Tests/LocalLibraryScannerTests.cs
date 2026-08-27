@@ -152,6 +152,22 @@ public class LocalLibraryScannerTests : IDisposable
     }
 
     [Fact]
+    public void ParseArtistNames_Compilation_PerformerDoesNotIncludeAlbumArtist()
+    {
+        string path = Path.Combine(_tempDir, "comp_track.mp3");
+        WriteTaggedFile(path, "Rolling in the Deep", "Adele", "Grammy Nominees 2012", 1, albumArtist: "Various Artists");
+        using var tagFile = TagLib.File.Create(path);
+
+        var (individuals, display, primary, albumArtist) = LocalLibraryScanner.ParseArtistNames(tagFile);
+
+        var individual = Assert.Single(individuals);
+        Assert.Equal("Adele", individual);
+        Assert.Equal("Adele", primary);
+        Assert.Equal("Adele", display);
+        Assert.Equal("Various Artists", albumArtist);
+    }
+
+    [Fact]
     public async Task ScanAsync_CompilationTracks_GroupUnderSingleAlbum()
     {
         // Different track performers, shared "Various Artists" album-artist tag:

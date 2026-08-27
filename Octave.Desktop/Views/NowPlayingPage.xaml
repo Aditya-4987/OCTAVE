@@ -39,7 +39,9 @@
                                   AlbumTitle="{x:Bind ViewModel.AlbumTitle, Mode=OneWay}"
                                   ArtworkUrl="{x:Bind ViewModel.CurrentArtworkUrl, Mode=OneWay}"
                                   IsPlaying="{x:Bind ViewModel.IsPlaying, Mode=OneWay}"
-                                  PlayPauseRequested="AlbumPanelControl_PlayPauseRequested"/>
+                                  IsFavorite="{x:Bind ViewModel.IsCurrentTrackFavorite, Mode=OneWay}"
+                                  PlayPauseRequested="AlbumPanelControl_PlayPauseRequested"
+                                  FavoriteRequested="AlbumPanelControl_FavoriteRequested"/>
 
                 <!-- Lyrics Panel. NP-07: the AlbumPanelTransform TranslateTransform was
                      deleted - it was never animated to a non-zero value, and the
@@ -57,6 +59,9 @@
                                 SelectedMode="{x:Bind ViewModel.SelectedLyricMode, Mode=OneWay}"
                                 HasSyncedLyrics="{x:Bind ViewModel.HasSyncedLyrics, Mode=OneWay}"
                                 HasPlainLyrics="{x:Bind ViewModel.HasPlainLyrics, Mode=OneWay}"
+                                LyricsSource="{x:Bind ViewModel.LyricsSource, Mode=OneWay}"
+                                ReloadLyricsCommand="{x:Bind ViewModel.ReloadLyricsCommand, Mode=OneWay}"
+                                IsReloading="{x:Bind ViewModel.IsReloadingLyrics, Mode=OneWay}"
                                 OffsetChangeRequested="LyricsPanelControl_OffsetChangeRequested"
                                 LyricModeChangeRequested="LyricsPanelControl_LyricModeChangeRequested">
                     <np:LyricsPanel.RenderTransform>
@@ -85,7 +90,12 @@
                                  AlbumTitle="{x:Bind ViewModel.AlbumTitle, Mode=OneWay}"
                                  AlbumArtworkUrl="{x:Bind ViewModel.AlbumArtworkUrl, Mode=OneWay}"
                                  AlbumYear="{x:Bind ViewModel.AlbumYear, Mode=OneWay}"
-                                 QualityDetails="{x:Bind ViewModel.QualityDetails, Mode=OneWay}"/>
+                                 QualityDetails="{x:Bind ViewModel.QualityDetails, Mode=OneWay}"
+                                 TrackGenre="{x:Bind ViewModel.TrackGenre, Mode=OneWay}"
+                                 TrackNumber="{x:Bind ViewModel.TrackNumber, Mode=OneWay}"
+                                 DiscNumber="{x:Bind ViewModel.DiscNumber, Mode=OneWay}"
+                                 ReplayGain="{x:Bind ViewModel.ReplayGain, Mode=OneWay}"
+                                 SourceUri="{x:Bind ViewModel.SourceUri, Mode=OneWay}"/>
 
                 <!-- Up Next Queue Panel -->
                 <np:QueuePanel Grid.Column="1"

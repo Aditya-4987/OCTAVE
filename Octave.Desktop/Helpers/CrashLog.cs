@@ -17,7 +17,7 @@ public static class CrashLog
         try
         {
             string dir = _logDir ??= Path.Combine(
-                Windows.Storage.ApplicationData.Current.LocalFolder.Path, "logs");
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Octave", "logs");
             lock (Gate)
             {
                 Directory.CreateDirectory(dir);

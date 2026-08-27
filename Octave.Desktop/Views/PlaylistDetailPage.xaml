@@ -36,17 +36,56 @@
                 <TextBlock Text="{x:Bind ViewModel.Title, Mode=OneWay}" FontSize="64" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextWrapping="Wrap" Margin="0,8,0,8" />
                 <TextBlock Text="{x:Bind ViewModel.Subtitle, Mode=OneWay}" FontSize="16" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Margin="0,0,0,24" />
 
-                <StackPanel Orientation="Horizontal" Spacing="24" VerticalAlignment="Center">
-                    <Button Command="{x:Bind ViewModel.PlayAllCommand}" Style="{StaticResource PrimaryPlayButtonStyle}">
+                <StackPanel Orientation="Horizontal" Spacing="16" VerticalAlignment="Center">
+                    <Button Command="{x:Bind ViewModel.PlayAllCommand}" Style="{StaticResource PrimaryPlayButtonStyle}" ToolTipService.ToolTip="Play All">
                         <FontIcon Glyph="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="24" />
+                    </Button>
+                    <Button Click="AddSongs_Click" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Add songs to playlist">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE710;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="18" />
+                            <TextBlock Text="Add Songs" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <Button Click="ToggleSelectMode_Click" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Select tracks">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE762;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="18" />
+                            <TextBlock Text="Select" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                        </StackPanel>
                     </Button>
                     <Button Click="DeletePlaylist_Click" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Delete Playlist">
                         <FontIcon Glyph="&#xE74D;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="20" />
                     </Button>
-                    <Button Click="BackButton_Click" Style="{StaticResource GhostIconButtonStyle}">
+                    <Button Click="BackButton_Click" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Go Back">
                         <FontIcon Glyph="&#xE72B;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="20" />
                     </Button>
                 </StackPanel>
+            </StackPanel>
+        </Grid>
+
+        <!-- Selection Mode Action Bar -->
+        <Grid Grid.Row="1" Visibility="{x:Bind SelectionBarVisibility(ViewModel.IsSelectionMode), Mode=OneWay}" Margin="0,0,0,12" VerticalAlignment="Top" Height="44">
+            <TextBlock x:Name="SelectedCountTextBlock" Text="0 songs selected" FontSize="18" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" VerticalAlignment="Center" />
+            <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" VerticalAlignment="Center">
+                <Button x:Name="PlaySelectedBtn" Click="PlaySelected_Click" Style="{StaticResource PrimaryPlayButtonStyle}" Height="36" Width="Auto" Padding="16,0" CornerRadius="18">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon Glyph="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="12" />
+                        <TextBlock Text="Play" />
+                    </StackPanel>
+                </Button>
+                <Button x:Name="QueueSelectedBtn" Click="AddSelectedToQueue_Click" Style="{StaticResource GhostIconButtonStyle}">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon Glyph="&#xE8FD;" FontFamily="Segoe MDL2 Assets" FontSize="13" />
+                        <TextBlock Text="Add to Queue" />
+                    </StackPanel>
+                </Button>
+                <Button x:Name="RemoveSelectedBtn" Click="RemoveSelected_Click" Style="{StaticResource GhostIconButtonStyle}">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon Glyph="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="13" />
+                        <TextBlock Text="Remove" />
+                    </StackPanel>
+                </Button>
+                <Button Content="Select All" Click="SelectAll_Click" Style="{StaticResource GhostIconButtonStyle}" />
+                <Button Content="Done" Click="ExitSelectMode_Click" Style="{StaticResource GhostIconButtonStyle}" />
             </StackPanel>
         </Grid>
 
@@ -54,10 +93,14 @@
         <ListView Grid.Row="1"
                   x:Name="TrackList"
                   ItemsSource="{x:Bind ViewModel.Tracks, Mode=OneWay}"
-                  IsItemClickEnabled="True"
+                  IsItemClickEnabled="{x:Bind IsClickEnabled(ViewModel.IsSelectionMode), Mode=OneWay}"
                   ItemClick="ListView_ItemClick"
-                  CanReorderItems="True" AllowDrop="True" CanDragItems="True"
-                  SelectionMode="None">
+                  CanReorderItems="{x:Bind CanReorder(ViewModel.IsSelectionMode), Mode=OneWay}"
+                  AllowDrop="{x:Bind CanReorder(ViewModel.IsSelectionMode), Mode=OneWay}"
+                  CanDragItems="{x:Bind CanReorder(ViewModel.IsSelectionMode), Mode=OneWay}"
+                  SelectionMode="{x:Bind ResolveSelectionMode(ViewModel.IsSelectionMode), Mode=OneWay}"
+                  SelectionChanged="TrackList_SelectionChanged"
+                  Margin="{x:Bind TrackListMargin(ViewModel.IsSelectionMode), Mode=OneWay}">
             <ListView.ItemTemplate>
                 <DataTemplate x:DataType="models:Track">
                     <Grid Padding="16,8" Background="Transparent" Height="56" RightTapped="TrackRow_RightTapped" CornerRadius="4" Margin="0,0,0,4">
@@ -66,6 +109,7 @@
                             <ColumnDefinition Width="2*" />
                             <ColumnDefinition Width="1*" />
                             <ColumnDefinition Width="80" />
+                            <ColumnDefinition Width="40" />
                             <ColumnDefinition Width="40" />
                         </Grid.ColumnDefinitions>
 
@@ -84,8 +128,22 @@
 
                         <TextBlock Grid.Column="3" Text="{x:Bind local:PlaylistDetailPage.FormatDuration(DurationSeconds)}" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Right" Margin="0,0,8,0" />
 
+                        <!-- Favorite Button -->
+                        <Button Grid.Column="4"
+                                Click="FavoriteButton_Click"
+                                Loaded="FavoriteButton_Loaded"
+                                DataContextChanged="FavoriteButton_DataContextChanged"
+                                Background="Transparent"
+                                BorderBrush="Transparent"
+                                Padding="4"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                ToolTipService.ToolTip="Favorite">
+                            <FontIcon Glyph="&#xEB51;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                        </Button>
+
                         <!-- More Menu -->
-                        <Button Grid.Column="4" 
+                        <Button Grid.Column="5" 
                                 Background="Transparent" 
                                 BorderBrush="Transparent" 
                                 Padding="4"

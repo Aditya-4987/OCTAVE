@@ -20,6 +20,7 @@ public interface IPlaylistService
     Task RenamePlaylistAsync(string id, string title);
 
     Task AddTrackAsync(string playlistId, string trackId);
+    Task AddTracksAsync(string playlistId, IEnumerable<string> trackIds);
     Task RemoveTrackAsync(string playlistId, string trackId);
     Task RemoveTrackEntryAsync(string entryId);
     Task SetOrderAsync(string playlistId, IReadOnlyList<string> orderedTrackOrEntryIds);

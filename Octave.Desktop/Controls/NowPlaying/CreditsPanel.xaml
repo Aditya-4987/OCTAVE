@@ -117,5 +117,45 @@
                 </Grid>
             </StackPanel>
         </Border>
+
+        <!-- Tile 4: Track & Tag Properties -->
+        <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="14"
+                Padding="18">
+            <StackPanel Spacing="14">
+                <TextBlock Text="TRACK &amp; TAG PROPERTIES" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" CharacterSpacing="80"/>
+
+                <Grid ColumnDefinitions="*,*">
+                    <StackPanel Grid.Column="0" Spacing="4">
+                        <TextBlock Text="GENRE" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        <TextBlock Text="{x:Bind GenreDisplay(TrackGenre), Mode=OneWay}" FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Spacing="4">
+                        <TextBlock Text="TRACK / DISC" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        <TextBlock Text="{x:Bind TrackAndDiscText(TrackNumber, DiscNumber), Mode=OneWay}" FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
+                    </StackPanel>
+                </Grid>
+
+                <Grid ColumnDefinitions="*,*">
+                    <StackPanel Grid.Column="0" Spacing="4">
+                        <TextBlock Text="REPLAYGAIN" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        <TextBlock Text="{x:Bind ReplayGainDisplay(ReplayGain), Mode=OneWay}" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Spacing="4">
+                        <TextBlock Text="BIT DEPTH / CHANNELS" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        <TextBlock Text="{x:Bind BitDepthAndChannelsText(QualityDetails), Mode=OneWay}" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    </StackPanel>
+                </Grid>
+
+                <StackPanel Spacing="4" Visibility="{x:Bind HasTextVisibility(SourceUri), Mode=OneWay}">
+                    <TextBlock Text="FILE LOCATION" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    <TextBlock Text="{x:Bind SourceUri, Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextWrapping="Wrap"/>
+                </StackPanel>
+            </StackPanel>
+        </Border>
     </StackPanel>
 </UserControl>

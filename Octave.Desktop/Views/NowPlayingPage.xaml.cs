@@ -56,7 +56,6 @@ public sealed partial class NowPlayingPage : Page
         }
         _currentLyricsAnimation?.Stop();
         _currentQueueAnimation?.Stop();
-        ViewModel.Dispose();
     }
 
     private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -246,6 +245,11 @@ public sealed partial class NowPlayingPage : Page
     private void AlbumPanelControl_PlayPauseRequested(object sender, RoutedEventArgs e)
     {
         ViewModel.TogglePlayPauseCommand.Execute(null);
+    }
+
+    private void AlbumPanelControl_FavoriteRequested(object sender, RoutedEventArgs e)
+    {
+        _ = ViewModel.ToggleCurrentTrackFavoriteCommand.ExecuteAsync(null);
     }
 
     private void QueuePanelControl_PlayItemRequested(object sender, QueueItem item)

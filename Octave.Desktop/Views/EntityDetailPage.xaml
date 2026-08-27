@@ -69,6 +69,7 @@
                             <ColumnDefinition Width="1*" />
                             <ColumnDefinition Width="80" />
                             <ColumnDefinition Width="40" />
+                            <ColumnDefinition Width="40" />
                         </Grid.ColumnDefinitions>
 
                         <!-- Play/Pause Button -->
@@ -96,8 +97,22 @@
                         <!-- Duration -->
                         <TextBlock Grid.Column="3" Text="{x:Bind local:EntityDetailPage.FormatDuration(DurationSeconds)}" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Right" Margin="0,0,8,0"/>
 
+                        <!-- Favorite Button -->
+                        <Button Grid.Column="4"
+                                Click="FavoriteButton_Click"
+                                Loaded="FavoriteButton_Loaded"
+                                DataContextChanged="FavoriteButton_DataContextChanged"
+                                Background="Transparent"
+                                BorderBrush="Transparent"
+                                Padding="4"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                ToolTipService.ToolTip="Favorite">
+                            <FontIcon Glyph="&#xEB51;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                        </Button>
+
                         <!-- More Menu -->
-                        <Button Grid.Column="4" 
+                        <Button Grid.Column="5" 
                                 Background="Transparent" 
                                 BorderBrush="Transparent" 
                                 Padding="4"

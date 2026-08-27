@@ -59,4 +59,51 @@ public class QueueItemTests
         item.ArtworkUrl = "";
         Assert.Equal(2, raiseCount);
     }
+
+    [Fact]
+    public void IsPlaying_WhenCrossThreadSubscriberThrowsCOMException_CatchesAndDoesNotThrow()
+    {
+        QueueItem.SetUIDispatcher(null);
+        var item = new QueueItem { Id = "q_com", Track = MakeTrack("t_com") };
+
+        // Simulate a WinRT COM projection delegate throwing RPC_E_WRONG_THREAD (0x8001010E)
+        item.PropertyChanged += (_, _) =>
+        {
+            throw new System.Runtime.InteropServices.COMException(
+                "The application called an interface that was marshalled for a different thread.",
+                unchecked((int)0x8001010E));
+        };
+
+        // Setting IsPlaying MUST NOT throw
+        item.IsPlaying = true;
+        Assert.True(item.IsPlaying);
+    }
+
+    [Fact]
+    public void IsPlaying_WhenUIDispatcherConfigured_DispatchesToUIThread()
+    {
+        bool dispatched = false;
+        QueueItem.SetUIDispatcher(action =>
+        {
+            dispatched = true;
+            action();
+        });
+
+        try
+        {
+            var item = new QueueItem { Id = "q_disp", Track = MakeTrack("t_disp") };
+            string? observed = null;
+            item.PropertyChanged += (_, e) => observed = e.PropertyName;
+
+            item.IsPlaying = true;
+
+            Assert.True(dispatched);
+            Assert.True(item.IsPlaying);
+            Assert.Equal(nameof(QueueItem.IsPlaying), observed);
+        }
+        finally
+        {
+            QueueItem.SetUIDispatcher(null);
+        }
+    }
 }

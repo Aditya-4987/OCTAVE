@@ -21,7 +21,11 @@ public sealed partial class AlbumArtPanel : UserControl
     public static readonly DependencyProperty IsPlayingProperty =
         DependencyProperty.Register(nameof(IsPlaying), typeof(bool), typeof(AlbumArtPanel), new PropertyMetadata(false));
 
+    public static readonly DependencyProperty IsFavoriteProperty =
+        DependencyProperty.Register(nameof(IsFavorite), typeof(bool), typeof(AlbumArtPanel), new PropertyMetadata(false));
+
     public event RoutedEventHandler? PlayPauseRequested;
+    public event RoutedEventHandler? FavoriteRequested;
 
     public string TrackTitle
     {
@@ -51,6 +55,12 @@ public sealed partial class AlbumArtPanel : UserControl
     {
         get => (bool)GetValue(IsPlayingProperty);
         set => SetValue(IsPlayingProperty, value);
+    }
+
+    public bool IsFavorite
+    {
+        get => (bool)GetValue(IsFavoriteProperty);
+        set => SetValue(IsFavoriteProperty, value);
     }
 
     public AlbumArtPanel()
@@ -100,7 +110,21 @@ public sealed partial class AlbumArtPanel : UserControl
         PlayPauseRequested?.Invoke(this, e);
     }
 
+    private void FavoriteButton_Click(object sender, RoutedEventArgs e)
+    {
+        FavoriteRequested?.Invoke(this, e);
+    }
+
     public string IsPlayingGlyph(bool isPlaying) => isPlaying ? "\uE769" : "\uE768";
+
+    public string FavoriteGlyph(bool isFavorite) => isFavorite ? "\uEB52" : "\uEB51";
+
+    public Microsoft.UI.Xaml.Media.Brush FavoriteBrush(bool isFavorite) =>
+        isFavorite
+            ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 64, 96))
+            : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White);
+
+    public string FavoriteToolTip(bool isFavorite) => isFavorite ? "Remove from Favorites" : "Add to Favorites";
 
     public Visibility HasTextVisibility(string text) => string.IsNullOrWhiteSpace(text) ? Visibility.Collapsed : Visibility.Visible;
 }

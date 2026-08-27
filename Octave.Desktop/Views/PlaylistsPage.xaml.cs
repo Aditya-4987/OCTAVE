@@ -30,6 +30,7 @@ public sealed partial class PlaylistsPage : Page
     }
 
     public Visibility EmptyVisibility(int count) => count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    public static string TrackCountText(int count) => count == 1 ? "1 song" : $"{count} songs";
 
     private void GridView_ItemClick(object sender, ItemClickEventArgs e)
     {

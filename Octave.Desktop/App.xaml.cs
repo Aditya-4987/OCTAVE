@@ -1,5 +1,3 @@
-using Windows.ApplicationModel;
-using Windows.ApplicationModel.Activation;
 using Windows.Foundation;
 using Windows.Foundation.Collections;
 using Microsoft.UI.Xaml;
@@ -78,8 +76,9 @@ public partial class App : Application
         var host = Host.CreateDefaultBuilder()
             .ConfigureServices((context, services) =>
             {
-                // Resolve the unpacked MSIX path
-                string localFolderPath = Windows.Storage.ApplicationData.Current.LocalFolder.Path;
+                // Resolve the unpackaged local data path
+                string localFolderPath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Octave");
+                System.IO.Directory.CreateDirectory(localFolderPath);
                 string dbPath = System.IO.Path.Combine(localFolderPath, "octave.db");
                 string cachePath = System.IO.Path.Combine(localFolderPath, "ArtworkCache");
                 System.IO.Directory.CreateDirectory(cachePath);
@@ -89,9 +88,19 @@ public partial class App : Application
                 services.AddSingleton(dbContext);
                 services.AddSingleton<ILyricsRepository>(dbContext);
 
-                // HTTP Client & LRCLIB Client
-                services.AddSingleton<System.Net.Http.HttpClient>();
+                // Dispatcher Service
+                var dispatcherQueue = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+                var dispatcherService = new Services.WinUIDispatcherService(dispatcherQueue);
+                services.AddSingleton<IDispatcherService>(dispatcherService);
+                QueueItem.SetUIDispatcher(action => dispatcherService.ExecuteOnUIThread(action));
+
+                // HTTP Client (with responsive 15s timeout) & LRCLIB Client
+                services.AddSingleton(sp => new System.Net.Http.HttpClient
+                {
+                    Timeout = TimeSpan.FromSeconds(15)
+                });
                 services.AddSingleton<ILrclibClient, LrclibClient>();
+                services.AddSingleton<ILyricsMatcher, LyricsMatcher>();
 
                 // Artwork Cache Manager
                 services.AddSingleton<IArtworkCacheManager>(new ArtworkCacheManager(cachePath));
@@ -120,7 +129,7 @@ public partial class App : Application
                 services.AddTransient<PlaylistDetailViewModel>();
                 services.AddTransient<EntityDetailViewModel>();
                 services.AddTransient<SearchViewModel>();
-                services.AddTransient<NowPlayingViewModel>();
+                services.AddSingleton<NowPlayingViewModel>();
             })
             .Build();
 
@@ -129,7 +138,7 @@ public partial class App : Application
         // Startup Diagnostic Logging
         string processArch = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString();
         string bassDllArch = "Unknown";
-        string localFolder = Windows.Storage.ApplicationData.Current.LocalFolder.Path;
+        string localFolder = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Octave");
         string dbFile = System.IO.Path.Combine(localFolder, "octave.db");
 
         try

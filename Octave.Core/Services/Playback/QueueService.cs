@@ -76,17 +76,34 @@ public class QueueService : IQueueService, IDisposable
     private readonly EventHandler<TrackEndedEventArgs> _trackEndedHandler;
     private readonly EventHandler<double> _positionChangedHandler;
     private readonly EventHandler _libraryChangedHandler;
+    private readonly IDispatcherService? _dispatcher;
 
     public QueueService(
         IAudioPlayerService audioPlayer,
         SqliteDbContext dbContext,
         ILibraryScanner libraryScanner,
+        Random? shuffleRng)
+        : this(audioPlayer, dbContext, libraryScanner, null, shuffleRng)
+    {
+    }
+
+    public QueueService(
+        IAudioPlayerService audioPlayer,
+        SqliteDbContext dbContext,
+        ILibraryScanner libraryScanner,
+        IDispatcherService? dispatcher = null,
         Random? shuffleRng = null)
     {
         _audioPlayer = audioPlayer ?? throw new ArgumentNullException(nameof(audioPlayer));
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
         _libraryScanner = libraryScanner ?? throw new ArgumentNullException(nameof(libraryScanner));
+        _dispatcher = dispatcher;
         _shuffleRng = shuffleRng ?? Random.Shared;
+
+        if (_dispatcher != null)
+        {
+            QueueItem.SetUIDispatcher(action => _dispatcher.ExecuteOnUIThread(action));
+        }
 
         CurrentState = GetCurrentState();
 
@@ -99,6 +116,10 @@ public class QueueService : IQueueService, IDisposable
             try
             {
                 await HandleTrackEndedAsync(e);
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected cancellation on track skip / teardown
             }
             catch (Exception ex)
             {
@@ -833,11 +854,11 @@ public class QueueService : IQueueService, IDisposable
 
             if (_currentIndex >= 0 && _currentIndex < _activeQueue.Count)
             {
-                _activeQueue[_currentIndex].IsPlaying = false;
+                try { _activeQueue[_currentIndex].IsPlaying = false; } catch { }
             }
 
             _currentIndex = index;
-            _activeQueue[_currentIndex].IsPlaying = true;
+            try { _activeQueue[_currentIndex].IsPlaying = true; } catch { }
 
             _activePlaybackSessionId = _audioPlayer.Play(track.SourceUri, track.ReplayGain);
 
@@ -858,14 +879,27 @@ public class QueueService : IQueueService, IDisposable
     {
         if (e == null) return;
 
+        int threadId = Environment.CurrentManagedThreadId;
         string? trackId = null;
         int expectedIndex = -1;
         long expectedSessionId = e.SessionId;
+        long currentSessionId;
+        int currentIndex;
 
         lock (_queueLock)
         {
-            if (_activePlaybackSessionId != expectedSessionId)
+            currentSessionId = _activePlaybackSessionId;
+            currentIndex = _currentIndex;
+
+            System.Diagnostics.Debug.WriteLine(
+                $"[PLAYBACK] TrackEnded: EventSourceUri={e.SourceUri}, EventSessionId={e.SessionId}, IsNaturalEnd={e.IsNaturalEnd} | CurrentSessionId={currentSessionId}, CurrentIndex={currentIndex}, ThreadId={threadId}");
+
+            if (currentSessionId != expectedSessionId)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[PLAYBACK] Stale TrackEnded rejected: EventSessionId={e.SessionId} != CurrentSessionId={currentSessionId}");
                 return;
+            }
 
             if (_currentIndex >= 0 && _currentIndex < _activeQueue.Count)
             {
@@ -886,63 +920,113 @@ public class QueueService : IQueueService, IDisposable
             }
         }
 
-        PlaybackState? state = null;
-        lock (_queueLock)
+        void PerformAdvance()
         {
-            // Session and Epoch index stamp validation check
-            if (_activePlaybackSessionId != expectedSessionId || _currentIndex != expectedIndex)
-                return;
-
-            if (_activeQueue.Count == 0 || _currentIndex < 0 || _currentIndex >= _activeQueue.Count)
-                return;
-
-            // QUEUE-02 / NF-22: A natural track completion resets consecutive load failure streak.
-            // Only actual stream load failures increment the breaker counter.
-            if (e.IsNaturalEnd)
+            PlaybackState? state = null;
+            try
             {
-                _consecutiveLoadFailures = 0;
-            }
-            else
-            {
-                _consecutiveLoadFailures++;
-            }
-
-            if (_consecutiveLoadFailures >= Math.Min(_activeQueue.Count, MaxConsecutiveLoadFailures))
-            {
-                _consecutiveLoadFailures = 0;
-                System.Diagnostics.Debug.WriteLine(
-                    $"[QueueService] Every queued track failed to load ({_activeQueue.Count} attempted) — stopping playback.");
-                _audioPlayer.Stop();
-                _activeQueue[_currentIndex].IsPlaying = false;
-                state = CaptureStateUnlocked();
-            }
-            else
-            {
-                switch (_repeatMode)
+                lock (_queueLock)
                 {
-                    case RepeatMode.Track:
-                        state = PlayIndexInternal(_currentIndex);
-                        break;
-                    case RepeatMode.None:
-                        if (_currentIndex < _activeQueue.Count - 1)
+                    // Session and Epoch index stamp validation check under lock
+                    if (_activePlaybackSessionId != expectedSessionId || _currentIndex != expectedIndex)
+                    {
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[PLAYBACK] AutoAdvance rejected under lock: CurrentSessionId={_activePlaybackSessionId} (expected {expectedSessionId}), CurrentIndex={_currentIndex} (expected {expectedIndex})");
+                        return;
+                    }
+
+                    if (_activeQueue.Count == 0 || _currentIndex < 0 || _currentIndex >= _activeQueue.Count)
+                        return;
+
+                    // QUEUE-02 / NF-22: A natural track completion resets consecutive load failure streak.
+                    // Only actual stream load failures increment the breaker counter.
+                    if (e.IsNaturalEnd)
+                    {
+                        _consecutiveLoadFailures = 0;
+                    }
+                    else
+                    {
+                        _consecutiveLoadFailures++;
+                    }
+
+                    if (_consecutiveLoadFailures >= Math.Min(_activeQueue.Count, MaxConsecutiveLoadFailures))
+                    {
+                        _consecutiveLoadFailures = 0;
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[QueueService] Every queued track failed to load ({_activeQueue.Count} attempted) — stopping playback.");
+                        _audioPlayer.Stop();
+                        _activeQueue[_currentIndex].IsPlaying = false;
+                        state = CaptureStateUnlocked();
+                    }
+                    else
+                    {
+                        int targetIndex = _currentIndex;
+                        switch (_repeatMode)
                         {
-                            state = PlayIndexInternal(_currentIndex + 1);
+                            case RepeatMode.Track:
+                                targetIndex = _currentIndex;
+                                break;
+                            case RepeatMode.None:
+                                targetIndex = (_currentIndex < _activeQueue.Count - 1) ? _currentIndex + 1 : -1;
+                                break;
+                            case RepeatMode.Queue:
+                                targetIndex = (_currentIndex + 1) % _activeQueue.Count;
+                                break;
+                        }
+
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[PLAYBACK] AutoAdvance: FromIndex={_currentIndex}, ToIndex={targetIndex}, RepeatMode={_repeatMode}, SessionId={expectedSessionId}, ThreadId={Environment.CurrentManagedThreadId}");
+
+                        if (targetIndex >= 0)
+                        {
+                            state = PlayIndexInternal(targetIndex);
                         }
                         else
                         {
                             _audioPlayer.Stop();
-                            _activeQueue[_currentIndex].IsPlaying = false;
+                            try { _activeQueue[_currentIndex].IsPlaying = false; } catch { }
                             state = CaptureStateUnlocked();
                         }
-                        break;
-                    case RepeatMode.Queue:
-                        state = PlayIndexInternal((_currentIndex + 1) % _activeQueue.Count);
-                        break;
+                    }
                 }
             }
+            catch (Exception ex)
+            {
+                // QUEUE-13: the advance runs on the TrackEnded thread-pool thread, so this
+                // catch is reachable (App.xaml.cs only swallows OperationCanceledException).
+                // Log it, stop playback so the session does not hang in a half-advanced
+                // state, and surface the state so the UI still gets the broadcast.
+                System.Diagnostics.Debug.WriteLine($"[QueueService] Auto-advance engine failure: {ex}");
+                try
+                {
+                    _audioPlayer.Stop();
+                }
+                catch { }
+                try
+                {
+                    lock (_queueLock)
+                    {
+                        if (_currentIndex >= 0 && _currentIndex < _activeQueue.Count)
+                        {
+                            try { _activeQueue[_currentIndex].IsPlaying = false; } catch { }
+                        }
+                        state = CaptureStateUnlocked();
+                    }
+                }
+                catch { }
+            }
+
+            if (state != null) RaisePlaybackEvents(state);
         }
 
-        if (state != null) RaisePlaybackEvents(state);
+        // QUEUE-13: run the engine work (BASS stream teardown/creation, file open)
+        // HERE on the TrackEnded thread-pool thread instead of marshaling the whole
+        // advance onto the UI thread — a slow file/network open no longer stalls the
+        // UI between tracks. Only the event broadcast is marshaled across (inside
+        // RaisePlaybackEvents). And because PerformAdvance now runs inline, any
+        // exception it throws is observed by the _trackEndedHandler try/catch wrapper
+        // instead of escaping as an unhandled UI-thread exception.
+        PerformAdvance();
     }
 
     private PlaybackState GetCurrentState()
@@ -984,8 +1068,23 @@ public class QueueService : IQueueService, IDisposable
 
     private void RaisePlaybackEvents(PlaybackState state)
     {
-        PlaybackStateChanged?.Invoke(this, state);
-        QueueChanged?.Invoke(this, EventArgs.Empty);
+        // QUEUE-13: subscribers (ViewModels) update dispatcher-affine state, so the
+        // broadcast must land on the UI thread. Auto-advance now runs the engine work
+        // on the TrackEnded thread-pool thread; only this event fire is marshaled.
+        // On the UI thread (user actions) this stays a direct synchronous call.
+        if (_dispatcher != null && !_dispatcher.IsOnUIThread)
+        {
+            _dispatcher.ExecuteOnUIThread(() =>
+            {
+                PlaybackStateChanged?.Invoke(this, state);
+                QueueChanged?.Invoke(this, EventArgs.Empty);
+            });
+        }
+        else
+        {
+            PlaybackStateChanged?.Invoke(this, state);
+            QueueChanged?.Invoke(this, EventArgs.Empty);
+        }
     }
 
     public PlaybackState Seek(double positionSeconds)

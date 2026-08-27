@@ -134,4 +134,21 @@ public sealed partial class SpectrumVisualizerControl : UserControl
             bar.Fill = (barFraction <= clampedRatio) ? activeAccent : _unplayedBrush;
         }
     }
+
+    public void ResetBars()
+    {
+        if (_bars.Count == 0) return;
+        double canvasHeight = WaveformCanvas.ActualHeight;
+        double baseline = canvasHeight - BaselineOffset;
+        for (int i = 0; i < _bars.Count; i++)
+        {
+            var bar = _bars[i];
+            bar.Height = 2.0;
+            if (canvasHeight > 0)
+            {
+                Canvas.SetTop(bar, baseline - 2.0);
+            }
+            bar.Fill = _unplayedBrush;
+        }
+    }
 }

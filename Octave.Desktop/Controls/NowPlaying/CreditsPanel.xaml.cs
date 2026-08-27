@@ -29,6 +29,21 @@ public sealed partial class CreditsPanel : UserControl
     public static readonly DependencyProperty QualityDetailsProperty =
         DependencyProperty.Register(nameof(QualityDetails), typeof(AudioQualityDetails), typeof(CreditsPanel), new PropertyMetadata(null, OnQualityDetailsChanged));
 
+    public static readonly DependencyProperty TrackGenreProperty =
+        DependencyProperty.Register(nameof(TrackGenre), typeof(string), typeof(CreditsPanel), new PropertyMetadata(""));
+
+    public static readonly DependencyProperty TrackNumberProperty =
+        DependencyProperty.Register(nameof(TrackNumber), typeof(int), typeof(CreditsPanel), new PropertyMetadata(0));
+
+    public static readonly DependencyProperty DiscNumberProperty =
+        DependencyProperty.Register(nameof(DiscNumber), typeof(int), typeof(CreditsPanel), new PropertyMetadata(0));
+
+    public static readonly DependencyProperty ReplayGainProperty =
+        DependencyProperty.Register(nameof(ReplayGain), typeof(object), typeof(CreditsPanel), new PropertyMetadata(null));
+
+    public static readonly DependencyProperty SourceUriProperty =
+        DependencyProperty.Register(nameof(SourceUri), typeof(string), typeof(CreditsPanel), new PropertyMetadata(""));
+
     public event EventHandler<ArtistDisplayItem>? ArtistClicked;
     public event RoutedEventHandler? AlbumClicked;
 
@@ -74,10 +89,63 @@ public sealed partial class CreditsPanel : UserControl
         set => SetValue(QualityDetailsProperty, value);
     }
 
+    public string TrackGenre
+    {
+        get => (string)GetValue(TrackGenreProperty);
+        set => SetValue(TrackGenreProperty, value);
+    }
+
+    public int TrackNumber
+    {
+        get => (int)GetValue(TrackNumberProperty);
+        set => SetValue(TrackNumberProperty, value);
+    }
+
+    public int DiscNumber
+    {
+        get => (int)GetValue(DiscNumberProperty);
+        set => SetValue(DiscNumberProperty, value);
+    }
+
+    public object? ReplayGain
+    {
+        get => GetValue(ReplayGainProperty);
+        set => SetValue(ReplayGainProperty, value);
+    }
+
+    public string SourceUri
+    {
+        get => (string)GetValue(SourceUriProperty);
+        set => SetValue(SourceUriProperty, value);
+    }
+
     public string FormatText(AudioQualityDetails? details) => details?.StreamQuality ?? "Lossless Stream";
     public string OutputDeviceNameText(AudioQualityDetails? details) => details?.OutputDeviceName ?? "Default Playback Device";
     public string DecoderEngineText(AudioQualityDetails? details) => details?.DecoderEngine ?? "ManagedBASS Engine";
     public string OutputDeviceQualityText(AudioQualityDetails? details) => details?.OutputDeviceQuality ?? "DirectSound / WASAPI";
+
+    public string TrackAndDiscText(int trackNum, int discNum)
+    {
+        if (trackNum > 0 && discNum > 0) return $"Track {trackNum} (Disc {discNum})";
+        if (trackNum > 0) return $"Track {trackNum}";
+        if (discNum > 0) return $"Disc {discNum}";
+        return "-";
+    }
+
+    public string ReplayGainDisplay(object? gain)
+    {
+        if (gain is double d && Math.Abs(d) > 0.001) return $"{d:+0.00;-0.00} dB";
+        if (gain is float f && Math.Abs(f) > 0.001f) return $"{f:+0.00;-0.00} dB";
+        return "-";
+    }
+    public string GenreDisplay(string genre) => !string.IsNullOrWhiteSpace(genre) ? genre : "Unknown Genre";
+    public string BitDepthAndChannelsText(AudioQualityDetails? details)
+    {
+        if (details == null) return "Stereo (2.0)";
+        string bitStr = details.BitDepth > 0 ? $"{details.BitDepth}-bit" : "";
+        string chanStr = !string.IsNullOrWhiteSpace(details.ChannelsText) ? details.ChannelsText : "Stereo";
+        return !string.IsNullOrWhiteSpace(bitStr) ? $"{bitStr} / {chanStr}" : chanStr;
+    }
 
     public CreditsPanel()
     {

@@ -17,19 +17,50 @@ public sealed partial class SearchResultsPage : Page
 {
     public SearchViewModel ViewModel { get; }
     private readonly System.Collections.Generic.List<Button> _playButtons = new();
+    private readonly System.Collections.Generic.List<Button> _favoriteButtons = new();
+    private readonly System.Collections.Generic.HashSet<string> _favoriteTrackIds = new(StringComparer.Ordinal);
+    private readonly ILibraryService _libraryService;
+    private readonly EventHandler _favoritesChangedHandler;
 
     public SearchResultsPage()
     {
         ViewModel = App.Services.GetRequiredService<SearchViewModel>();
+        _libraryService = App.Services.GetRequiredService<ILibraryService>();
         InitializeComponent();
         this.Unloaded += SearchResultsPage_Unloaded;
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
+
+        _favoritesChangedHandler = (s, e) =>
+        {
+            _ = RefreshFavoriteIdsAsync();
+        };
+        _libraryService.FavoritesChanged += _favoritesChangedHandler;
     }
 
     private void SearchResultsPage_Unloaded(object sender, RoutedEventArgs e)
     {
         ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+        _libraryService.FavoritesChanged -= _favoritesChangedHandler;
         ViewModel.Cleanup();
+    }
+
+    private async Task RefreshFavoriteIdsAsync()
+    {
+        try
+        {
+            var favIds = await _libraryService.GetFavoriteTrackIdsAsync();
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                _favoriteTrackIds.Clear();
+                foreach (var id in favIds) _favoriteTrackIds.Add(id);
+                _favoriteButtons.RemoveAll(btn => btn.XamlRoot == null);
+                foreach (var btn in _favoriteButtons)
+                {
+                    UpdateFavoriteButtonIcon(btn);
+                }
+            });
+        }
+        catch { }
     }
 
     private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -51,11 +82,13 @@ public sealed partial class SearchResultsPage : Page
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        _ = RefreshFavoriteIdsAsync();
 
         if (e.Parameter is string query)
         {
             SearchQueryText.Text = $"Results for \"{query}\"";
             await ViewModel.ExecuteSearchAsync(query);
+            _ = RefreshFavoriteIdsAsync();
         }
     }
 
@@ -64,6 +97,47 @@ public sealed partial class SearchResultsPage : Page
         if (e.ClickedItem is Track track)
         {
             ViewModel.PlayTrackCommand.Execute(track);
+        }
+    }
+
+    private void FavoriteButton_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button btn && !_favoriteButtons.Contains(btn))
+        {
+            _favoriteButtons.Add(btn);
+            UpdateFavoriteButtonIcon(btn);
+        }
+    }
+
+    private void FavoriteButton_DataContextChanged(FrameworkElement sender, DataContextChangedEventArgs args)
+    {
+        if (sender is Button btn)
+        {
+            UpdateFavoriteButtonIcon(btn);
+        }
+    }
+
+    private void UpdateFavoriteButtonIcon(Button btn)
+    {
+        if (btn.Content is FontIcon fontIcon && btn.DataContext is Track track)
+        {
+            bool isFav = _favoriteTrackIds.Contains(track.Id);
+            fontIcon.Glyph = isFav ? "\uEB52" : "\uEB51";
+            fontIcon.Foreground = isFav
+                ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 64, 96))
+                : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorTertiaryBrush"];
+            ToolTipService.SetToolTip(btn, isFav ? "Remove from Favorites" : "Add to Favorites");
+        }
+    }
+
+    private async void FavoriteButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button btn && btn.DataContext is Track track)
+        {
+            bool newFav = await _libraryService.ToggleFavoriteAsync(track.Id);
+            if (newFav) _favoriteTrackIds.Add(track.Id);
+            else _favoriteTrackIds.Remove(track.Id);
+            UpdateFavoriteButtonIcon(btn);
         }
     }
 

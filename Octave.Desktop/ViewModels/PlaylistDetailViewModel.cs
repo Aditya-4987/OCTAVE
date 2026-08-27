@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Octave.Core.Interfaces;
 using Octave.Core.Models;
+using Octave.Core.Services.Library;
 using System;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
@@ -15,6 +16,7 @@ public partial class PlaylistDetailViewModel : ObservableObject
 {
     private readonly IPlaylistService _playlistService;
     private readonly IQueueService _queueService;
+    private readonly ILibraryService _libraryService;
     private readonly Microsoft.UI.Dispatching.DispatcherQueue _dispatcher;
 
     [ObservableProperty]
@@ -32,9 +34,13 @@ public partial class PlaylistDetailViewModel : ObservableObject
     [ObservableProperty]
     public partial bool IsCurrentlyPlaying { get; set; }
 
+    [ObservableProperty]
+    public partial bool IsSelectionMode { get; set; }
+
     public ObservableCollection<Track> Tracks { get; } = new();
 
     private string? _playlistId;
+    public string? PlaylistId => _playlistId;
     private bool _isRefreshing;
     private readonly EventHandler<PlaybackState> _playbackStateChangedHandler;
 
@@ -43,10 +49,11 @@ public partial class PlaylistDetailViewModel : ObservableObject
     private const int ReorderPersistDelayMs = 400;
     private CancellationTokenSource? _reorderPersistCts;
 
-    public PlaylistDetailViewModel(IPlaylistService playlistService, IQueueService queueService)
+    public PlaylistDetailViewModel(IPlaylistService playlistService, IQueueService queueService, ILibraryService libraryService)
     {
         _playlistService = playlistService ?? throw new ArgumentNullException(nameof(playlistService));
         _queueService = queueService ?? throw new ArgumentNullException(nameof(queueService));
+        _libraryService = libraryService ?? throw new ArgumentNullException(nameof(libraryService));
         _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
 
         var initialState = _queueService.CurrentState;
@@ -211,5 +218,51 @@ public partial class PlaylistDetailViewModel : ObservableObject
     {
         if (_playlistId == null) return;
         await _playlistService.DeletePlaylistAsync(_playlistId);
+    }
+
+    public Task<List<Track>> GetAllLibraryTracksAsync() => _libraryService.GetAllTracksAsync();
+
+    public async Task AddTracksToPlaylistAsync(IEnumerable<Track> newTracks)
+    {
+        if (_playlistId == null) return;
+        var trackList = newTracks?.ToList();
+        if (trackList == null || trackList.Count == 0) return;
+
+        await _playlistService.AddTracksAsync(_playlistId, trackList.Select(t => t.Id));
+        await LoadAsync(_playlistId);
+    }
+
+    public async Task RemoveSelectedTracksAsync(IEnumerable<Track> selectedTracks)
+    {
+        if (_playlistId == null) return;
+        var trackList = selectedTracks?.ToList();
+        if (trackList == null || trackList.Count == 0) return;
+
+        foreach (var t in trackList)
+        {
+            Tracks.Remove(t);
+            await _playlistService.RemoveTrackAsync(_playlistId, t.Id);
+        }
+
+        TrackCount = Tracks.Count;
+        Subtitle = $"{Tracks.Count} Tracks";
+    }
+
+    public void PlaySelectedTracks(IEnumerable<Track> selectedTracks)
+    {
+        var trackList = selectedTracks?.ToList();
+        if (trackList == null || trackList.Count == 0) return;
+
+        _queueService.Clear();
+        _queueService.EnqueueRange(trackList);
+        _queueService.PlayIndex(0);
+    }
+
+    public void AddSelectedTracksToQueue(IEnumerable<Track> selectedTracks)
+    {
+        var trackList = selectedTracks?.ToList();
+        if (trackList == null || trackList.Count == 0) return;
+
+        _queueService.EnqueueRange(trackList);
     }
 }

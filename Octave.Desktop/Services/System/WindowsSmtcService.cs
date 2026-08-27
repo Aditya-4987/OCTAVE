@@ -175,9 +175,8 @@ public class WindowsSmtcService : ISmtcService
             // Bail if the track changed again while we were loading.
             if (capturedTrackId != _lastTrackId || string.IsNullOrWhiteSpace(token)) return;
 
-            string fileName = token.Contains('/') ? token.Substring(token.LastIndexOf('/') + 1) : token;
-            string absolute = global::System.IO.Path.Combine(_artworkCache.CacheRoot, fileName);
-            if (!global::System.IO.File.Exists(absolute)) return;
+            if (!_artworkCache.CachedFileExists(token)) return;
+            string absolute = _artworkCache.ResolveTokenPath(token);
 
             var file = await StorageFile.GetFileFromPathAsync(absolute);
             if (_disposed || _systemControls == null) return;

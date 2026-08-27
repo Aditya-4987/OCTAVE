@@ -41,7 +41,6 @@ public class SqliteDbContext : ILyricsRepository
                 // queue politely instead of throwing — the single highest-leverage
                 // fix in this layer.
                 "PRAGMA busy_timeout = 5000;" +
-                "PRAGMA journal_mode = WAL;" +
                 "PRAGMA synchronous = NORMAL;";
             await command.ExecuteNonQueryAsync();
             return connection;
@@ -57,6 +56,10 @@ public class SqliteDbContext : ILyricsRepository
     {
         using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
+
+        // WAL mode is persistent in the SQLite DB header; set once at init.
+        cmd.CommandText = "PRAGMA journal_mode = WAL;";
+        await cmd.ExecuteNonQueryAsync();
         
         // Fully restored STRICT mode DDL exactly matching the frozen architecture
         cmd.CommandText = @"
@@ -163,6 +166,10 @@ public class SqliteDbContext : ILyricsRepository
                 IsNotFound INTEGER NOT NULL DEFAULT 0 CHECK(IsNotFound IN (0, 1)),
                 CachedAt INTEGER NOT NULL,
                 LastCheckedAt INTEGER NOT NULL,
+                Source TEXT,
+                LrclibRecordId INTEGER,
+                SyncedSource TEXT,
+                StaticSource TEXT,
                 FOREIGN KEY(TrackId) REFERENCES Tracks(Id) ON DELETE CASCADE
             ) STRICT;
 
@@ -209,6 +216,16 @@ public class SqliteDbContext : ILyricsRepository
 
         await cmd.ExecuteNonQueryAsync();
 
+        // Schema migrations: Genre, ReplayGain, Disc, LyricsCache columns
+        await TryAddColumnAsync(conn, "Tracks", "Genre", "TEXT NOT NULL DEFAULT ''");
+        await TryAddColumnAsync(conn, "Tracks", "ReplayGain", "REAL NOT NULL DEFAULT 0.0");
+        await TryAddColumnAsync(conn, "Tracks", "Disc", "INTEGER NOT NULL DEFAULT 1");
+        await TryAddColumnAsync(conn, "LyricsCache", "LastCheckedAt", "INTEGER NOT NULL DEFAULT 0");
+        await TryAddColumnAsync(conn, "LyricsCache", "Source", "TEXT");
+        await TryAddColumnAsync(conn, "LyricsCache", "LrclibRecordId", "INTEGER");
+        await TryAddColumnAsync(conn, "LyricsCache", "SyncedSource", "TEXT");
+        await TryAddColumnAsync(conn, "LyricsCache", "StaticSource", "TEXT");
+
         using (var vCmd = conn.CreateCommand())
         {
             vCmd.CommandText = "INSERT OR IGNORE INTO SchemaVersion (Version, AppliedAt) VALUES (1, @now);";
@@ -230,13 +247,6 @@ public class SqliteDbContext : ILyricsRepository
         {
             System.Diagnostics.Debug.WriteLine($"[SqliteDbContext] TracksFts backfill: {ex.Message}");
         }
-
-        // Lightweight migrations for databases created before a column existed.
-        await TryAddColumnAsync(conn, "Tracks", "Genre", "TEXT NOT NULL DEFAULT ''");
-        await TryAddColumnAsync(conn, "Tracks", "ReplayGain", "REAL NOT NULL DEFAULT 0.0");
-        // SCAN-11: existing libraries backfill disc 1; the scanner stamps the real value on rescan.
-        await TryAddColumnAsync(conn, "Tracks", "Disc", "INTEGER NOT NULL DEFAULT 1");
-        await TryAddColumnAsync(conn, "LyricsCache", "LastCheckedAt", "INTEGER NOT NULL DEFAULT 0");
 
         // Lightweight migrations for databases created with obsolete/removed columns.
         await TryDropColumnAsync(conn, "Artists", "IsLocal");
@@ -1216,6 +1226,54 @@ public class SqliteDbContext : ILyricsRepository
         await cmd.ExecuteNonQueryAsync();
     }
 
+    public async Task AddTracksToPlaylistAsync(string playlistId, IEnumerable<string> trackIds)
+    {
+        var idList = trackIds?.ToList();
+        if (idList == null || idList.Count == 0) return;
+
+        using var conn = await CreateConnectionAsync();
+        using var tx = conn.BeginTransaction();
+        try
+        {
+            long nextSortOrder = 0;
+            using (var maxCmd = conn.CreateCommand())
+            {
+                maxCmd.Transaction = tx;
+                maxCmd.CommandText = "SELECT COALESCE(MAX(SortOrder), -1) + 1 FROM PlaylistTracks WHERE PlaylistId = @pid;";
+                maxCmd.Parameters.Add(new SqliteParameter("@pid", playlistId));
+                var result = await maxCmd.ExecuteScalarAsync();
+                if (result is long val) nextSortOrder = val;
+            }
+
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = @"
+                INSERT INTO PlaylistTracks (Id, PlaylistId, TrackId, SortOrder)
+                VALUES (@id, @pid, @tid, @sort);";
+            var pId = cmd.Parameters.Add("@id", SqliteType.Text);
+            var pPid = cmd.Parameters.Add("@pid", SqliteType.Text);
+            var pTid = cmd.Parameters.Add("@tid", SqliteType.Text);
+            var pSort = cmd.Parameters.Add("@sort", SqliteType.Integer);
+
+            pPid.Value = playlistId;
+
+            foreach (var tid in idList)
+            {
+                pId.Value = Guid.NewGuid().ToString();
+                pTid.Value = tid;
+                pSort.Value = nextSortOrder++;
+                await cmd.ExecuteNonQueryAsync();
+            }
+
+            tx.Commit();
+        }
+        catch
+        {
+            tx.Rollback();
+            throw;
+        }
+    }
+
     public async Task RemoveTrackFromPlaylistAsync(string playlistId, string trackId)
     {
         using var conn = await CreateConnectionAsync();
@@ -2063,7 +2121,7 @@ public class SqliteDbContext : ILyricsRepository
         using var conn = await CreateConnectionAsync();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
-            SELECT TrackId, PlainLyrics, SyncedLyrics, HasPlainLyrics, HasSyncedLyrics, IsNotFound, CachedAt, LastCheckedAt
+            SELECT TrackId, PlainLyrics, SyncedLyrics, HasPlainLyrics, HasSyncedLyrics, IsNotFound, CachedAt, LastCheckedAt, Source, LrclibRecordId, SyncedSource, StaticSource
             FROM LyricsCache
             WHERE TrackId = @trackId
             LIMIT 1;";
@@ -2080,8 +2138,12 @@ public class SqliteDbContext : ILyricsRepository
             bool isNotFound = reader.GetInt32(5) == 1;
             var cachedAt = DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(6));
             var lastCheckedAt = DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(7));
+            string? source = reader.IsDBNull(8) ? null : reader.GetString(8);
+            long? lrclibRecordId = reader.IsDBNull(9) ? null : reader.GetInt64(9);
+            string? syncedSource = reader.IsDBNull(10) ? null : reader.GetString(10);
+            string? staticSource = reader.IsDBNull(11) ? null : reader.GetString(11);
 
-            return new CachedLyricsEntity(id, plain, synced, hasPlain, hasSynced, isNotFound, cachedAt, lastCheckedAt);
+            return new CachedLyricsEntity(id, plain, synced, hasPlain, hasSynced, isNotFound, cachedAt, lastCheckedAt, source, lrclibRecordId, syncedSource, staticSource);
         }
         return null;
     }
@@ -2093,6 +2155,10 @@ public class SqliteDbContext : ILyricsRepository
         bool hasPlainLyrics,
         bool hasSyncedLyrics,
         bool isNotFound,
+        string? source,
+        long? lrclibRecordId,
+        string? syncedSource,
+        string? staticSource,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(trackId)) return;
@@ -2103,15 +2169,19 @@ public class SqliteDbContext : ILyricsRepository
         long nowEpoch = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
         cmd.CommandText = @"
-            INSERT INTO LyricsCache (TrackId, PlainLyrics, SyncedLyrics, HasPlainLyrics, HasSyncedLyrics, IsNotFound, CachedAt, LastCheckedAt)
-            VALUES (@trackId, @plainLyrics, @syncedLyrics, @hasPlainLyrics, @hasSyncedLyrics, @isNotFound, @now, @now)
+            INSERT INTO LyricsCache (TrackId, PlainLyrics, SyncedLyrics, HasPlainLyrics, HasSyncedLyrics, IsNotFound, CachedAt, LastCheckedAt, Source, LrclibRecordId, SyncedSource, StaticSource)
+            VALUES (@trackId, @plainLyrics, @syncedLyrics, @hasPlainLyrics, @hasSyncedLyrics, @isNotFound, @now, @now, @source, @lrclibRecordId, @syncedSource, @staticSource)
             ON CONFLICT(TrackId) DO UPDATE SET
                 PlainLyrics = excluded.PlainLyrics,
                 SyncedLyrics = excluded.SyncedLyrics,
                 HasPlainLyrics = excluded.HasPlainLyrics,
                 HasSyncedLyrics = excluded.HasSyncedLyrics,
                 IsNotFound = excluded.IsNotFound,
-                LastCheckedAt = excluded.LastCheckedAt;";
+                LastCheckedAt = excluded.LastCheckedAt,
+                Source = excluded.Source,
+                LrclibRecordId = COALESCE(excluded.LrclibRecordId, LyricsCache.LrclibRecordId),
+                SyncedSource = excluded.SyncedSource,
+                StaticSource = excluded.StaticSource;";
 
         cmd.Parameters.Add(new SqliteParameter("@trackId", trackId));
         cmd.Parameters.Add(new SqliteParameter("@plainLyrics", (object?)plainLyrics ?? DBNull.Value));
@@ -2120,9 +2190,36 @@ public class SqliteDbContext : ILyricsRepository
         cmd.Parameters.Add(new SqliteParameter("@hasSyncedLyrics", hasSyncedLyrics ? 1 : 0));
         cmd.Parameters.Add(new SqliteParameter("@isNotFound", isNotFound ? 1 : 0));
         cmd.Parameters.Add(new SqliteParameter("@now", nowEpoch));
+        cmd.Parameters.Add(new SqliteParameter("@source", (object?)source ?? DBNull.Value));
+        cmd.Parameters.Add(new SqliteParameter("@lrclibRecordId", (object?)lrclibRecordId ?? DBNull.Value));
+        cmd.Parameters.Add(new SqliteParameter("@syncedSource", (object?)syncedSource ?? DBNull.Value));
+        cmd.Parameters.Add(new SqliteParameter("@staticSource", (object?)staticSource ?? DBNull.Value));
 
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
+
+    public Task UpsertCachedLyricsAsync(
+        string trackId,
+        string? plainLyrics,
+        string? syncedLyrics,
+        bool hasPlainLyrics,
+        bool hasSyncedLyrics,
+        bool isNotFound,
+        string? source,
+        long? lrclibRecordId,
+        CancellationToken cancellationToken = default)
+        => UpsertCachedLyricsAsync(trackId, plainLyrics, syncedLyrics, hasPlainLyrics, hasSyncedLyrics, isNotFound, source, lrclibRecordId, null, null, cancellationToken);
+
+    public Task UpsertCachedLyricsAsync(
+        string trackId,
+        string? plainLyrics,
+        string? syncedLyrics,
+        bool hasPlainLyrics,
+        bool hasSyncedLyrics,
+        bool isNotFound,
+        string? source = null,
+        CancellationToken cancellationToken = default)
+        => UpsertCachedLyricsAsync(trackId, plainLyrics, syncedLyrics, hasPlainLyrics, hasSyncedLyrics, isNotFound, source, null, null, null, cancellationToken);
 
     public async Task DeleteCachedLyricsAsync(string trackId, CancellationToken cancellationToken = default)
     {

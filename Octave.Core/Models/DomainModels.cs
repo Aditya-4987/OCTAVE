@@ -62,6 +62,18 @@ public record PlaylistTrackEntry(
 
 public class QueueItem : System.ComponentModel.INotifyPropertyChanged
 {
+    private static Action<Action>? s_uiDispatcher;
+
+    /// <summary>
+    /// Configures an ambient UI thread dispatcher for QueueItem property change notifications.
+    /// Ensures WinUI 3 XAML data bindings receive PropertyChanged notifications on the UI STA thread,
+    /// preventing WinRT RPC_E_WRONG_THREAD (0x8001010E) COM exceptions during background auto-advances.
+    /// </summary>
+    public static void SetUIDispatcher(Action<Action>? dispatcher)
+    {
+        s_uiDispatcher = dispatcher;
+    }
+
     private bool _isPlaying;
     private string? _artworkUrl;
 
@@ -102,8 +114,46 @@ public class QueueItem : System.ComponentModel.INotifyPropertyChanged
 
     public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
 
-    private void OnPropertyChanged([System.Runtime.CompilerServices.CallerMemberName] string? propertyName = null) =>
-        PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(propertyName ?? ""));
+    private void OnPropertyChanged([System.Runtime.CompilerServices.CallerMemberName] string? propertyName = null)
+    {
+        var handler = PropertyChanged;
+        if (handler == null) return;
+
+        var dispatcher = s_uiDispatcher;
+        if (dispatcher != null)
+        {
+            dispatcher(() =>
+            {
+                try
+                {
+                    PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(propertyName ?? ""));
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[QueueItem] PropertyChanged UI dispatch failed: {ex.Message}");
+                }
+            });
+            return;
+        }
+
+        // Fallback for test/non-UI environments: safely invoke handlers and protect against cross-thread COM exceptions
+        var args = new System.ComponentModel.PropertyChangedEventArgs(propertyName ?? "");
+        foreach (System.ComponentModel.PropertyChangedEventHandler d in handler.GetInvocationList())
+        {
+            try
+            {
+                d.Invoke(this, args);
+            }
+            catch (System.Runtime.InteropServices.COMException ex) when (ex.HResult == unchecked((int)0x8001010E) || ex.HResult == unchecked((int)0x80004002))
+            {
+                System.Diagnostics.Debug.WriteLine($"[QueueItem] Caught cross-thread COMException (0x{ex.HResult:X8}) on '{propertyName}': {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[QueueItem] PropertyChanged invocation threw: {ex.Message}");
+            }
+        }
+    }
 }
 
 public enum PlaybackStatus { Stopped, Playing, Paused, Buffering }

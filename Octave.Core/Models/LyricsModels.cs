@@ -6,7 +6,15 @@ namespace Octave.Core.Models;
 
 public record LyricLine(TimeSpan Start, TimeSpan? End, string Text);
 
-public enum LyricsState { Loading, Synced, Unsynced, Unavailable }
+public enum LyricsState
+{
+    Loading,
+    Resolving,
+    Synced,
+    Unsynced,
+    Unavailable,
+    NetworkUnavailable
+}
 
 public enum LyricDisplayMode { Synced, Static }
 
@@ -18,7 +26,10 @@ public record LyricsData(
     bool HasSyncedLyrics = false,
     bool HasPlainLyrics = false,
     string? RawSyncedLyrics = null,
-    bool IsNetworkError = false
+    bool IsNetworkError = false,
+    string? SyncedSource = null,
+    string? StaticSource = null,
+    string? Source = null
 );
 
 public record LrclibResponse(
@@ -29,5 +40,7 @@ public record LrclibResponse(
     [property: JsonPropertyName("duration")] double? Duration,
     [property: JsonPropertyName("instrumental")] bool Instrumental,
     [property: JsonPropertyName("plainLyrics")] string? PlainLyrics,
-    [property: JsonPropertyName("syncedLyrics")] string? SyncedLyrics
+    [property: JsonPropertyName("syncedLyrics")] string? SyncedLyrics,
+    [property: JsonPropertyName("name")] string? Name = null
 );
+

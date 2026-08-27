@@ -42,6 +42,9 @@ public partial class HomeViewModel : ObservableObject
     [ObservableProperty]
     public partial string? HeroArtworkUrl { get; set; }
 
+    [ObservableProperty]
+    public partial bool IsHeroFavorite { get; set; }
+
     // VM-06: last load failure, so a page can surface it; the primary fix is
     // that fire-and-forget loads no longer let exceptions vanish silently.
     [ObservableProperty]
@@ -124,6 +127,7 @@ public partial class HomeViewModel : ObservableObject
 
             var hero = recent.Count > 0 ? recent[0] : (most.Count > 0 ? most[0] : (lastAdded.Count > 0 ? lastAdded[0] : null));
             var heroArt = hero != null && artMap.TryGetValue(hero.AlbumId, out var art) ? art : null;
+            bool isHeroFav = hero != null && await _libraryService.IsFavoriteAsync(hero.Id);
 
             _dispatcher.TryEnqueue(() =>
             {
@@ -132,6 +136,7 @@ public partial class HomeViewModel : ObservableObject
                 HeroTitle = hero?.Title ?? string.Empty;
                 HeroArtistName = hero?.ArtistName ?? string.Empty;
                 HeroArtworkUrl = heroArt;
+                IsHeroFavorite = isHeroFav;
 
                 Fill(QuickPlayItems, quickItems);
                 Fill(RecentlyPlayed, recentItems);
@@ -149,6 +154,14 @@ public partial class HomeViewModel : ObservableObject
         }
     }
 
+    public async Task<bool> ToggleHeroFavoriteAsync()
+    {
+        if (HeroTrack == null) return false;
+        bool newFav = await _libraryService.ToggleFavoriteAsync(HeroTrack.Id);
+        IsHeroFavorite = newFav;
+        return newFav;
+    }
+
     private async Task LoadFavoritesAsync()
     {
         try
@@ -163,7 +176,12 @@ public partial class HomeViewModel : ObservableObject
             }
 
             var favoriteItems = favorites.Select(t => new TrackDisplayItem(t, artMap.TryGetValue(t.AlbumId, out var url) ? url : null)).ToList();
-            _dispatcher.TryEnqueue(() => Fill(Favorites, favoriteItems));
+            bool isHeroFav = HeroTrack != null && await _libraryService.IsFavoriteAsync(HeroTrack.Id);
+            _dispatcher.TryEnqueue(() =>
+            {
+                IsHeroFavorite = isHeroFav;
+                Fill(Favorites, favoriteItems);
+            });
         }
         catch (Exception ex)
         {

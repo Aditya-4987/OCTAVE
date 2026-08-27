@@ -51,6 +51,12 @@ public class PlaylistService : IPlaylistService
         PlaylistsChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    public async Task AddTracksAsync(string playlistId, IEnumerable<string> trackIds)
+    {
+        await _dbContext.AddTracksToPlaylistAsync(playlistId, trackIds);
+        PlaylistsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     public async Task RemoveTrackAsync(string playlistId, string trackId)
     {
         await _dbContext.RemoveTrackFromPlaylistAsync(playlistId, trackId);

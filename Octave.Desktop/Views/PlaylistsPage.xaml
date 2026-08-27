@@ -5,47 +5,72 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:models="using:Octave.Core.Models"
+    xmlns:local="using:Octave_Desktop.Views"
     mc:Ignorable="d"
     Background="Transparent">
 
-    <Grid Padding="24">
+    <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <Grid Grid.Row="0" Margin="0,0,0,24">
-            <!-- Hardcoded White / #888888 / #1E1E1E replaced with theme resources -->
-            <TextBlock Text="Playlists" FontSize="28" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" VerticalAlignment="Center" />
-            <Button Content="New Playlist" Click="NewPlaylist_Click" HorizontalAlignment="Right" VerticalAlignment="Center" />
+        <Grid Grid.Row="0" Margin="0,0,0,16" Padding="32,48,32,0">
+            <TextBlock Text="Playlists" FontSize="36" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" VerticalAlignment="Center" />
+            <Button Content="New Playlist" Click="NewPlaylist_Click" HorizontalAlignment="Right" VerticalAlignment="Center" Style="{StaticResource PrimaryPlayButtonStyle}" Width="Auto" Height="36" Padding="16,0" CornerRadius="18" />
         </Grid>
-
-        <TextBlock Grid.Row="1" Text="No playlists yet. Create one to get started."
-                   Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Top"
-                   Visibility="{x:Bind EmptyVisibility(ViewModel.Items.Count), Mode=OneWay}" />
 
         <GridView Grid.Row="1"
                   ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}"
                   SelectionMode="None"
                   IsItemClickEnabled="True"
-                  ItemClick="GridView_ItemClick">
+                  ItemClick="GridView_ItemClick"
+                  Padding="32,0,32,32"
+                  ItemContainerStyle="{StaticResource CleanGridViewItemStyle}">
             <GridView.ItemTemplate>
                 <DataTemplate x:DataType="models:Playlist">
-                    <Grid Width="180" Height="120" Margin="8" Padding="16" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="8"
+                    <Grid Width="180" Height="130" Style="{StaticResource StandardCardStyle}"
                           RightTapped="PlaylistCard_RightTapped">
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualState x:Name="Normal" />
+                                <VisualState x:Name="PointerOver">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetProperty="BorderBrush">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource SystemControlHighlightAccentBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-                        <FontIcon Grid.Row="0" Glyph="&#xE90B;" FontFamily="Segoe MDL2 Assets" FontSize="22"
-                                  Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Left" />
-                        <TextBlock Grid.Row="1" Text="{x:Bind Title}" FontWeight="SemiBold" FontSize="15" Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Bottom" />
-                        <TextBlock Grid.Row="2" Text="{x:Bind TrackCount}" Foreground="{ThemeResource TextFillColorTertiaryBrush}" FontSize="12" />
+                        <FontIcon Grid.Row="0" Glyph="&#xE90B;" FontFamily="Segoe MDL2 Assets" FontSize="24"
+                                  Foreground="{ThemeResource SystemControlHighlightAccentBrush}" HorizontalAlignment="Left" Margin="0,0,0,8" />
+                        <TextBlock Grid.Row="1" Text="{x:Bind Title}" FontWeight="Bold" FontSize="15" Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                        <TextBlock Grid.Row="2" Text="{x:Bind local:PlaylistsPage.TrackCountText(TrackCount)}" Foreground="{ThemeResource TextFillColorTertiaryBrush}" FontSize="12" />
                     </Grid>
                 </DataTemplate>
             </GridView.ItemTemplate>
         </GridView>
+
+        <!-- Empty state container -->
+        <Grid Grid.Row="1"
+              Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+              CornerRadius="12" Padding="48" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="500"
+              Visibility="{x:Bind EmptyVisibility(ViewModel.Items.Count), Mode=OneWay}">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16">
+                <Border Width="64" Height="64" CornerRadius="32" Background="{ThemeResource LayerFillColorDefaultBrush}" HorizontalAlignment="Center">
+                    <FontIcon Glyph="&#xE90B;" FontFamily="Segoe MDL2 Assets" FontSize="28" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" VerticalAlignment="Center" HorizontalAlignment="Center" />
+                </Border>
+                <TextBlock Text="No Playlists Yet" FontSize="22" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" HorizontalAlignment="Center" />
+                <TextBlock Text="Create custom playlists to organize and play your favorite tracks together." Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" TextAlignment="Center" FontSize="14" />
+                <Button Content="Create Playlist" Click="NewPlaylist_Click" Style="{StaticResource PrimaryPlayButtonStyle}" Width="Auto" Height="36" Padding="20,0" CornerRadius="18" HorizontalAlignment="Center" Margin="0,8,0,0" />
+            </StackPanel>
+        </Grid>
     </Grid>
 </Page>

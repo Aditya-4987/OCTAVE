@@ -8,10 +8,11 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     mc:Ignorable="d"
     Title="Octave Mini">
+    <Window.SystemBackdrop>
+        <MicaBackdrop />
+    </Window.SystemBackdrop>
 
-    <!-- UI-MP-03: was hardcoded #1C1C1C; the saved theme is applied to RootGrid
-         in the constructor so these theme resources track the app setting. -->
-    <Grid x:Name="RootGrid" Background="{ThemeResource SolidBackgroundFillColorBaseBrush}" Padding="14" RowSpacing="8">
+    <Grid x:Name="RootGrid" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" Padding="14" RowSpacing="8">
         <Grid.Resources>
             <converters:ArtworkPathConverter x:Key="ArtworkPathConverter" />
         </Grid.Resources>

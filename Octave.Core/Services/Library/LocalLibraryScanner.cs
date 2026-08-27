@@ -160,9 +160,8 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
                     {
                         producerCt.ThrowIfCancellationRequested();
 
-                        string ext = Path.GetExtension(filePath).ToLowerInvariant();
-                        if (ext == ".flac" || ext == ".mp3" || ext == ".m4a" || ext == ".wav" ||
-                            ext == ".wma" || ext == ".aac" || ext == ".ogg" || ext == ".opus")
+                        string ext = Path.GetExtension(filePath);
+                        if (AudioFormatRegistry.IsSupported(ext))
                         {
                             Interlocked.Increment(ref totalFilesFound);
                             discoveredUris.Add(filePath);
@@ -362,9 +361,21 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
         );
 
         var artists = new System.Collections.Generic.List<Artist>();
+        var seenArtistIds = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Always ensure album artist exists in the database to satisfy the Album -> Artist foreign key
+        if (seenArtistIds.Add(albumArtistId))
+        {
+            artists.Add(new Artist(albumArtistId, albumArtistName, null, null));
+        }
+
         foreach (var aName in individualArtists)
         {
-            artists.Add(new Artist(IdGenerator.FromArtist(aName), aName, null, null));
+            string aId = IdGenerator.FromArtist(aName);
+            if (seenArtistIds.Add(aId))
+            {
+                artists.Add(new Artist(aId, aName, null, null));
+            }
         }
 
         return new PreparedTrack(artists, album, track);
@@ -824,7 +835,7 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
         {
             rawArtists.AddRange(tagFile.Tag.Performers);
         }
-        if (tagFile.Tag.AlbumArtists != null && tagFile.Tag.AlbumArtists.Length > 0)
+        else if (tagFile.Tag.AlbumArtists != null && tagFile.Tag.AlbumArtists.Length > 0)
         {
             rawArtists.AddRange(tagFile.Tag.AlbumArtists);
         }
@@ -833,7 +844,10 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
         {
             rawArtists.Add(tagFile.Tag.FirstPerformer);
         }
-
+        else if (rawArtists.Count == 0 && !string.IsNullOrWhiteSpace(tagFile.Tag.FirstAlbumArtist))
+        {
+            rawArtists.Add(tagFile.Tag.FirstAlbumArtist);
+        }
         var individualArtists = new System.Collections.Generic.List<string>();
         var seen = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
         // SCAN-03: '/' and '\' are NO LONGER delimiters — "AC/DC" is one artist, not

@@ -11,13 +11,36 @@ namespace Octave_Desktop;
 public sealed partial class MainWindow : Window
 {
     public ShellViewModel ViewModel { get; }
+    public NowPlayingViewModel NowPlayingViewModel { get; }
     private readonly Octave.Core.Services.Audio.IAudioPlayerService _audioPlayer = App.Services.GetRequiredService<Octave.Core.Services.Audio.IAudioPlayerService>();
+    private readonly Octave.Core.Services.Library.ILibraryService _libraryService = App.Services.GetRequiredService<Octave.Core.Services.Library.ILibraryService>();
+    private readonly System.Collections.Generic.List<Button> _sidebarFavoriteButtons = new();
+    private readonly System.Collections.Generic.HashSet<string> _sidebarFavoriteTrackIds = new(StringComparer.Ordinal);
+    private readonly EventHandler _favoritesChangedHandler;
+    private bool _wasNavPaneOpen = true;
 
     public MainWindow()
     {
         ViewModel = App.Services.GetRequiredService<ShellViewModel>();
+        NowPlayingViewModel = App.Services.GetRequiredService<NowPlayingViewModel>();
         InitializeComponent();
         RootGrid.DataContext = this;
+
+        ExtendsContentIntoTitleBar = true;
+        SetTitleBar(AppTitleBar);
+
+        if (Microsoft.UI.Windowing.AppWindowTitleBar.IsCustomizationSupported())
+        {
+            var titleBar = AppWindow.TitleBar;
+            titleBar.ButtonBackgroundColor = Windows.UI.Color.FromArgb(0, 0, 0, 0);
+            titleBar.ButtonInactiveBackgroundColor = Windows.UI.Color.FromArgb(0, 0, 0, 0);
+            titleBar.ButtonForegroundColor = Windows.UI.Color.FromArgb(255, 255, 255, 255);
+            titleBar.ButtonInactiveForegroundColor = Windows.UI.Color.FromArgb(160, 255, 255, 255);
+            titleBar.ButtonHoverBackgroundColor = Windows.UI.Color.FromArgb(30, 255, 255, 255);
+            titleBar.ButtonHoverForegroundColor = Windows.UI.Color.FromArgb(255, 255, 255, 255);
+            titleBar.ButtonPressedBackgroundColor = Windows.UI.Color.FromArgb(60, 255, 255, 255);
+            titleBar.ButtonPressedForegroundColor = Windows.UI.Color.FromArgb(255, 255, 255, 255);
+        }
 
         Octave_Desktop.Helpers.WindowMinSizeHelper.SetMinSize(this, 750, 500);
 
@@ -25,6 +48,23 @@ public sealed partial class MainWindow : Window
 
         // Apply the saved theme to the window root.
         RootGrid.RequestedTheme = ThemeHelper.GetSavedTheme();
+
+        // Responsive left-pane auto-collapse when right sidebar opens
+        ViewModel.PropertyChanged += (s, e) =>
+        {
+            if (e.PropertyName == nameof(ShellViewModel.IsNowPlayingOpen))
+            {
+                if (ViewModel.IsNowPlayingOpen)
+                {
+                    _wasNavPaneOpen = NavView.IsPaneOpen;
+                    NavView.IsPaneOpen = false;
+                }
+                else
+                {
+                    NavView.IsPaneOpen = _wasNavPaneOpen;
+                }
+            }
+        };
 
         // Default navigation
         ContentFrame.Navigated += ContentFrame_Navigated;
@@ -39,6 +79,11 @@ public sealed partial class MainWindow : Window
 
         // Global Spacebar Play/Pause handler before UI controls consume Space for selection
         RootGrid.PreviewKeyDown += RootGrid_PreviewKeyDown;
+
+        // Favorites changed listener for sidebar queue
+        _favoritesChangedHandler = (s, e) => _ = RefreshSidebarFavoritesAsync();
+        _libraryService.FavoritesChanged += _favoritesChangedHandler;
+        _ = RefreshSidebarFavoritesAsync();
 
         // NF-28: dragging the window onto a monitor with a different DPI used to
         // leave every artwork bound to its old-density decode (soft / pixelated).
@@ -61,6 +106,7 @@ public sealed partial class MainWindow : Window
         Closed += (s, e) =>
         {
             CompositionTarget.Rendering -= CompositionTarget_Rendering;
+            _libraryService.FavoritesChanged -= _favoritesChangedHandler;
             Octave_Desktop.Helpers.WindowMinSizeHelper.ClearMinSize(WinRT.Interop.WindowNative.GetWindowHandle(this));
             App.Services.GetRequiredService<Octave_Desktop.Services.System.ISmtcService>().Dispose();
         };
@@ -74,6 +120,8 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private bool _wasVisualizerActive;
+
     private void CompositionTarget_Rendering(object? sender, object e)
     {
         // Runs every frame for the app's whole lifetime - a single throw here
@@ -82,8 +130,17 @@ public sealed partial class MainWindow : Window
         try
         {
             if (ProgressBarVisualizer == null || !ViewModel.IsVisualizerEnabled || ProgressBarVisualizer.Visibility != Visibility.Visible) return;
-            if (!ViewModel.IsPlaying) return;
+            if (!ViewModel.IsPlaying)
+            {
+                if (_wasVisualizerActive)
+                {
+                    ProgressBarVisualizer.ResetBars();
+                    _wasVisualizerActive = false;
+                }
+                return;
+            }
 
+            _wasVisualizerActive = true;
             var fft = _audioPlayer.GetFftData(36);
             double ratio = (ViewModel.DurationSeconds > 0) ? (ViewModel.PositionSeconds / ViewModel.DurationSeconds) : 0.0;
             ProgressBarVisualizer.UpdateSpectrum(fft, ratio);
@@ -131,7 +188,6 @@ public sealed partial class MainWindow : Window
                 "Artists" => typeof(Views.ArtistsPage),
                 "Playlists" => typeof(Views.PlaylistsPage),
                 "NowPlaying" => typeof(Views.NowPlayingPage),
-                "DownloadSongs" => typeof(Views.DownloadSongsPage),
                 _ => null
             };
 
@@ -168,6 +224,31 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void LyricsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.IsNowPlayingOpen && SidebarPivot.SelectedIndex == 2)
+        {
+            // Close if already open on Lyrics tab
+            ViewModel.IsNowPlayingOpen = false;
+        }
+        else
+        {
+            // Open and select Lyrics tab (index 2)
+            ViewModel.IsNowPlayingOpen = true;
+            SidebarPivot.SelectedIndex = 2;
+        }
+    }
+
+    private void SidebarLyricsPanel_OffsetChangeRequested(object? sender, int deltaMs)
+    {
+        NowPlayingViewModel.AdjustLyricsOffset(deltaMs);
+    }
+
+    private void SidebarLyricsPanel_LyricModeChangeRequested(object? sender, LyricDisplayMode mode)
+    {
+        NowPlayingViewModel.SelectLyricMode(mode);
+    }
+
     private void NavigationView_BackRequested(NavigationView sender, NavigationViewBackRequestedEventArgs args)
     {
         if (ContentFrame.CanGoBack)
@@ -194,7 +275,6 @@ public sealed partial class MainWindow : Window
         else if (ContentFrame.SourcePageType == typeof(Views.PlaylistsPage)) tag = "Playlists";
         else if (ContentFrame.SourcePageType == typeof(Views.PlaylistDetailPage)) tag = "Playlists";
         else if (ContentFrame.SourcePageType == typeof(Views.NowPlayingPage)) tag = "NowPlaying";
-        else if (ContentFrame.SourcePageType == typeof(Views.DownloadSongsPage)) tag = "DownloadSongs";
 
         if (tag != null)
         {
@@ -494,5 +574,77 @@ public sealed partial class MainWindow : Window
         {
             ContentFrame.Navigate(typeof(Views.SearchResultsPage), args.QueryText);
         }
+    }
+
+    private async Task RefreshSidebarFavoritesAsync()
+    {
+        try
+        {
+            var favIds = await _libraryService.GetFavoriteTrackIdsAsync();
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                _sidebarFavoriteTrackIds.Clear();
+                foreach (var id in favIds) _sidebarFavoriteTrackIds.Add(id);
+                _sidebarFavoriteButtons.RemoveAll(btn => btn.XamlRoot == null);
+                foreach (var btn in _sidebarFavoriteButtons)
+                {
+                    UpdateSidebarFavoriteButtonIcon(btn);
+                }
+            });
+        }
+        catch { }
+    }
+
+    private void SidebarQueueFavorite_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button btn && !_sidebarFavoriteButtons.Contains(btn))
+        {
+            _sidebarFavoriteButtons.Add(btn);
+            UpdateSidebarFavoriteButtonIcon(btn);
+        }
+    }
+
+    private void SidebarQueueFavorite_DataContextChanged(FrameworkElement sender, DataContextChangedEventArgs args)
+    {
+        if (sender is Button btn)
+        {
+            UpdateSidebarFavoriteButtonIcon(btn);
+        }
+    }
+
+    private void UpdateSidebarFavoriteButtonIcon(Button btn)
+    {
+        if (btn.Content is FontIcon fontIcon && btn.DataContext is QueueItem item)
+        {
+            bool isFav = _sidebarFavoriteTrackIds.Contains(item.Track.Id);
+            fontIcon.Glyph = isFav ? "\uEB52" : "\uEB51";
+            fontIcon.Foreground = isFav
+                ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 64, 96))
+                : ThemedBrush("TextFillColorTertiaryBrush", Windows.UI.Color.FromArgb(255, 136, 136, 136));
+            ToolTipService.SetToolTip(btn, isFav ? "Remove from Favorites" : "Add to Favorites");
+        }
+    }
+
+    private async void SidebarQueueFavorite_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button btn && btn.DataContext is QueueItem item)
+        {
+            bool newFav = await _libraryService.ToggleFavoriteAsync(item.Track.Id);
+            if (newFav) _sidebarFavoriteTrackIds.Add(item.Track.Id);
+            else _sidebarFavoriteTrackIds.Remove(item.Track.Id);
+            UpdateSidebarFavoriteButtonIcon(btn);
+        }
+    }
+
+    private void CloseSidebar_Click(object sender, RoutedEventArgs e)
+    {
+        ViewModel.IsNowPlayingOpen = false;
+    }
+
+    public Visibility MetadataRowVisibility(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value == "-" || value == "0" || value == "Loading..." || value == "Unknown")
+            return Visibility.Collapsed;
+        return Visibility.Visible;
     }
 }

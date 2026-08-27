@@ -10,6 +10,10 @@
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
             </ResourceDictionary.MergedDictionaries>
 
+            <converters:FavoriteGlyphConverter x:Key="FavoriteGlyphConverter" xmlns:converters="using:Octave_Desktop.Converters" />
+            <converters:FavoriteBrushConverter x:Key="FavoriteBrushConverter" xmlns:converters="using:Octave_Desktop.Converters" />
+            <converters:FavoriteToolTipConverter x:Key="FavoriteToolTipConverter" xmlns:converters="using:Octave_Desktop.Converters" />
+
             <!-- NF-14: three "global brushes" hardcoded dark-theme colors
                  (#181818 / #282828 / #121212), so every surface referencing them -
                  the shared card style, the player bar, the detail-page banners -

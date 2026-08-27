@@ -37,8 +37,30 @@ public sealed partial class LyricsPanel : UserControl
     public static readonly DependencyProperty HasPlainLyricsProperty =
         DependencyProperty.Register(nameof(HasPlainLyrics), typeof(bool), typeof(LyricsPanel), new PropertyMetadata(false, OnAvailabilityChanged));
 
+    public static readonly DependencyProperty LyricsSourceProperty =
+        DependencyProperty.Register(nameof(LyricsSource), typeof(string), typeof(LyricsPanel), new PropertyMetadata(null, OnLyricsSourceChanged));
+
+    public static readonly DependencyProperty ReloadLyricsCommandProperty =
+        DependencyProperty.Register(nameof(ReloadLyricsCommand), typeof(System.Windows.Input.ICommand), typeof(LyricsPanel), new PropertyMetadata(null));
+
+    public static readonly DependencyProperty IsReloadingProperty =
+        DependencyProperty.Register(nameof(IsReloading), typeof(bool), typeof(LyricsPanel), new PropertyMetadata(false, OnIsReloadingChanged));
+
     public event EventHandler<int>? OffsetChangeRequested;
     public event EventHandler<LyricDisplayMode>? LyricModeChangeRequested;
+    public event EventHandler? ReloadRequested;
+
+    public System.Windows.Input.ICommand? ReloadLyricsCommand
+    {
+        get => (System.Windows.Input.ICommand?)GetValue(ReloadLyricsCommandProperty);
+        set => SetValue(ReloadLyricsCommandProperty, value);
+    }
+
+    public bool IsReloading
+    {
+        get => (bool)GetValue(IsReloadingProperty);
+        set => SetValue(IsReloadingProperty, value);
+    }
 
     public LyricsState State
     {
@@ -56,6 +78,12 @@ public sealed partial class LyricsPanel : UserControl
     {
         get => (string?)GetValue(UnsyncedTextProperty);
         set => SetValue(UnsyncedTextProperty, value);
+    }
+
+    public string? LyricsSource
+    {
+        get => (string?)GetValue(LyricsSourceProperty);
+        set => SetValue(LyricsSourceProperty, value);
     }
 
     public int CurrentLyricIndex
@@ -125,6 +153,14 @@ public sealed partial class LyricsPanel : UserControl
         if (d is LyricsPanel panel)
         {
             panel.UpdateDropdownItems();
+        }
+    }
+
+    private static void OnLyricsSourceChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is LyricsPanel panel)
+        {
+            panel.UpdateSourceComment();
         }
     }
 
@@ -210,19 +246,39 @@ public sealed partial class LyricsPanel : UserControl
         LyricModeChangeRequested?.Invoke(this, targetMode);
     }
 
+    private static void OnIsReloadingChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is LyricsPanel panel)
+        {
+            panel.UpdateStateViews();
+        }
+    }
+
+    private void ReloadLyricsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ReloadLyricsCommand?.CanExecute(null) == true)
+        {
+            ReloadLyricsCommand.Execute(null);
+        }
+        ReloadRequested?.Invoke(this, EventArgs.Empty);
+    }
+
     private void UpdateStateViews()
     {
-        LoadingContainer.Visibility = State == LyricsState.Loading ? Visibility.Visible : Visibility.Collapsed;
+        bool isLoading = State == LyricsState.Loading || State == LyricsState.Resolving;
+        LoadingContainer.Visibility = isLoading ? Visibility.Visible : Visibility.Collapsed;
         UnavailableContainer.Visibility = State == LyricsState.Unavailable ? Visibility.Visible : Visibility.Collapsed;
+        NetworkUnavailableContainer.Visibility = State == LyricsState.NetworkUnavailable ? Visibility.Visible : Visibility.Collapsed;
         UnsyncedScrollViewer.Visibility = State == LyricsState.Unsynced ? Visibility.Visible : Visibility.Collapsed;
         SyncedScrollViewer.Visibility = State == LyricsState.Synced ? Visibility.Visible : Visibility.Collapsed;
 
-        // UI-NP-06: the nudge/copy toolbar only makes sense while lyrics are shown.
+        // Toolbar: visible when lyrics exist
         bool hasLyrics = State == LyricsState.Synced || State == LyricsState.Unsynced;
         ToolbarRow.Visibility = hasLyrics ? Visibility.Visible : Visibility.Collapsed;
 
         // Sync controls group only visible in Synced Lyrics mode
         SyncControlsPanel.Visibility = (State == LyricsState.Synced) ? Visibility.Visible : Visibility.Collapsed;
+        LyricModeComboBox.Visibility = hasLyrics ? Visibility.Visible : Visibility.Collapsed;
 
         // NF-25: the sync button exists only in the synced view - and only while
         // the user has scrolled away from the active line.
@@ -234,11 +290,41 @@ public sealed partial class LyricsPanel : UserControl
         {
             UpdateOffsetLabel();
             UpdateDropdownItems();
+            UpdateSourceComment();
+        }
+        else
+        {
+            UpdateSourceComment();
         }
 
         if (State == LyricsState.Synced)
         {
             UpdateLyricHighlighting();
+        }
+    }
+
+    private void UpdateSourceComment()
+    {
+        string? comment = !string.IsNullOrWhiteSpace(LyricsSource)
+            ? (LyricsSource.Equals("LRCLIB", StringComparison.OrdinalIgnoreCase)
+                ? "Lyrics provided by LRCLIB"
+                : $"Lyrics source: {LyricsSource}")
+            : null;
+
+        if (SyncedSourceCommentTextBlock != null)
+        {
+            SyncedSourceCommentTextBlock.Text = comment ?? "";
+            SyncedSourceCommentTextBlock.Visibility = (State == LyricsState.Synced && !string.IsNullOrEmpty(comment))
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+
+        if (UnsyncedSourceCommentTextBlock != null)
+        {
+            UnsyncedSourceCommentTextBlock.Text = comment ?? "";
+            UnsyncedSourceCommentTextBlock.Visibility = (State == LyricsState.Unsynced && !string.IsNullOrEmpty(comment))
+                ? Visibility.Visible
+                : Visibility.Collapsed;
         }
     }
 
@@ -389,10 +475,12 @@ public sealed partial class LyricsPanel : UserControl
         {
             OffsetIndicator.Text = $"{(ms > 0 ? "+" : "−")}{Math.Abs(ms) / 1000.0:0.#} s";
             OffsetIndicator.Visibility = Visibility.Visible;
+            if (ResetOffsetButton != null) ResetOffsetButton.Visibility = Visibility.Visible;
         }
         else
         {
             OffsetIndicator.Visibility = Visibility.Collapsed;
+            if (ResetOffsetButton != null) ResetOffsetButton.Visibility = Visibility.Collapsed;
         }
     }
 
@@ -413,6 +501,8 @@ public sealed partial class LyricsPanel : UserControl
         if (OffsetMs != 0)
         {
             OffsetChangeRequested?.Invoke(this, -OffsetMs);
+            if (ResetOffsetButton != null) ResetOffsetButton.Visibility = Visibility.Collapsed;
+            if (OffsetIndicator != null) OffsetIndicator.Visibility = Visibility.Collapsed;
         }
     }
 

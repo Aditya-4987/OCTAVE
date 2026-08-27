@@ -18,6 +18,9 @@ public partial class LibraryTrackItem : ObservableObject
     [ObservableProperty]
     public partial string? ArtworkUrl { get; set; }
 
+    [ObservableProperty]
+    public partial bool IsFavorite { get; set; }
+
     public LibraryTrackItem(Track track) => Track = track;
 
     // Passthroughs so the row DataTemplate's existing {x:Bind}s bind against the

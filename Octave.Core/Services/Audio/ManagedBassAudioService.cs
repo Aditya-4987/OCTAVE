@@ -92,16 +92,17 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
     // Decoder add-ons that extend the core bass.dll (which only handles
     // MP3/MP2/MP1/OGG/WAV/AIFF). Drop the matching un4seen binaries next to
     // bass.dll and these formats start playing - missing ones are skipped.
+    // Note: bass_fx.dll is an FX library loaded directly by ManagedBass.Fx, not a stream plugin.
     private static readonly string[] PluginFileNames =
     {
-        "bass_fx.dll",   // EQ & DSP
         "bassflac.dll",  // FLAC
         "bassopus.dll",  // Opus / .opus
         "bass_aac.dll",  // AAC / M4A / MP4
         "bassalac.dll",  // Apple Lossless (ALAC)
         "basswma.dll",   // WMA
         "bassdsd.dll",   // DSD (.dsf / .dff)
-        "bass_ape.dll"   // Monkey's Audio (APE)
+        "bassape.dll",   // Monkey's Audio (APE)
+        "basswv.dll"     // WavPack (.wv)
     };
 
     private float _currentReplayGainScale = 1.0f;

@@ -635,4 +635,215 @@ public class QueueServiceTests : IDisposable
         Assert.Equal("t3", queueService.CurrentState.CurrentTrack?.Id);
         _audioPlayerMock.Verify(a => a.Stop(), Times.Once);
     }
+
+    [Fact]
+    public async Task HandleTrackEndedAsync_CrossfadeStaleOldSession_DoesNotAdvanceNewerTrack()
+    {
+        // Integration test for crossfade race condition:
+        // Track A is playing (Session 100).
+        // Track B becomes active (Session 200) during crossfade.
+        // Old stream for Track A emits TrackEnded (Session 100).
+        // Must NOT advance to Track C!
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+
+        var trackA = new Track("tA", "Track A", "ar1", "Artist", "al1", "Album", 180, "http://test/A.mp3", 1, 2024, DateTime.UtcNow);
+        var trackB = new Track("tB", "Track B", "ar1", "Artist", "al1", "Album", 180, "http://test/B.mp3", 2, 2024, DateTime.UtcNow);
+        var trackC = new Track("tC", "Track C", "ar1", "Artist", "al1", "Album", 180, "http://test/C.mp3", 3, 2024, DateTime.UtcNow);
+
+        await _dbContext.UpsertTrackAsync(trackA);
+        await _dbContext.UpsertTrackAsync(trackB);
+        await _dbContext.UpsertTrackAsync(trackC);
+
+        queueService.EnqueueRange(new[] { trackA, trackB, trackC });
+
+        // Start Track A (Session 100)
+        _audioPlayerMock.Setup(a => a.Play("http://test/A.mp3", It.IsAny<double>())).Returns(100L);
+        queueService.PlayIndex(0);
+        Assert.Equal("tA", queueService.CurrentState.CurrentTrack?.Id);
+
+        // Crossfade begins: Track B becomes active (Session 200)
+        _audioPlayerMock.Setup(a => a.Play("http://test/B.mp3", It.IsAny<double>())).Returns(200L);
+        queueService.PlayIndex(1);
+        Assert.Equal("tB", queueService.CurrentState.CurrentTrack?.Id);
+
+        // Old Track A's stream finishes and emits TrackEnded for Session 100
+        _audioPlayerMock.Raise(a => a.TrackEnded += null, new TrackEndedEventArgs(100L, trackA.SourceUri, isNaturalEnd: true));
+
+        // Yield to allow any async handler to run
+        await Task.Delay(50);
+
+        // Must still be on Track B — must NOT have advanced to Track C!
+        Assert.Equal("tB", queueService.CurrentState.CurrentTrack?.Id);
+        _audioPlayerMock.Verify(a => a.Play("http://test/C.mp3", It.IsAny<double>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleTrackEndedAsync_DuplicateTrackEndedEvents_AdvancesOnlyOnce()
+    {
+        // Ensure duplicate TrackEnded callbacks for the same session cannot trigger multiple advances
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+
+        var trackA = new Track("tA", "Track A", "ar1", "Artist", "al1", "Album", 180, "http://test/A.mp3", 1, 2024, DateTime.UtcNow);
+        var trackB = new Track("tB", "Track B", "ar1", "Artist", "al1", "Album", 180, "http://test/B.mp3", 2, 2024, DateTime.UtcNow);
+        var trackC = new Track("tC", "Track C", "ar1", "Artist", "al1", "Album", 180, "http://test/C.mp3", 3, 2024, DateTime.UtcNow);
+
+        await _dbContext.UpsertTrackAsync(trackA);
+        await _dbContext.UpsertTrackAsync(trackB);
+        await _dbContext.UpsertTrackAsync(trackC);
+
+        queueService.EnqueueRange(new[] { trackA, trackB, trackC });
+
+        _audioPlayerMock.Setup(a => a.Play("http://test/A.mp3", It.IsAny<double>())).Returns(100L);
+        queueService.PlayIndex(0);
+        Assert.Equal("tA", queueService.CurrentState.CurrentTrack?.Id);
+
+        long sessionB = 200L;
+        var advancedToB = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _audioPlayerMock.Setup(a => a.Play("http://test/B.mp3", It.IsAny<double>()))
+            .Returns(() => sessionB)
+            .Callback(() => advancedToB.TrySetResult());
+
+        // Fire duplicate TrackEnded events for Session 100 concurrently
+        _audioPlayerMock.Raise(a => a.TrackEnded += null, new TrackEndedEventArgs(100L, trackA.SourceUri, isNaturalEnd: true));
+        _audioPlayerMock.Raise(a => a.TrackEnded += null, new TrackEndedEventArgs(100L, trackA.SourceUri, isNaturalEnd: true));
+
+        await advancedToB.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Task.Delay(50);
+
+        // Should be on Track B, never on Track C
+        Assert.Equal("tB", queueService.CurrentState.CurrentTrack?.Id);
+        _audioPlayerMock.Verify(a => a.Play("http://test/B.mp3", It.IsAny<double>()), Times.Once);
+        _audioPlayerMock.Verify(a => a.Play("http://test/C.mp3", It.IsAny<double>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleTrackEndedAsync_WithDispatcherService_ExecutesAdvanceOnUIThread()
+    {
+        var dispatcherMock = new Mock<IDispatcherService>();
+        dispatcherMock.Setup(d => d.IsOnUIThread).Returns(false);
+        dispatcherMock.Setup(d => d.ExecuteOnUIThread(It.IsAny<Action>()))
+            .Callback<Action>(action => action()); // Execute action
+
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object, dispatcherMock.Object);
+
+        var trackA = new Track("tA", "Track A", "ar1", "Artist", "al1", "Album", 180, "http://test/A.mp3", 1, 2024, DateTime.UtcNow);
+        var trackB = new Track("tB", "Track B", "ar1", "Artist", "al1", "Album", 180, "http://test/B.mp3", 2, 2024, DateTime.UtcNow);
+
+        await _dbContext.UpsertTrackAsync(trackA);
+        await _dbContext.UpsertTrackAsync(trackB);
+
+        queueService.EnqueueRange(new[] { trackA, trackB });
+
+        _audioPlayerMock.Setup(a => a.Play("http://test/A.mp3", It.IsAny<double>())).Returns(100L);
+        queueService.PlayIndex(0);
+
+        var advancedToB = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _audioPlayerMock.Setup(a => a.Play("http://test/B.mp3", It.IsAny<double>()))
+            .Returns(200L)
+            .Callback(() => advancedToB.TrySetResult());
+
+        // Fire TrackEnded from a ThreadPool background thread
+        await Task.Run(() =>
+        {
+            _audioPlayerMock.Raise(a => a.TrackEnded += null, new TrackEndedEventArgs(100L, trackA.SourceUri, isNaturalEnd: true));
+        });
+
+        await advancedToB.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal("tB", queueService.CurrentState.CurrentTrack?.Id);
+        dispatcherMock.Verify(d => d.ExecuteOnUIThread(It.IsAny<Action>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task AutoAdvance_LongSequenceOfTwentyTracks_AdvancesConsistentlyWithoutStalling()
+    {
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+        var tracks = new List<Track>();
+
+        for (int i = 0; i < 20; i++)
+        {
+            var t = new Track($"t{i}", $"Track {i}", "ar1", "Artist", "al1", "Album", 180, $"http://test/{i}.mp3", i + 1, 2024, DateTime.UtcNow);
+            tracks.Add(t);
+            await _dbContext.UpsertTrackAsync(t);
+        }
+
+        queueService.EnqueueRange(tracks);
+
+        long currentSession = 1000L;
+        _audioPlayerMock.Setup(a => a.Play(It.IsAny<string>(), It.IsAny<double>()))
+            .Returns(() => ++currentSession);
+
+        // Start track 0
+        queueService.PlayIndex(0);
+        Assert.Equal("t0", queueService.CurrentState.CurrentTrack?.Id);
+
+        // Progressively auto-advance through all 20 tracks
+        for (int i = 0; i < 19; i++)
+        {
+            long sessionToComplete = currentSession;
+            string expectedNextTrackId = $"t{i + 1}";
+            string expectedNextUri = $"http://test/{i + 1}.mp3";
+
+            var advancedTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _audioPlayerMock.Setup(a => a.Play(expectedNextUri, It.IsAny<double>()))
+                .Returns(() => ++currentSession)
+                .Callback(() => advancedTcs.TrySetResult());
+
+            _audioPlayerMock.Raise(a => a.TrackEnded += null, new TrackEndedEventArgs(sessionToComplete, tracks[i].SourceUri, isNaturalEnd: true));
+            await advancedTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal(expectedNextTrackId, queueService.CurrentState.CurrentTrack?.Id);
+        }
+    }
+
+    [Fact]
+    public async Task HandleTrackEnded_StressWithDelayedReorderedAndDuplicateCallbacks_MaintainsConsistentState()
+    {
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+        var track1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", 1, 2024, DateTime.UtcNow);
+        var track2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", 2, 2024, DateTime.UtcNow);
+        var track3 = new Track("t3", "Track 3", "ar1", "Artist", "al1", "Album", 180, "http://test/3.mp3", 3, 2024, DateTime.UtcNow);
+
+        await _dbContext.UpsertTrackAsync(track1);
+        await _dbContext.UpsertTrackAsync(track2);
+        await _dbContext.UpsertTrackAsync(track3);
+
+        queueService.EnqueueRange(new[] { track1, track2, track3 });
+
+        long session1 = 101L;
+        long session2 = 102L;
+
+        _audioPlayerMock.Setup(a => a.Play("http://test/1.mp3", It.IsAny<double>())).Returns(session1);
+        queueService.PlayIndex(0);
+        Assert.Equal("t1", queueService.CurrentState.CurrentTrack?.Id);
+
+        var advancedTo2 = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _audioPlayerMock.Setup(a => a.Play("http://test/2.mp3", It.IsAny<double>()))
+            .Returns(session2)
+            .Callback(() => advancedTo2.TrySetResult());
+
+        // 1. Send valid TrackEnded for session1 -> transitions to track 2
+        _audioPlayerMock.Raise(a => a.TrackEnded += null, new TrackEndedEventArgs(session1, track1.SourceUri, isNaturalEnd: true));
+        await advancedTo2.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("t2", queueService.CurrentState.CurrentTrack?.Id);
+
+        // 2. Inject duplicate TrackEnded for session1 (simulating race/delayed duplicate callback from audio engine)
+        _audioPlayerMock.Raise(a => a.TrackEnded += null, new TrackEndedEventArgs(session1, track1.SourceUri, isNaturalEnd: true));
+
+        // 3. Inject stale TrackEnded for a non-existent session
+        _audioPlayerMock.Raise(a => a.TrackEnded += null, new TrackEndedEventArgs(9999L, track1.SourceUri, isNaturalEnd: true));
+
+        // State must remain stably at Track 2
+        Assert.Equal("t2", queueService.CurrentState.CurrentTrack?.Id);
+
+        // 4. Now send valid TrackEnded for session2 -> transitions to track 3
+        var advancedTo3 = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _audioPlayerMock.Setup(a => a.Play("http://test/3.mp3", It.IsAny<double>()))
+            .Returns(103L)
+            .Callback(() => advancedTo3.TrySetResult());
+
+        _audioPlayerMock.Raise(a => a.TrackEnded += null, new TrackEndedEventArgs(session2, track2.SourceUri, isNaturalEnd: true));
+        await advancedTo3.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("t3", queueService.CurrentState.CurrentTrack?.Id);
+    }
 }

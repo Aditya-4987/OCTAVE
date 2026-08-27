@@ -78,6 +78,27 @@ public partial class ShellViewModel : ObservableObject
     public partial string InfoLocation { get; set; } = "";
 
     [ObservableProperty]
+    public partial string InfoYear { get; set; } = "";
+
+    [ObservableProperty]
+    public partial string InfoGenre { get; set; } = "";
+
+    [ObservableProperty]
+    public partial string InfoTrackNumber { get; set; } = "";
+
+    [ObservableProperty]
+    public partial string InfoDiscNumber { get; set; } = "";
+
+    [ObservableProperty]
+    public partial string InfoReplayGain { get; set; } = "";
+
+    [ObservableProperty]
+    public partial string InfoChannels { get; set; } = "";
+
+    [ObservableProperty]
+    public partial string InfoBitDepth { get; set; } = "";
+
+    [ObservableProperty]
     public partial bool IsNowPlayingOpen { get; set; }
 
     [ObservableProperty]
@@ -137,14 +158,7 @@ public partial class ShellViewModel : ObservableObject
 
         _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
 
-        try
-        {
-            if (Windows.Storage.ApplicationData.Current.LocalSettings.Values.TryGetValue("IsVisualizerEnabled", out var val) && val is bool b)
-            {
-                _isVisualizerEnabled = b;
-            }
-        }
-        catch { }
+        _ = LoadSettingsAsync();
 
         _queueService.PlaybackStateChanged += (s, state) =>
         {
@@ -190,10 +204,14 @@ public partial class ShellViewModel : ObservableObject
         {
             band.PushInitialGainToEngine();
             // UI-ST-03: every gain change - slider drag or preset apply -
-            // recomputes the active-preset indicator from the band values.
+            // recomputes the active-preset indicator and persists gains.
             band.PropertyChanged += (_, e) =>
             {
-                if (e.PropertyName == nameof(EqBandViewModel.Gain)) UpdateActivePresetName();
+                if (e.PropertyName == nameof(EqBandViewModel.Gain))
+                {
+                    UpdateActivePresetName();
+                    SaveEqGains();
+                }
             };
         }
         UpdateActivePresetName();
@@ -490,8 +508,12 @@ public partial class ShellViewModel : ObservableObject
         get => _queueService.RestorePositionOnStartup;
         set
         {
-            _queueService.RestorePositionOnStartup = value;
-            OnPropertyChanged();
+            if (_queueService.RestorePositionOnStartup != value)
+            {
+                _queueService.RestorePositionOnStartup = value;
+                _ = _dbContext.SetSettingAsync("RestorePositionOnStartup", value.ToString());
+                OnPropertyChanged();
+            }
         }
     }
 
@@ -504,11 +526,7 @@ public partial class ShellViewModel : ObservableObject
             if (_isVisualizerEnabled != value)
             {
                 _isVisualizerEnabled = value;
-                try
-                {
-                    Windows.Storage.ApplicationData.Current.LocalSettings.Values["IsVisualizerEnabled"] = value;
-                }
-                catch { }
+                _ = _dbContext.SetSettingAsync("IsVisualizerEnabled", value.ToString());
                 OnPropertyChanged();
             }
         }
@@ -522,6 +540,7 @@ public partial class ShellViewModel : ObservableObject
         set
         {
             _audioPlayer.CrossfadeDurationMs = value ? (CrossfadeSeconds * 1000) : 0;
+            _ = _dbContext.SetSettingAsync("IsCrossfadeEnabled", value.ToString());
             OnPropertyChanged();
             OnPropertyChanged(nameof(CrossfadeSeconds));
         }
@@ -538,6 +557,7 @@ public partial class ShellViewModel : ObservableObject
             {
                 _audioPlayer.CrossfadeDurationMs = _crossfadeSeconds * 1000;
             }
+            _ = _dbContext.SetSettingAsync("CrossfadeSeconds", _crossfadeSeconds.ToString());
             OnPropertyChanged();
         }
     }
@@ -572,8 +592,12 @@ public partial class ShellViewModel : ObservableObject
         get => _audioPlayer.IsEqEnabled;
         set
         {
-            _audioPlayer.SetEqEnabled(value);
-            OnPropertyChanged();
+            if (_audioPlayer.IsEqEnabled != value)
+            {
+                _audioPlayer.SetEqEnabled(value);
+                _ = _dbContext.SetSettingAsync("EqEnabled", value.ToString());
+                OnPropertyChanged();
+            }
         }
     }
 
@@ -585,7 +609,7 @@ public partial class ShellViewModel : ObservableObject
         for (int i = 0; i < EqBands.Count && i < gains.Length; i++)
         {
             EqBands[i].Gain = gains[i]; // setter applies to the engine (and raises
-                                        // the PropertyChanged that refreshes ActivePresetName)
+                                        // the PropertyChanged that refreshes ActivePresetName and saves gains)
         }
     }
 
@@ -607,6 +631,95 @@ public partial class ShellViewModel : ObservableObject
             }
         }
         ActivePresetName = "Custom";
+    }
+
+    private void SaveEqGains()
+    {
+        try
+        {
+            var gainsStr = string.Join(",", EqBands.Select(b => b.Gain.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)));
+            _ = _dbContext.SetSettingAsync("EqGains", gainsStr);
+        }
+        catch { }
+    }
+
+    private async Task LoadSettingsAsync()
+    {
+        try
+        {
+            // Visualizer
+            var visVal = await _dbContext.GetSettingAsync("IsVisualizerEnabled");
+            if (bool.TryParse(visVal, out var visBool))
+            {
+                _dispatcher.TryEnqueue(() =>
+                {
+                    _isVisualizerEnabled = visBool;
+                    OnPropertyChanged(nameof(IsVisualizerEnabled));
+                });
+            }
+
+            // RestorePositionOnStartup
+            var resVal = await _dbContext.GetSettingAsync("RestorePositionOnStartup");
+            if (bool.TryParse(resVal, out var resBool))
+            {
+                _dispatcher.TryEnqueue(() =>
+                {
+                    _queueService.RestorePositionOnStartup = resBool;
+                    OnPropertyChanged(nameof(RestorePositionOnStartup));
+                });
+            }
+
+            // Crossfade
+            var cfEnabledVal = await _dbContext.GetSettingAsync("IsCrossfadeEnabled");
+            var cfSecVal = await _dbContext.GetSettingAsync("CrossfadeSeconds");
+            int cfSeconds = 1;
+            if (int.TryParse(cfSecVal, out var s))
+            {
+                cfSeconds = Math.Clamp(s, 1, 10);
+            }
+            bool cfEnabled = false;
+            if (bool.TryParse(cfEnabledVal, out var cfB))
+            {
+                cfEnabled = cfB;
+            }
+
+            _dispatcher.TryEnqueue(() =>
+            {
+                _crossfadeSeconds = cfSeconds;
+                _audioPlayer.CrossfadeDurationMs = cfEnabled ? (cfSeconds * 1000) : 0;
+                OnPropertyChanged(nameof(IsCrossfadeEnabled));
+                OnPropertyChanged(nameof(CrossfadeSeconds));
+            });
+
+            // Equalizer
+            var eqEnabledVal = await _dbContext.GetSettingAsync("EqEnabled");
+            if (bool.TryParse(eqEnabledVal, out var eqB))
+            {
+                _dispatcher.TryEnqueue(() =>
+                {
+                    _audioPlayer.SetEqEnabled(eqB);
+                    OnPropertyChanged(nameof(EqEnabled));
+                });
+            }
+
+            var eqGainsVal = await _dbContext.GetSettingAsync("EqGains");
+            if (!string.IsNullOrEmpty(eqGainsVal))
+            {
+                var parts = eqGainsVal.Split(',');
+                _dispatcher.TryEnqueue(() =>
+                {
+                    for (int i = 0; i < parts.Length && i < EqBands.Count; i++)
+                    {
+                        if (double.TryParse(parts[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var g))
+                        {
+                            EqBands[i].Gain = g;
+                        }
+                    }
+                    UpdateActivePresetName();
+                });
+            }
+        }
+        catch { }
     }
 
     // ---- Duplicate detection ----------------------------------------------
@@ -721,6 +834,13 @@ public partial class ShellViewModel : ObservableObject
             var uri = state.CurrentTrack.SourceUri;
             InfoLocation = uri;
             InfoFormat = Path.GetExtension(uri).TrimStart('.').ToUpperInvariant();
+            InfoYear = state.CurrentTrack.Year > 0 ? state.CurrentTrack.Year.ToString() : "-";
+            InfoGenre = !string.IsNullOrWhiteSpace(state.CurrentTrack.Genre) ? state.CurrentTrack.Genre : "-";
+            InfoTrackNumber = state.CurrentTrack.TrackNumber > 0 ? state.CurrentTrack.TrackNumber.ToString() : "-";
+            InfoDiscNumber = state.CurrentTrack.DiscNumber > 0 ? state.CurrentTrack.DiscNumber.ToString() : "-";
+            InfoReplayGain = Math.Abs(state.CurrentTrack.ReplayGain) > 0.001f ? $"{state.CurrentTrack.ReplayGain:+0.00;-0.00} dB" : "-";
+            InfoChannels = _audioPlayer.QualityDetails?.ChannelsText ?? "Stereo (2.0)";
+            InfoBitDepth = _audioPlayer.QualityDetails?.BitDepth > 0 ? $"{_audioPlayer.QualityDetails.BitDepth}-bit" : "-";
 
             if (state.CurrentTrack.Id != _lastTrackId)
             {
@@ -744,6 +864,13 @@ public partial class ShellViewModel : ObservableObject
             InfoFileSize = "";
             InfoBitrate = "";
             InfoSampleRate = "";
+            InfoYear = "";
+            InfoGenre = "";
+            InfoTrackNumber = "";
+            InfoDiscNumber = "";
+            InfoReplayGain = "";
+            InfoChannels = "";
+            InfoBitDepth = "";
         }
 
         if (state.CurrentTrack?.Id != _lastTrackId)

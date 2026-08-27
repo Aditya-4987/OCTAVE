@@ -20,13 +20,13 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <TextBlock x:Name="SearchQueryText" FontSize="36" FontWeight="Bold" Margin="0,0,0,16" Padding="32,48,32,0" Foreground="White" />
+        <TextBlock x:Name="SearchQueryText" FontSize="36" FontWeight="Bold" Margin="0,0,0,16" Padding="32,48,32,0" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
 
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
             <StackPanel Spacing="32">
                 <!-- Section 1: Tracks -->
                 <StackPanel x:Name="TracksSection" Visibility="{x:Bind VisibilityFromCount(ViewModel.Tracks.Count), Mode=OneWay}">
-                    <TextBlock Text="Tracks" FontSize="20" FontWeight="Bold" Foreground="White" Margin="0,0,0,12" />
+                    <TextBlock Text="Tracks" FontSize="20" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" Margin="0,0,0,12" />
                     <ListView ItemsSource="{x:Bind ViewModel.Tracks, Mode=OneWay}"
                               IsItemClickEnabled="True"
                               ItemClick="ListView_ItemClick"
@@ -34,13 +34,14 @@
                               Padding="32,0">
                         <ListView.ItemTemplate>
                             <DataTemplate x:DataType="models:Track">
-                                <Grid Padding="16,8" Background="Transparent" Height="56" RightTapped="TrackRow_RightTapped" CornerRadius="4" Margin="0,0,0,4">
+                                <Grid Padding="16,8" Background="Transparent" Height="56" RightTapped="TrackRow_RightTapped" CornerRadius="6" Margin="0,0,0,4">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="40" />
                                         <ColumnDefinition Width="2*" />
                                         <ColumnDefinition Width="1*" />
                                         <ColumnDefinition Width="1*" />
                                         <ColumnDefinition Width="80" />
+                                        <ColumnDefinition Width="40" />
                                         <ColumnDefinition Width="40" />
                                     </Grid.ColumnDefinitions>
 
@@ -57,30 +58,44 @@
                                         <FontIcon Glyph="&#xE768;"
                                                   FontFamily="Segoe MDL2 Assets"
                                                   FontSize="14"
-                                                  Foreground="White"/>
+                                                  Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
                                     </Button>
 
                                     <!-- Title -->
-                                    <TextBlock Grid.Column="1" Text="{x:Bind Title}" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="White" TextTrimming="CharacterEllipsis" Margin="8,0,0,0"/>
+                                    <TextBlock Grid.Column="1" Text="{x:Bind Title}" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" Margin="8,0,0,0"/>
 
                                     <!-- Artist -->
-                                    <TextBlock Grid.Column="2" Text="{x:Bind ArtistName}" VerticalAlignment="Center" Foreground="#888888" TextTrimming="CharacterEllipsis" Margin="8,0,0,0"/>
+                                    <TextBlock Grid.Column="2" Text="{x:Bind ArtistName}" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" Margin="8,0,0,0"/>
 
                                     <!-- Album -->
-                                    <TextBlock Grid.Column="3" Text="{x:Bind AlbumTitle}" VerticalAlignment="Center" Foreground="#888888" TextTrimming="CharacterEllipsis" Margin="8,0,0,0"/>
+                                    <TextBlock Grid.Column="3" Text="{x:Bind AlbumTitle}" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" Margin="8,0,0,0"/>
 
                                     <!-- Duration -->
-                                    <TextBlock Grid.Column="4" Text="{x:Bind local:SearchResultsPage.FormatDuration(DurationSeconds)}" VerticalAlignment="Center" Foreground="#888888" HorizontalAlignment="Right" Margin="0,0,8,0"/>
+                                    <TextBlock Grid.Column="4" Text="{x:Bind local:SearchResultsPage.FormatDuration(DurationSeconds)}" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Right" Margin="0,0,8,0"/>
+
+                                    <!-- Favorite Button -->
+                                    <Button Grid.Column="5"
+                                            Click="FavoriteButton_Click"
+                                            Loaded="FavoriteButton_Loaded"
+                                            DataContextChanged="FavoriteButton_DataContextChanged"
+                                            Background="Transparent"
+                                            BorderBrush="Transparent"
+                                            Padding="4"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            ToolTipService.ToolTip="Favorite">
+                                        <FontIcon Glyph="&#xEB51;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                                    </Button>
 
                                     <!-- More Menu -->
-                                    <Button Grid.Column="5" 
+                                    <Button Grid.Column="6" 
                                             Background="Transparent" 
                                             BorderBrush="Transparent" 
                                             Padding="4"
                                             Click="MoreMenuButton_Click"
                                             HorizontalAlignment="Center" 
                                             VerticalAlignment="Center">
-                                        <FontIcon Glyph="&#xE712;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#888888"/>
+                                        <FontIcon Glyph="&#xE712;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
                                     </Button>
                                 </Grid>
                             </DataTemplate>
@@ -90,7 +105,7 @@
 
                 <!-- Section 2: Albums -->
                 <StackPanel x:Name="AlbumsSection" Visibility="{x:Bind VisibilityFromCount(ViewModel.Albums.Count), Mode=OneWay}">
-                    <TextBlock Text="Albums" FontSize="20" FontWeight="Bold" Foreground="White" Margin="32,0,0,12" />
+                    <TextBlock Text="Albums" FontSize="20" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" Margin="32,0,0,12" />
                     <GridView ItemsSource="{x:Bind ViewModel.Albums, Mode=OneWay}"
                               SelectionMode="None"
                               IsItemClickEnabled="True"
@@ -99,8 +114,19 @@
                               ItemContainerStyle="{StaticResource CleanGridViewItemStyle}">
                         <GridView.ItemTemplate>
                             <DataTemplate x:DataType="models:Album">
-                                <Grid Width="160" Height="220" Style="{StaticResource StandardCardStyle}"
-                                      PointerEntered="Card_PointerEntered" PointerExited="Card_PointerExited">
+                                <Grid Width="160" Height="220" Style="{StaticResource StandardCardStyle}">
+                                    <VisualStateManager.VisualStateGroups>
+                                        <VisualStateGroup x:Name="CommonStates">
+                                            <VisualState x:Name="Normal" />
+                                            <VisualState x:Name="PointerOver">
+                                                <Storyboard>
+                                                    <ObjectAnimationUsingKeyFrames Storyboard.TargetProperty="BorderBrush">
+                                                        <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource SystemControlHighlightAccentBrush}" />
+                                                    </ObjectAnimationUsingKeyFrames>
+                                                </Storyboard>
+                                            </VisualState>
+                                        </VisualStateGroup>
+                                    </VisualStateManager.VisualStateGroups>
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" />
@@ -108,15 +134,15 @@
                                     </Grid.RowDefinitions>
 
                                     <!-- Square Artwork Image -->
-                                    <Border Grid.Row="0" Width="136" Height="136" Background="#222222" CornerRadius="4" Margin="0,0,0,12">
+                                    <Border Grid.Row="0" Width="136" Height="136" Background="{ThemeResource LayerFillColorDefaultBrush}" CornerRadius="4" Margin="0,0,0,12">
                                         <Image Source="{x:Bind ArtworkUrl, Converter={StaticResource ArtworkPathConverter}}" Stretch="UniformToFill" />
                                     </Border>
 
                                     <!-- Title -->
-                                    <TextBlock Grid.Row="1" Text="{x:Bind Title}" FontWeight="Bold" FontSize="14" Foreground="White" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Row="1" Text="{x:Bind Title}" FontWeight="Bold" FontSize="14" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" />
 
                                     <!-- Artist -->
-                                    <TextBlock Grid.Row="2" Text="{x:Bind ArtistName}" FontSize="12" Foreground="#AAAAAA" TextTrimming="CharacterEllipsis" Margin="0,4,0,0"/>
+                                    <TextBlock Grid.Row="2" Text="{x:Bind ArtistName}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" Margin="0,4,0,0"/>
                                 </Grid>
                             </DataTemplate>
                         </GridView.ItemTemplate>
@@ -125,7 +151,7 @@
 
                 <!-- Section 3: Artists -->
                 <StackPanel x:Name="ArtistsSection" Visibility="{x:Bind VisibilityFromCount(ViewModel.Artists.Count), Mode=OneWay}">
-                    <TextBlock Text="Artists" FontSize="20" FontWeight="Bold" Foreground="White" Margin="32,0,0,12" />
+                    <TextBlock Text="Artists" FontSize="20" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" Margin="32,0,0,12" />
                     <GridView ItemsSource="{x:Bind ViewModel.Artists, Mode=OneWay}"
                               SelectionMode="None"
                               IsItemClickEnabled="True"
@@ -134,20 +160,31 @@
                               ItemContainerStyle="{StaticResource CleanGridViewItemStyle}">
                         <GridView.ItemTemplate>
                             <DataTemplate x:DataType="models:Artist">
-                                <Grid Width="160" Height="210" Style="{StaticResource StandardCardStyle}"
-                                      PointerEntered="Card_PointerEntered" PointerExited="Card_PointerExited">
+                                <Grid Width="160" Height="210" Style="{StaticResource StandardCardStyle}">
+                                    <VisualStateManager.VisualStateGroups>
+                                        <VisualStateGroup x:Name="CommonStates">
+                                            <VisualState x:Name="Normal" />
+                                            <VisualState x:Name="PointerOver">
+                                                <Storyboard>
+                                                    <ObjectAnimationUsingKeyFrames Storyboard.TargetProperty="BorderBrush">
+                                                        <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource SystemControlHighlightAccentBrush}" />
+                                                    </ObjectAnimationUsingKeyFrames>
+                                                </Storyboard>
+                                            </VisualState>
+                                        </VisualStateGroup>
+                                    </VisualStateManager.VisualStateGroups>
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="*" />
                                     </Grid.RowDefinitions>
 
                                     <!-- Circular Artwork Image -->
-                                    <Border Grid.Row="0" Width="120" Height="120" CornerRadius="60" HorizontalAlignment="Center" Background="#222222" Margin="0,0,0,12">
+                                    <Border Grid.Row="0" Width="120" Height="120" CornerRadius="60" HorizontalAlignment="Center" Background="{ThemeResource LayerFillColorDefaultBrush}" Margin="0,0,0,12">
                                         <Image Source="{x:Bind ArtworkUrl, Mode=OneTime, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Artist}" Stretch="UniformToFill"/>
                                     </Border>
 
                                     <!-- Name -->
-                                    <TextBlock Grid.Row="1" Text="{x:Bind Name}" FontWeight="Bold" FontSize="14" Foreground="White" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center"/>
+                                    <TextBlock Grid.Row="1" Text="{x:Bind Name}" FontWeight="Bold" FontSize="14" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center"/>
                                 </Grid>
                             </DataTemplate>
                         </GridView.ItemTemplate>
@@ -156,7 +193,7 @@
 
                 <!-- Section 4: Playlists -->
                 <StackPanel x:Name="PlaylistsSection" Visibility="{x:Bind VisibilityFromCount(ViewModel.Playlists.Count), Mode=OneWay}">
-                    <TextBlock Text="Playlists" FontSize="20" FontWeight="Bold" Foreground="White" Margin="32,0,0,12" />
+                    <TextBlock Text="Playlists" FontSize="20" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" Margin="32,0,0,12" />
                     <GridView ItemsSource="{x:Bind ViewModel.Playlists, Mode=OneWay}"
                               SelectionMode="None"
                               IsItemClickEnabled="True"
@@ -165,22 +202,33 @@
                               ItemContainerStyle="{StaticResource CleanGridViewItemStyle}">
                         <GridView.ItemTemplate>
                             <DataTemplate x:DataType="models:Playlist">
-                                <Grid Width="160" Height="210" Style="{StaticResource StandardCardStyle}"
-                                      PointerEntered="Card_PointerEntered" PointerExited="Card_PointerExited">
+                                <Grid Width="160" Height="210" Style="{StaticResource StandardCardStyle}">
+                                    <VisualStateManager.VisualStateGroups>
+                                        <VisualStateGroup x:Name="CommonStates">
+                                            <VisualState x:Name="Normal" />
+                                            <VisualState x:Name="PointerOver">
+                                                <Storyboard>
+                                                    <ObjectAnimationUsingKeyFrames Storyboard.TargetProperty="BorderBrush">
+                                                        <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource SystemControlHighlightAccentBrush}" />
+                                                    </ObjectAnimationUsingKeyFrames>
+                                                </Storyboard>
+                                            </VisualState>
+                                        </VisualStateGroup>
+                                    </VisualStateManager.VisualStateGroups>
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="*" />
                                     </Grid.RowDefinitions>
 
                                     <!-- Playlist Icon Container -->
-                                    <Border Grid.Row="0" Width="120" Height="120" CornerRadius="8" HorizontalAlignment="Center" Background="#222222" Margin="0,0,0,12">
+                                    <Border Grid.Row="0" Width="120" Height="120" CornerRadius="8" HorizontalAlignment="Center" Background="{ThemeResource LayerFillColorDefaultBrush}" Margin="0,0,0,12">
                                         <FontIcon Glyph="&#xE90B;" FontFamily="Segoe MDL2 Assets" FontSize="40" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                     </Border>
 
                                     <!-- Title & Track Count -->
                                     <StackPanel Grid.Row="1" HorizontalAlignment="Center">
-                                        <TextBlock Text="{x:Bind Title}" FontWeight="Bold" FontSize="14" Foreground="White" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center"/>
-                                        <TextBlock Text="{x:Bind local:SearchResultsPage.TrackCountText(TrackCount)}" FontSize="12" Foreground="#888888" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" Margin="0,2,0,0"/>
+                                        <TextBlock Text="{x:Bind Title}" FontWeight="Bold" FontSize="14" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="{x:Bind local:SearchResultsPage.TrackCountText(TrackCount)}" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" Margin="0,2,0,0"/>
                                     </StackPanel>
                                 </Grid>
                             </DataTemplate>
@@ -191,7 +239,7 @@
                 <!-- No Results fallback -->
                 <TextBlock Text="No matches found." 
                            FontSize="16" 
-                           Foreground="#888888" 
+                           Foreground="{ThemeResource TextFillColorTertiaryBrush}" 
                            HorizontalAlignment="Center" 
                            Margin="0,48,0,0"
                            Visibility="{x:Bind NoResultsVisibility(ViewModel.Tracks.Count, ViewModel.Albums.Count, ViewModel.Artists.Count, ViewModel.Playlists.Count), Mode=OneWay}"/>

@@ -158,4 +158,23 @@ public class PlaylistServiceTests : IDisposable
         Assert.NotNull(await _dbContext.GetTrackByIdAsync("t1"));
         Assert.NotNull(await _dbContext.GetTrackByIdAsync("t2"));
     }
+
+    [Fact]
+    public async Task AddTracksAsync_BulkInsertsInOrder_AndMaintainsTrackCount()
+    {
+        var playlist = await CreateWithTracksAsync("b1", "b2", "b3");
+        await _service.AddTracksAsync(playlist.Id, new[] { "b1", "b2", "b3" });
+
+        var entries = await _service.GetPlaylistTrackEntriesAsync(playlist.Id);
+        Assert.Equal(3, entries.Count);
+        Assert.Equal("b1", entries[0].Track.Id);
+        Assert.Equal("b2", entries[1].Track.Id);
+        Assert.Equal("b3", entries[2].Track.Id);
+
+        // Appending more tracks continues sort order without conflict
+        await _service.AddTracksAsync(playlist.Id, new[] { "b1" });
+        var updated = await _service.GetPlaylistTrackEntriesAsync(playlist.Id);
+        Assert.Equal(4, updated.Count);
+        Assert.Equal("b1", updated[3].Track.Id);
+    }
 }

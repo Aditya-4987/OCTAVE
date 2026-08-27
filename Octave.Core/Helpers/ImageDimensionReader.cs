@@ -33,17 +33,14 @@ public static class ImageDimensionReader
             // PNG: 8-byte signature then IHDR chunk - width at fixed offset 16.
             if (header[0] == 0x89 && header[1] == 0x50)
             {
-                Span<byte> ihdr = stackalloc byte[8];
+                Span<byte> ihdr = stackalloc byte[4];
                 stream.Position = 16;
-                if (stream.Read(ihdr) < 8)
+                if (stream.Read(ihdr) < 4)
                 {
                     return null;
                 }
-                if (BitConverter.IsLittleEndian)
-                {
-                    ihdr.Reverse();
-                }
-                return BitConverter.ToInt32(ihdr.Slice(4, 4));
+                int width = System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(ihdr);
+                return width > 0 ? width : null;
             }
 
             // JPEG: FF D8 start; scan segment markers for an SOFn frame header.

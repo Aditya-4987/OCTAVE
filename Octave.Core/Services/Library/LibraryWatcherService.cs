@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using Octave.Core.Helpers;
 using Octave.Core.Interfaces;
 
 namespace Octave.Core.Services.Library;
@@ -447,7 +448,7 @@ public class LibraryWatcherService : ILibraryWatcherService, IDisposable
 
     private static bool IsSupportedExtension(string ext)
     {
-        return ext == ".mp3" || ext == ".flac" || ext == ".m4a" || ext == ".aac" || ext == ".ogg" || ext == ".wav" || ext == ".wma" || ext == ".opus";
+        return AudioFormatRegistry.IsSupported(ext);
     }
 
     // WATCH-06: dispose under the lock, guarded against in-flight callbacks.

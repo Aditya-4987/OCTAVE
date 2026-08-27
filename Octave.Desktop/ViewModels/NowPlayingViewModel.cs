@@ -26,6 +26,8 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
 
     private CancellationTokenSource? _lyricsCts;
     private CancellationTokenSource? _creditsCts;
+    private CancellationTokenSource? _prewarmCts;
+    private string? _lastPrewarmedTrackId;
     private long _generationToken = 0;
     private bool _isDisposed = false;
     private bool _eventsSubscribed = false;
@@ -62,7 +64,19 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
     public partial bool IsPlaying { get; set; }
 
     [ObservableProperty]
+    public partial bool IsCurrentTrackFavorite { get; set; } = false;
+
+    [ObservableProperty]
     public partial AudioQualityDetails? QualityDetails { get; set; }
+
+    public string? ArtistArtworkUrl => CurrentArtist?.ArtworkUrl;
+    public string? AlbumArtworkUrl => CurrentAlbum?.ArtworkUrl;
+    public int AlbumYear => CurrentAlbum?.Year ?? (CurrentTrack?.Year > 0 ? CurrentTrack.Year : 0);
+    public string TrackGenre => CurrentTrack?.Genre ?? "";
+    public int TrackNumber => CurrentTrack?.TrackNumber ?? 0;
+    public int DiscNumber => CurrentTrack?.DiscNumber ?? 0;
+    public double? ReplayGain => CurrentTrack != null ? (double)CurrentTrack.ReplayGain : null;
+    public string SourceUri => CurrentTrack?.SourceUri ?? "";
 
     // Lyrics State
     [ObservableProperty]
@@ -84,6 +98,9 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
     public partial string? UnsyncedText { get; set; }
 
     [ObservableProperty]
+    public partial string? LyricsSource { get; set; }
+
+    [ObservableProperty]
     public partial int CurrentLyricIndex { get; set; } = -1;
 
     private LyricDisplayMode? _userSelectedMode;
@@ -98,6 +115,9 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     public partial bool IsLyricsPanelVisible { get; set; } = true;
+
+    [ObservableProperty]
+    public partial bool IsReloadingLyrics { get; set; } = false;
 
     // Artists List & Queue State
     public ObservableCollection<ArtistDisplayItem> ArtistsList { get; } = new();
@@ -125,16 +145,15 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
         RefreshState();
     }
 
-    // CRIT-01: the constructor is the single subscription point; the guard keeps a
-    // stray second call (e.g. a page Loaded handler) from doubling every event.
     public void SubscribeEvents()
     {
         if (_eventsSubscribed) return;
         _eventsSubscribed = true;
 
         _queueService.PlaybackStateChanged += OnPlaybackStateChanged;
-        _queueService.PositionChanged += OnPositionChanged;
         _queueService.QueueChanged += OnQueueChanged;
+        _audioPlayer.PositionChanged += OnPositionChanged;
+        _libraryService.FavoritesChanged += OnFavoritesChanged;
     }
 
     public void UnsubscribeEvents()
@@ -143,8 +162,50 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
         _eventsSubscribed = false;
 
         _queueService.PlaybackStateChanged -= OnPlaybackStateChanged;
-        _queueService.PositionChanged -= OnPositionChanged;
         _queueService.QueueChanged -= OnQueueChanged;
+        _audioPlayer.PositionChanged -= OnPositionChanged;
+        _libraryService.FavoritesChanged -= OnFavoritesChanged;
+    }
+
+    private void OnFavoritesChanged(object? sender, EventArgs e)
+    {
+        var trackId = CurrentTrack?.Id;
+        if (trackId != null)
+        {
+            _ = CheckFavoriteStatusAsync(trackId);
+        }
+    }
+
+    [RelayCommand]
+    public async Task ToggleCurrentTrackFavoriteAsync()
+    {
+        var trackId = CurrentTrack?.Id;
+        if (trackId != null)
+        {
+            bool newFav = await _libraryService.ToggleFavoriteAsync(trackId);
+            IsCurrentTrackFavorite = newFav;
+        }
+    }
+
+    private async Task CheckFavoriteStatusAsync(string trackId)
+    {
+        try
+        {
+            bool isFav = await _libraryService.IsFavoriteAsync(trackId);
+            _dispatcher.TryEnqueue(() =>
+            {
+                if (_isDisposed || CurrentTrack?.Id != trackId) return;
+                IsCurrentTrackFavorite = isFav;
+            });
+        }
+        catch { }
+    }
+
+    public void RefreshState()
+    {
+        var state = _queueService.CurrentState;
+        UpdateFromState(state);
+        RefreshUpNextQueue();
     }
 
     private void OnPlaybackStateChanged(object? sender, PlaybackState state)
@@ -165,28 +226,19 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
         });
     }
 
-    private void OnPositionChanged(object? sender, double positionSeconds)
+    private void OnPositionChanged(object? sender, double position)
     {
         _dispatcher.TryEnqueue(() =>
         {
             if (_isDisposed) return;
-            PositionSeconds = positionSeconds;
-            UpdateLyricPosition(positionSeconds);
+            PositionSeconds = position;
+            UpdateLyricPosition(position);
+
+            if (DurationSeconds > 0 && (position / DurationSeconds) >= 0.75)
+            {
+                MaybePrewarmNextTrackLyrics();
+            }
         });
-    }
-
-    public void RefreshState()
-    {
-        var state = _queueService.CurrentState;
-        UpdateFromState(state);
-
-        // NF-24: QueueChanged alone owned the mirror rebuild (VM-03), but that
-        // event fires from the SINGLETON queue service - it had already happened
-        // before this transient view model subscribed, so a freshly opened
-        // Now Playing page showed an empty Up Next panel until the next queue
-        // mutation. Hydrate once here; the NP-09 identical-window early-return
-        // keeps repeat calls (every Loaded) cheap.
-        RefreshUpNextQueue();
     }
 
     private void UpdateFromState(PlaybackState state)
@@ -204,11 +256,6 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
             TrackTitle = state.CurrentTrack.Title;
             ArtistName = state.CurrentTrack.ArtistName;
             AlbumTitle = state.CurrentTrack.AlbumTitle;
-            // CRIT-04: CurrentAlbum lags one async hop behind (it loads in
-            // LoadCreditsAsync below), so deriving artwork from it here blanked the
-            // panel on every track change — the "artwork flash". Keep showing the
-            // previous album's art until the new album (and its art) resolves there;
-            // only a real stop clears it.
         }
         else
         {
@@ -218,42 +265,52 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
             CurrentArtworkUrl = null;
         }
 
-        // VM-03: RefreshUpNextQueue used to run here AND in OnQueueChanged — the
-        // queue service emits PlaybackStateChanged + QueueChanged back-to-back, so
-        // every transition rebuilt the list twice. QueueChanged alone owns it now.
-
         if (trackChanged)
         {
-            long genToken = ++_generationToken;
+            long reqId = Interlocked.Increment(ref _globalLyricsRequestId);
+            _activeLyricsRequestId = reqId;
+            _generationToken = reqId;
+            _lastLoadedTrackId = state.CurrentTrack?.Id;
 
             // Reset per-track lyrics selection and offset
             _userSelectedMode = null;
             _cachedLyricsData = null;
             HasSyncedLyrics = false;
             HasPlainLyrics = false;
+            LyricsSource = null;
             LyricsOffsetMs = 0;
+            IsReloadingLyrics = false;
 
-            // CRIT-02: cancel AND dispose the old sources - they were cancelled
-            // but never disposed, leaking a native wait handle on every track
-            // change. Dispose() at the bottom of this class already did both.
-            _lyricsCts?.Cancel();
-            _lyricsCts?.Dispose();
-            _lyricsCts = new CancellationTokenSource();
+            // CRIT-02: cancel AND dispose the old sources safely
+            var oldLyricsCts = Interlocked.Exchange(ref _lyricsCts, new CancellationTokenSource());
+            try
+            {
+                oldLyricsCts?.Cancel();
+                oldLyricsCts?.Dispose();
+            }
+            catch { }
 
-            _creditsCts?.Cancel();
-            _creditsCts?.Dispose();
-            _creditsCts = new CancellationTokenSource();
+            var oldCreditsCts = Interlocked.Exchange(ref _creditsCts, new CancellationTokenSource());
+            try
+            {
+                oldCreditsCts?.Cancel();
+                oldCreditsCts?.Dispose();
+            }
+            catch { }
 
             if (state.CurrentTrack != null)
             {
-                _ = LoadLyricsAsync(state.CurrentTrack, genToken, _lyricsCts.Token);
-                _ = LoadCreditsAsync(state.CurrentTrack, genToken, _creditsCts.Token);
+                _ = CheckFavoriteStatusAsync(state.CurrentTrack.Id);
+                _ = LoadLyricsAsync(state.CurrentTrack, reqId, _lyricsCts!.Token);
+                _ = LoadCreditsAsync(state.CurrentTrack, reqId, _creditsCts!.Token);
             }
             else
             {
+                IsCurrentTrackFavorite = false;
                 LyricsState = LyricsState.Unavailable;
                 SyncedLines = null;
                 UnsyncedText = null;
+                LyricsSource = null;
                 CurrentLyricIndex = -1;
                 IsLyricsPanelVisible = false;
                 CurrentArtist = null;
@@ -262,29 +319,192 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
         }
     }
 
-    private async Task LoadLyricsAsync(Track track, long genToken, CancellationToken ct)
+    private static long _globalLyricsRequestId = 0;
+    private long _activeLyricsRequestId = 0;
+    private string? _lastLoadedTrackId = null;
+
+    private async Task LoadLyricsAsync(Track track, long reqId, CancellationToken ct)
     {
-        LyricsState = LyricsState.Loading;
-        IsLyricsPanelVisible = true;
-        SyncedLines = null;
-        UnsyncedText = null;
-        CurrentLyricIndex = -1;
-        HasSyncedLyrics = false;
-        HasPlainLyrics = false;
-
-        var data = await _lyricsService.GetLyricsAsync(track, ct);
-
-        if (ct.IsCancellationRequested || genToken != _generationToken || track.Id != CurrentTrack?.Id)
+        try
         {
-            return;
-        }
+            _dispatcher.TryEnqueue(() =>
+            {
+                if (reqId != _activeLyricsRequestId || track.Id != CurrentTrack?.Id) return;
+                LyricsState = LyricsState.Loading;
+                IsLyricsPanelVisible = true;
+                SyncedLines = null;
+                UnsyncedText = null;
+                LyricsSource = null;
+                CurrentLyricIndex = -1;
+                HasSyncedLyrics = false;
+                HasPlainLyrics = false;
+            });
 
-        // VM-08: these property writes used to land on whichever thread the
-        // lyrics await resumed on - apply them through the dispatcher like every
-        // other mutation in this VM.
+            var fastData = await _lyricsService.GetLocalAndCachedLyricsAsync(track, ct);
+
+            if (ct.IsCancellationRequested || reqId != _activeLyricsRequestId || track.Id != CurrentTrack?.Id)
+            {
+                return;
+            }
+
+            // Immediately apply FastPhase result to UI before background enrichment starts
+            ApplyLyricsData(fastData, reqId, track);
+
+            // If both representations are already available locally/cache, resolution is fully complete
+            if (fastData.HasSyncedLyrics && fastData.HasPlainLyrics)
+            {
+                return;
+            }
+
+            var enrichedData = await _lyricsService.EnrichLyricsAsync(track, fastData, ct);
+
+            if (ct.IsCancellationRequested || reqId != _activeLyricsRequestId || track.Id != CurrentTrack?.Id)
+            {
+                return;
+            }
+
+            // Update with enriched formats seamlessly
+            ApplyLyricsData(enrichedData, reqId, track);
+        }
+        catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
+        {
+            // HTTP timeout
+            System.Diagnostics.Debug.WriteLine($"[LYRICS] Req={reqId} | TrackId={track.Id} | HTTP Timeout: {ex.Message}");
+            if (reqId == _activeLyricsRequestId && track.Id == CurrentTrack?.Id)
+            {
+                _dispatcher.TryEnqueue(() =>
+                {
+                    if (reqId == _activeLyricsRequestId && track.Id == CurrentTrack?.Id)
+                    {
+                        LyricsState = LyricsState.NetworkUnavailable;
+                    }
+                });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal cancellation on track change / reload
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[LYRICS] Req={reqId} | TrackId={track.Id} | Unexpected error: {ex.Message}");
+            if (reqId == _activeLyricsRequestId && track.Id == CurrentTrack?.Id)
+            {
+                _dispatcher.TryEnqueue(() =>
+                {
+                    if (reqId == _activeLyricsRequestId && track.Id == CurrentTrack?.Id && (LyricsState == LyricsState.Loading || LyricsState == LyricsState.Resolving))
+                    {
+                        LyricsState = LyricsState.Unavailable;
+                        System.Diagnostics.Debug.WriteLine($"[LYRICS] Req={reqId} | Recovered from error to terminal state: Unavailable");
+                    }
+                });
+            }
+        }
+        finally
+        {
+            // Terminal state safety net: If this is still the active request for the current track and state is still Loading/Resolving,
+            // ensure it transitions out!
+            if (reqId == _activeLyricsRequestId && track.Id == CurrentTrack?.Id)
+            {
+                _dispatcher.TryEnqueue(() =>
+                {
+                    if (reqId == _activeLyricsRequestId && track.Id == CurrentTrack?.Id && (LyricsState == LyricsState.Loading || LyricsState == LyricsState.Resolving))
+                    {
+                        LyricsState = LyricsState.Unavailable;
+                        System.Diagnostics.Debug.WriteLine($"[LYRICS] Req={reqId} | (finally) Transitioned to terminal state: Unavailable");
+                    }
+                });
+            }
+        }
+    }
+
+    [RelayCommand]
+    public async Task ReloadLyricsAsync()
+    {
+        var track = CurrentTrack;
+        if (track == null || IsReloadingLyrics) return;
+
+        long reqId = Interlocked.Increment(ref _globalLyricsRequestId);
+        _activeLyricsRequestId = reqId;
+        _generationToken = reqId;
+
+        var newCts = new CancellationTokenSource();
+        var oldLyricsCts = Interlocked.Exchange(ref _lyricsCts, newCts);
+        try
+        {
+            oldLyricsCts?.Cancel();
+            oldLyricsCts?.Dispose();
+        }
+        catch { }
+
+        var ct = newCts.Token;
+
+        IsReloadingLyrics = true;
+        LyricsState = LyricsState.Resolving;
+        IsLyricsPanelVisible = true;
+
+        try
+        {
+            var reloadedData = await _lyricsService.ReloadLyricsAsync(track, ct);
+            if (reqId != _activeLyricsRequestId || track.Id != CurrentTrack?.Id)
+            {
+                return;
+            }
+
+            ApplyLyricsData(reloadedData, reqId, track);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            if (reqId == _activeLyricsRequestId && track.Id == CurrentTrack?.Id)
+            {
+                _dispatcher.TryEnqueue(() =>
+                {
+                    if (reqId == _activeLyricsRequestId && track.Id == CurrentTrack?.Id)
+                    {
+                        LyricsState = LyricsState.NetworkUnavailable;
+                    }
+                });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal cancellation on track skip / new reload
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[NowPlayingViewModel] ReloadLyricsAsync error: {ex.Message}");
+            if (reqId == _activeLyricsRequestId && track.Id == CurrentTrack?.Id)
+            {
+                _dispatcher.TryEnqueue(() =>
+                {
+                    if (reqId == _activeLyricsRequestId && track.Id == CurrentTrack?.Id)
+                    {
+                        LyricsState = LyricsState.NetworkUnavailable;
+                    }
+                });
+            }
+        }
+        finally
+        {
+            if (reqId == _activeLyricsRequestId && track.Id == CurrentTrack?.Id)
+            {
+                _dispatcher.TryEnqueue(() =>
+                {
+                    IsReloadingLyrics = false;
+                    if (reqId == _activeLyricsRequestId && track.Id == CurrentTrack?.Id && (LyricsState == LyricsState.Loading || LyricsState == LyricsState.Resolving))
+                    {
+                        LyricsState = LyricsState.Unavailable;
+                    }
+                });
+            }
+        }
+    }
+
+    private void ApplyLyricsData(LyricsData data, long reqId, Track track)
+    {
         _dispatcher.TryEnqueue(() =>
         {
-            if (ct.IsCancellationRequested || genToken != _generationToken || track.Id != CurrentTrack?.Id)
+            if (reqId != _activeLyricsRequestId || track.Id != CurrentTrack?.Id)
             {
                 return;
             }
@@ -313,6 +533,9 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
 
             SelectedLyricMode = targetMode;
 
+            string? activeSource = (targetMode == LyricDisplayMode.Synced ? data.SyncedSource : data.StaticSource) ?? data.Source;
+            LyricsSource = (data.HasSyncedLyrics || data.HasPlainLyrics) ? activeSource : null;
+
             if (data.HasSyncedLyrics || data.HasPlainLyrics)
             {
                 IsLyricsPanelVisible = true;
@@ -332,29 +555,13 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
             }
             else
             {
-                LyricsState = LyricsState.Unavailable;
+                LyricsState = data.State;
                 IsLyricsPanelVisible = true;
             }
-        });
 
-        if (!data.HasSyncedLyrics && !data.HasPlainLyrics)
-        {
-            try
-            {
-                await Task.Delay(2000, ct);
-                if (!ct.IsCancellationRequested && genToken == _generationToken && track.Id == CurrentTrack?.Id)
-                {
-                    _dispatcher.TryEnqueue(() =>
-                    {
-                        if (!ct.IsCancellationRequested && genToken == _generationToken && track.Id == CurrentTrack?.Id)
-                        {
-                            IsLyricsPanelVisible = false;
-                        }
-                    });
-                }
-            }
-            catch (OperationCanceledException) { }
-        }
+            System.Diagnostics.Debug.WriteLine(
+                $"[LYRICS] Req={reqId} | UI State Applied: State={LyricsState}, Synced={HasSyncedLyrics}, Static={HasPlainLyrics}, Source={LyricsSource ?? "None"}, Mode={SelectedLyricMode}");
+        });
     }
 
     [RelayCommand]
@@ -395,6 +602,10 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
             {
                 album = await _dbContext.GetAlbumByIdAsync(track.AlbumId);
             }
+        }
+        catch (OperationCanceledException)
+        {
+            return;
         }
         catch (Exception ex)
         {
@@ -465,9 +676,6 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
         });
     }
 
-    public string? ArtistArtworkUrl => CurrentArtist?.ArtworkUrl;
-    public string? AlbumArtworkUrl => CurrentAlbum?.ArtworkUrl;
-    public int AlbumYear => CurrentAlbum?.Year ?? 0;
     public string? CurrentAlbumId => CurrentAlbum?.Id ?? CurrentTrack?.AlbumId;
 
     public async Task<string?> ResolveArtistIdAsync(ArtistDisplayItem artistItem)
@@ -593,6 +801,51 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
         HydrateQueueArtwork();
 
         IsQueuePanelVisible = UpNextQueue.Count > 0;
+        MaybePrewarmNextTrackLyrics();
+    }
+
+    private void MaybePrewarmNextTrackLyrics()
+    {
+        if (_isDisposed) return;
+
+        // Find next track in queue (item after current track)
+        Track? nextTrack = null;
+        if (UpNextQueue.Count > 1)
+        {
+            nextTrack = UpNextQueue[1].Track;
+        }
+
+        if (nextTrack == null || string.IsNullOrWhiteSpace(nextTrack.Id) ||
+            nextTrack.Id == _lastPrewarmedTrackId || nextTrack.Id == CurrentTrack?.Id)
+        {
+            return;
+        }
+
+        _lastPrewarmedTrackId = nextTrack.Id;
+
+        var newCts = new CancellationTokenSource();
+        var oldCts = Interlocked.Exchange(ref _prewarmCts, newCts);
+        try
+        {
+            oldCts?.Cancel();
+            oldCts?.Dispose();
+        }
+        catch { }
+
+        var token = newCts.Token;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _lyricsService.GetLyricsAsync(nextTrack, token);
+                System.Diagnostics.Debug.WriteLine($"[LYRICS] Pre-warmed lyrics for Up-Next track: '{nextTrack.Title}' ({nextTrack.Id})");
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[LYRICS] Pre-warming failed for '{nextTrack.Title}': {ex.Message}");
+            }
+        }, token);
     }
 
     private void HydrateQueueArtwork()
@@ -716,6 +969,13 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
         _lyricsCts?.Dispose();
         _creditsCts?.Cancel();
         _creditsCts?.Dispose();
+        var prewarmCts = Interlocked.Exchange(ref _prewarmCts, null);
+        try
+        {
+            prewarmCts?.Cancel();
+            prewarmCts?.Dispose();
+        }
+        catch { }
         UnsubscribeEvents();
     }
 }

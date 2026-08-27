@@ -45,6 +45,11 @@ public sealed partial class HomePage : Page
         }
     }
 
+    private async void HeroFavorite_Click(object sender, RoutedEventArgs e)
+    {
+        await ViewModel.ToggleHeroFavoriteAsync();
+    }
+
     private void QuickPlay_ItemClick(object sender, ItemClickEventArgs e)
     {
         if (e.ClickedItem is TrackDisplayItem item) ViewModel.PlaySection(ViewModel.QuickPlayItems, item);
