@@ -199,6 +199,17 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private int _selectedSidebarTabIndex = 0;
+
+    private void SetSidebarTab(int index)
+    {
+        _selectedSidebarTabIndex = index;
+        if (SidebarInfoPanel != null) SidebarInfoPanel.Visibility = index == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (SidebarQueuePanel != null) SidebarQueuePanel.Visibility = index == 1 ? Visibility.Visible : Visibility.Collapsed;
+        if (SidebarLyricsPanelContainer != null) SidebarLyricsPanelContainer.Visibility = index == 2 ? Visibility.Visible : Visibility.Collapsed;
+        UpdateSidebarTabStyles(index);
+    }
+
     private void TrackDetails_Click(object sender, RoutedEventArgs e)
     {
         if (ContentFrame.SourcePageType == typeof(Views.NowPlayingPage)) return;
@@ -208,23 +219,21 @@ public sealed partial class MainWindow : Window
             ViewModel.IsNowPlayingOpen = true;
         }
         
-        SidebarPivot.SelectedIndex = 0;
-        UpdateSidebarTabStyles(0);
+        SetSidebarTab(0);
     }
 
     private void QueueButton_Click(object sender, RoutedEventArgs e)
     {
         if (ContentFrame.SourcePageType == typeof(Views.NowPlayingPage)) return;
 
-        if (ViewModel.IsNowPlayingOpen && SidebarPivot.SelectedIndex == 1)
+        if (ViewModel.IsNowPlayingOpen && _selectedSidebarTabIndex == 1)
         {
             ViewModel.IsNowPlayingOpen = false;
         }
         else
         {
             ViewModel.IsNowPlayingOpen = true;
-            SidebarPivot.SelectedIndex = 1;
-            UpdateSidebarTabStyles(1);
+            SetSidebarTab(1);
         }
     }
 
@@ -232,39 +241,30 @@ public sealed partial class MainWindow : Window
     {
         if (ContentFrame.SourcePageType == typeof(Views.NowPlayingPage)) return;
 
-        if (ViewModel.IsNowPlayingOpen && SidebarPivot.SelectedIndex == 2)
+        if (ViewModel.IsNowPlayingOpen && _selectedSidebarTabIndex == 2)
         {
             ViewModel.IsNowPlayingOpen = false;
         }
         else
         {
             ViewModel.IsNowPlayingOpen = true;
-            SidebarPivot.SelectedIndex = 2;
-            UpdateSidebarTabStyles(2);
+            SetSidebarTab(2);
         }
     }
 
     private void TabInfo_Click(object sender, RoutedEventArgs e)
     {
-        SidebarPivot.SelectedIndex = 0;
-        UpdateSidebarTabStyles(0);
+        SetSidebarTab(0);
     }
 
     private void TabQueue_Click(object sender, RoutedEventArgs e)
     {
-        SidebarPivot.SelectedIndex = 1;
-        UpdateSidebarTabStyles(1);
+        SetSidebarTab(1);
     }
 
     private void TabLyrics_Click(object sender, RoutedEventArgs e)
     {
-        SidebarPivot.SelectedIndex = 2;
-        UpdateSidebarTabStyles(2);
-    }
-
-    private void SidebarPivot_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        UpdateSidebarTabStyles(SidebarPivot.SelectedIndex);
+        SetSidebarTab(2);
     }
 
     private void UpdateSidebarTabStyles(int index)
