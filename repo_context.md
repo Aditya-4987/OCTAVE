@@ -305,6 +305,8 @@ OCTAVE/
    - Native BASS sync procedures (`OnTrackEndedCallback`) must never throw unhandled exceptions across the P/Invoke boundary and must dispatch work onto the `ThreadPool`.
 4. **WinUI 3 ListView SelectionMode Safety**:
    - When switching a WinUI 3 `ListView` from `SelectionMode.Multiple` to `SelectionMode.None`, WinUI internally tears down its selection vector. Calling `SelectedItems.Clear()` after changing `SelectionMode` or on an unselected/empty collection throws WinRT COMException `0x8000FFFF (E_UNEXPECTED)`. Selection clearing must always precede mode changes and be guarded safely.
+5. **WinUI 3 RangeBase (Slider) Value Clamping Safety**:
+   - In WinUI 3, assigning `RangeBase.Value > RangeBase.Maximum` (or `Value > 0` when `Maximum <= 0`) throws `COMException 0x8000FFFF (E_UNEXPECTED)` inside WinRT XAML binding setters. `PositionSeconds` and `DurationSeconds` properties in ViewModels must strictly enforce `PositionSeconds = 0.0` whenever `DurationSeconds <= 0` and clamp to `[0.0, DurationSeconds]`.
 
 ---
 
