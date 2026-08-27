@@ -256,10 +256,13 @@ OCTAVE/
 
 ### 8.1 Views & Navigation
 - **`MainWindow.xaml`**: Mica backdrop, unified single title bar (`ExtendsContentIntoTitleBar = true` with transparent caption buttons), top navigation bar, global search box with live suggestions dropdown, fluid `NavigationThemeTransition` (`EntranceNavigationTransitionInfo`), persistent bottom playback bar with dedicated Lyrics toggle, and a **Docked Inline Right Sidebar (`DisplayMode="Inline"`)**:
-  - **Dynamic Navigation Auto-Collapse**: Automatically collapses the left `NavigationView` pane into icon-only mode when the right sidebar opens and restores previous nav state upon closing.
+  - **Seamless Native Container**: Integrated as a rounded card container with `LayerFillColorDefaultBrush` background, subtle borders, and `CornerRadius="8"` matching the left navigation pane.
+  - **Modern Segmented Pill Navigation**: Custom-styled segmented tab buttons ("Info", "Up Next", "Lyrics") with clear active/inactive visual states and a dedicated top-right **"✕"** close button.
+  - **Dynamic Navigation Auto-Collapse**: Automatically collapses the left `NavigationView` pane into icon-only mode when the right sidebar opens and cleanly restores previous nav state upon closing.
   - **Overhauled Info Tab**: Distinguishes "About Track" and "Audio & File Details" within rounded cards, dynamically hiding any missing metadata entries.
-  - **Up Next Tab**: Sleek queue list with favorite toggle, reordering, and removal.
-  - **Lyrics Tab**: Real-time synchronized lyrics panel integration with offset nudging.
+  - **Up Next Tab**: Queue list placed inside a dedicated rounded card with header clear button, drag-and-drop reordering, favorite toggle, and removal.
+  - **Lyrics Tab**: Real-time synchronized lyrics panel housed in a matching rounded card with ±500ms sync offset nudges (with conditional reset icon appearing only when offset != 0).
+  - **NowPlayingPage Integration**: Navigating to `NowPlayingPage` automatically collapses the right sidebar, disables/greys out bottom bar sidebar trigger buttons, and pauses the left track title trigger to prevent UI competition.
 - **`HomePage.xaml`**: Dashboard featuring Recent tracks, Favorites, Recently Added, Most Played, and quick playback actions with responsive card hover elevations.
 - **`LibraryPage.xaml`**: Full sortable track grid with column headers, instant search/filter, full ThemeResource integration, 3-dot context menu, and **Multi-Select Mode** (Play Selected, Add to Queue, Add to Playlist with dynamic flyouts and new playlist dialog creator, Select All, and Done).
 - **`AlbumsPage.xaml` & `ArtistsPage.xaml`**: Responsive grid tiles with album art, artist imagery, track counts, card `PointerOver` visual state outlines, and seamless navigation to `EntityDetailPage`.

@@ -8,11 +8,11 @@
     mc:Ignorable="d"
     VerticalAlignment="Stretch">
 
-    <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
+    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
             BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
             BorderThickness="1"
-            CornerRadius="16"
-            Padding="24,16,24,20"
+            CornerRadius="8"
+            Padding="16,14"
             VerticalAlignment="Stretch">
         <Grid RowDefinitions="Auto,*" VerticalAlignment="Stretch">
             <!-- Toolbar (UI-NP-06): lyric mode selector (Synced / Static) + lyric sync nudge + copy. Shown only when

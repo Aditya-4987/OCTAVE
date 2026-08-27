@@ -25,6 +25,7 @@ public sealed partial class MainWindow : Window
         NowPlayingViewModel = App.Services.GetRequiredService<NowPlayingViewModel>();
         InitializeComponent();
         RootGrid.DataContext = this;
+        UpdateSidebarTabStyles(0);
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
@@ -200,42 +201,96 @@ public sealed partial class MainWindow : Window
 
     private void TrackDetails_Click(object sender, RoutedEventArgs e)
     {
+        if (ContentFrame.SourcePageType == typeof(Views.NowPlayingPage)) return;
+
         if (!ViewModel.IsNowPlayingOpen)
         {
             ViewModel.IsNowPlayingOpen = true;
         }
         
-        // Select Info tab (index 0)
         SidebarPivot.SelectedIndex = 0;
+        UpdateSidebarTabStyles(0);
     }
 
     private void QueueButton_Click(object sender, RoutedEventArgs e)
     {
+        if (ContentFrame.SourcePageType == typeof(Views.NowPlayingPage)) return;
+
         if (ViewModel.IsNowPlayingOpen && SidebarPivot.SelectedIndex == 1)
         {
-            // Close if already open on Queue tab
             ViewModel.IsNowPlayingOpen = false;
         }
         else
         {
-            // Open and select Queue tab (index 1)
             ViewModel.IsNowPlayingOpen = true;
             SidebarPivot.SelectedIndex = 1;
+            UpdateSidebarTabStyles(1);
         }
     }
 
     private void LyricsButton_Click(object sender, RoutedEventArgs e)
     {
+        if (ContentFrame.SourcePageType == typeof(Views.NowPlayingPage)) return;
+
         if (ViewModel.IsNowPlayingOpen && SidebarPivot.SelectedIndex == 2)
         {
-            // Close if already open on Lyrics tab
             ViewModel.IsNowPlayingOpen = false;
         }
         else
         {
-            // Open and select Lyrics tab (index 2)
             ViewModel.IsNowPlayingOpen = true;
             SidebarPivot.SelectedIndex = 2;
+            UpdateSidebarTabStyles(2);
+        }
+    }
+
+    private void TabInfo_Click(object sender, RoutedEventArgs e)
+    {
+        SidebarPivot.SelectedIndex = 0;
+        UpdateSidebarTabStyles(0);
+    }
+
+    private void TabQueue_Click(object sender, RoutedEventArgs e)
+    {
+        SidebarPivot.SelectedIndex = 1;
+        UpdateSidebarTabStyles(1);
+    }
+
+    private void TabLyrics_Click(object sender, RoutedEventArgs e)
+    {
+        SidebarPivot.SelectedIndex = 2;
+        UpdateSidebarTabStyles(2);
+    }
+
+    private void SidebarPivot_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateSidebarTabStyles(SidebarPivot.SelectedIndex);
+    }
+
+    private void UpdateSidebarTabStyles(int index)
+    {
+        if (TabInfoBtn == null || TabQueueBtn == null || TabLyricsBtn == null) return;
+
+        ApplyTabStyle(TabInfoBtn, index == 0);
+        ApplyTabStyle(TabQueueBtn, index == 1);
+        ApplyTabStyle(TabLyricsBtn, index == 2);
+    }
+
+    private void ApplyTabStyle(Button btn, bool isSelected)
+    {
+        if (isSelected)
+        {
+            btn.Background = ThemedBrush("CardBackgroundFillColorDefaultBrush", Windows.UI.Color.FromArgb(255, 45, 45, 45));
+            btn.Foreground = ThemedBrush("TextFillColorPrimaryBrush", Windows.UI.Color.FromArgb(255, 255, 255, 255));
+            btn.BorderBrush = ThemedBrush("CardStrokeColorDefaultBrush", Windows.UI.Color.FromArgb(30, 255, 255, 255));
+            btn.BorderThickness = new Thickness(1);
+        }
+        else
+        {
+            btn.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            btn.Foreground = ThemedBrush("TextFillColorSecondaryBrush", Windows.UI.Color.FromArgb(255, 180, 180, 180));
+            btn.BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            btn.BorderThickness = new Thickness(0);
         }
     }
 
@@ -260,6 +315,18 @@ public sealed partial class MainWindow : Window
     private void ContentFrame_Navigated(object sender, Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
         NavView.IsBackEnabled = ContentFrame.CanGoBack;
+
+        bool isNowPlaying = ContentFrame.SourcePageType == typeof(Views.NowPlayingPage);
+        if (isNowPlaying)
+        {
+            ViewModel.IsNowPlayingOpen = false;
+        }
+
+        if (BottomTrackDetailsBtn != null) BottomTrackDetailsBtn.IsEnabled = !isNowPlaying;
+        if (BottomQueueBtn != null) BottomQueueBtn.IsEnabled = !isNowPlaying;
+        if (BottomLyricsBtn != null) BottomLyricsBtn.IsEnabled = !isNowPlaying;
+        if (OverflowLyricsBtn != null) OverflowLyricsBtn.IsEnabled = !isNowPlaying;
+        if (OverflowQueueBtn != null) OverflowQueueBtn.IsEnabled = !isNowPlaying;
 
         if (ContentFrame.SourcePageType == typeof(Views.SettingsPage))
         {

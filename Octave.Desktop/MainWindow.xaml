@@ -122,245 +122,323 @@
             </SplitView.Content>
             
             <SplitView.Pane>
-                <Grid Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1,0,0,0">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
+                <Grid Background="Transparent" Padding="0,6,8,8">
+                    <Border Background="{ThemeResource LayerFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="0">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
 
-                    <!-- Top Action Bar: Close Button -->
-                    <Grid Grid.Row="0" Padding="16,10,12,0">
-                        <Button HorizontalAlignment="Right" Click="CloseSidebar_Click"
-                                Style="{StaticResource GhostIconButtonStyle}"
-                                Padding="6" ToolTipService.ToolTip="Close panel">
-                            <FontIcon Glyph="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        </Button>
-                    </Grid>
+                            <!-- Top Action Bar: Segmented Tabs & Close Button -->
+                            <Grid Grid.Row="0" Padding="12,12,12,8" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
 
-                    <Pivot Grid.Row="1" x:Name="SidebarPivot" Margin="0,-32,0,0">
-                        <PivotItem Header="Info" Margin="0">
-                            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,8,16,24">
-                                <StackPanel Spacing="16">
-                                    <!-- Centered Album Artwork -->
-                                    <Grid Width="220" Height="220" HorizontalAlignment="Center" Margin="0,8,0,4">
-                                        <Border CornerRadius="12" Background="{ThemeResource SystemControlHighlightAccentBrush}" Opacity="0.12">
-                                            <FontIcon Glyph="&#xE8D6;" FontFamily="Segoe MDL2 Assets" FontSize="64" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" />
-                                        </Border>
-                                        <Border CornerRadius="12" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
-                                            <Image Source="{Binding ViewModel.CurrentArtworkUrl, Converter={StaticResource ArtworkPathConverter}}" Stretch="UniformToFill" />
+                                <!-- Modern Segmented Pills Navigation -->
+                                <Border Grid.Column="0"
+                                        Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="7"
+                                        Padding="2">
+                                    <Grid ColumnDefinitions="*,*,*">
+                                        <Button x:Name="TabInfoBtn" Grid.Column="0" Content="Info"
+                                                Click="TabInfo_Click"
+                                                CornerRadius="5"
+                                                FontSize="12" FontWeight="SemiBold"
+                                                Height="30"
+                                                HorizontalAlignment="Stretch"
+                                                VerticalAlignment="Center" />
+                                        <Button x:Name="TabQueueBtn" Grid.Column="1" Content="Up Next"
+                                                Click="TabQueue_Click"
+                                                CornerRadius="5"
+                                                FontSize="12" FontWeight="SemiBold"
+                                                Height="30"
+                                                HorizontalAlignment="Stretch"
+                                                VerticalAlignment="Center" />
+                                        <Button x:Name="TabLyricsBtn" Grid.Column="2" Content="Lyrics"
+                                                Click="TabLyrics_Click"
+                                                CornerRadius="5"
+                                                FontSize="12" FontWeight="SemiBold"
+                                                Height="30"
+                                                HorizontalAlignment="Stretch"
+                                                VerticalAlignment="Center" />
+                                    </Grid>
+                                </Border>
+
+                                <!-- Close "X" Button -->
+                                <Button Grid.Column="1" Click="CloseSidebar_Click"
+                                        Style="{StaticResource GhostIconButtonStyle}"
+                                        Width="32" Height="32" Padding="0" Margin="8,0,0,0"
+                                        ToolTipService.ToolTip="Close panel"
+                                        VerticalAlignment="Center">
+                                    <FontIcon Glyph="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </Button>
+                            </Grid>
+
+                            <!-- Content Switcher / Pivot without default headers -->
+                            <Pivot Grid.Row="1" x:Name="SidebarPivot" SelectionChanged="SidebarPivot_SelectionChanged">
+                                <Pivot.HeaderTemplate>
+                                    <DataTemplate>
+                                        <Grid Width="0" Height="0" Visibility="Collapsed" />
+                                    </DataTemplate>
+                                </Pivot.HeaderTemplate>
+
+                                <!-- Tab 0: Info -->
+                                <PivotItem Margin="0">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="14,10,14,20">
+                                        <StackPanel Spacing="14">
+                                            <!-- Centered Album Artwork -->
+                                            <Grid Width="200" Height="200" HorizontalAlignment="Center" Margin="0,4,0,2">
+                                                <Border CornerRadius="10" Background="{ThemeResource SystemControlHighlightAccentBrush}" Opacity="0.12">
+                                                    <FontIcon Glyph="&#xE8D6;" FontFamily="Segoe MDL2 Assets" FontSize="56" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" />
+                                                </Border>
+                                                <Border CornerRadius="10" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                                                    <Image Source="{Binding ViewModel.CurrentArtworkUrl, Converter={StaticResource ArtworkPathConverter}}" Stretch="UniformToFill" />
+                                                </Border>
+                                            </Grid>
+
+                                            <!-- Typography -->
+                                            <StackPanel Spacing="3" HorizontalAlignment="Center">
+                                                <TextBlock Text="{x:Bind ViewModel.TrackTitle, Mode=OneWay}" FontSize="16" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextWrapping="Wrap" TextAlignment="Center" />
+                                                <TextBlock Text="{x:Bind ViewModel.ArtistName, Mode=OneWay}" FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" TextAlignment="Center" />
+                                                <TextBlock Text="{x:Bind ViewModel.AlbumName, Mode=OneWay}" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" TextAlignment="Center" Visibility="{x:Bind MetadataRowVisibility(ViewModel.AlbumName), Mode=OneWay}" />
+                                            </StackPanel>
+
+                                            <!-- CARD 1: ABOUT TRACK -->
+                                            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="8"
+                                                    Padding="14,12">
+                                                <StackPanel Spacing="10">
+                                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                                        <FontIcon Glyph="&#xE8D6;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" />
+                                                        <TextBlock Text="ABOUT TRACK" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" CharacterSpacing="60" />
+                                                    </StackPanel>
+
+                                                    <StackPanel Spacing="8">
+                                                        <!-- Genre -->
+                                                        <Grid Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoGenre), Mode=OneWay}">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="90" />
+                                                                <ColumnDefinition Width="*" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Grid.Column="0" Text="Genre" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                            <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.InfoGenre, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" />
+                                                        </Grid>
+
+                                                        <!-- Year -->
+                                                        <Grid Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoYear), Mode=OneWay}">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="90" />
+                                                                <ColumnDefinition Width="*" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Grid.Column="0" Text="Year" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                            <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.InfoYear, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                                        </Grid>
+
+                                                        <!-- Track / Disc -->
+                                                        <Grid Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoTrackNumber), Mode=OneWay}">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="90" />
+                                                                <ColumnDefinition Width="*" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Grid.Column="0" Text="Track / Disc" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
+                                                                <TextBlock Text="{x:Bind ViewModel.InfoTrackNumber, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                                                <TextBlock Text="(Disc " FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoDiscNumber), Mode=OneWay}" />
+                                                                <TextBlock Text="{x:Bind ViewModel.InfoDiscNumber, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoDiscNumber), Mode=OneWay}" />
+                                                                <TextBlock Text=")" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoDiscNumber), Mode=OneWay}" />
+                                                            </StackPanel>
+                                                        </Grid>
+
+                                                        <!-- ReplayGain -->
+                                                        <Grid Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoReplayGain), Mode=OneWay}">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="90" />
+                                                                <ColumnDefinition Width="*" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Grid.Column="0" Text="ReplayGain" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                            <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.InfoReplayGain, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                                        </Grid>
+                                                    </StackPanel>
+                                                </StackPanel>
+                                            </Border>
+
+                                            <!-- CARD 2: AUDIO & FILE SPECIFICATIONS -->
+                                            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="8"
+                                                    Padding="14,12">
+                                                <StackPanel Spacing="10">
+                                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                                        <FontIcon Glyph="&#xE93C;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" />
+                                                        <TextBlock Text="AUDIO &amp; FILE DETAILS" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" CharacterSpacing="60" />
+                                                    </StackPanel>
+
+                                                    <StackPanel Spacing="8">
+                                                        <!-- Format -->
+                                                        <Grid Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoFormat), Mode=OneWay}">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="90" />
+                                                                <ColumnDefinition Width="*" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Grid.Column="0" Text="Format" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                            <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.InfoFormat, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                                        </Grid>
+
+                                                        <!-- Bitrate -->
+                                                        <Grid Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoBitrate), Mode=OneWay}">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="90" />
+                                                                <ColumnDefinition Width="*" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Grid.Column="0" Text="Bitrate" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                            <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.InfoBitrate, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                                        </Grid>
+
+                                                        <!-- Sample Rate -->
+                                                        <Grid Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoSampleRate), Mode=OneWay}">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="90" />
+                                                                <ColumnDefinition Width="*" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Grid.Column="0" Text="Sample Rate" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                            <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.InfoSampleRate, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                                        </Grid>
+
+                                                        <!-- Bit Depth -->
+                                                        <Grid Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoBitDepth), Mode=OneWay}">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="90" />
+                                                                <ColumnDefinition Width="*" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Grid.Column="0" Text="Bit Depth" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                            <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.InfoBitDepth, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                                        </Grid>
+
+                                                        <!-- Channels -->
+                                                        <Grid Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoChannels), Mode=OneWay}">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="90" />
+                                                                <ColumnDefinition Width="*" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Grid.Column="0" Text="Channels" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                            <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.InfoChannels, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                                        </Grid>
+
+                                                        <!-- File Size -->
+                                                        <Grid Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoFileSize), Mode=OneWay}">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="90" />
+                                                                <ColumnDefinition Width="*" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Grid.Column="0" Text="File Size" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                            <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.InfoFileSize, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                                        </Grid>
+
+                                                        <!-- Location -->
+                                                        <Grid Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoLocation), Mode=OneWay}">
+                                                            <Grid.RowDefinitions>
+                                                                <RowDefinition Height="Auto" />
+                                                                <RowDefinition Height="Auto" />
+                                                            </Grid.RowDefinitions>
+                                                            <TextBlock Grid.Row="0" Text="File Location" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" Margin="0,0,0,2" />
+                                                            <TextBlock Grid.Row="1" Text="{x:Bind ViewModel.InfoLocation, Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                                                        </Grid>
+                                                    </StackPanel>
+                                                </StackPanel>
+                                            </Border>
+                                        </StackPanel>
+                                    </ScrollViewer>
+                                </PivotItem>
+
+                                <!-- Tab 1: Up Next -->
+                                <PivotItem Margin="0">
+                                    <Grid Padding="12,12,12,12">
+                                        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                                BorderThickness="1"
+                                                CornerRadius="8"
+                                                Padding="0"
+                                                VerticalAlignment="Stretch">
+                                            <Grid RowDefinitions="Auto,*">
+                                                <!-- Queue Header -->
+                                                <Grid Grid.Row="0" Padding="14,10,10,10" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                                        <FontIcon Glyph="&#xE90B;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" />
+                                                        <TextBlock Text="UP NEXT" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" CharacterSpacing="60" />
+                                                    </StackPanel>
+                                                    <Button Grid.Column="1" Content="Clear" Padding="10,3" Command="{x:Bind ViewModel.ClearQueueCommand}" Style="{StaticResource GhostIconButtonStyle}" FontSize="12" />
+                                                </Grid>
+
+                                                <!-- Queue List -->
+                                                <ListView Grid.Row="1" x:Name="SidebarQueueList" ItemsSource="{x:Bind ViewModel.QueueItems, Mode=OneWay}"
+                                                          CanReorderItems="True" AllowDrop="True" CanDragItems="True" SelectionMode="None" IsItemClickEnabled="True" ItemClick="QueueList_ItemClick"
+                                                          Padding="0,4">
+                                                    <ListView.ItemTemplate>
+                                                        <DataTemplate x:DataType="models:QueueItem">
+                                                            <Grid ColumnSpacing="8" Padding="12,6" CornerRadius="6">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="*" />
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                                                    <TextBlock Text="{x:Bind Track.Title}" TextTrimming="CharacterEllipsis" FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                                                    <TextBlock Text="{x:Bind Track.ArtistName}" TextTrimming="CharacterEllipsis" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                                </StackPanel>
+                                                                <Button Grid.Column="1" Click="SidebarQueueFavorite_Click" Loaded="SidebarQueueFavorite_Loaded" DataContextChanged="SidebarQueueFavorite_DataContextChanged" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Favorite" Padding="6">
+                                                                    <FontIcon Glyph="&#xEB51;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                                </Button>
+                                                                <Button Grid.Column="2" Click="QueueRemove_Click" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Remove from queue" Padding="6">
+                                                                    <FontIcon Glyph="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                                </Button>
+                                                            </Grid>
+                                                        </DataTemplate>
+                                                    </ListView.ItemTemplate>
+                                                </ListView>
+                                            </Grid>
                                         </Border>
                                     </Grid>
+                                </PivotItem>
 
-                                    <!-- Typography -->
-                                    <StackPanel Spacing="3" HorizontalAlignment="Center">
-                                        <TextBlock Text="{x:Bind ViewModel.TrackTitle, Mode=OneWay}" FontSize="17" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextWrapping="Wrap" TextAlignment="Center" />
-                                        <TextBlock Text="{x:Bind ViewModel.ArtistName, Mode=OneWay}" FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" TextAlignment="Center" />
-                                        <TextBlock Text="{x:Bind ViewModel.AlbumName, Mode=OneWay}" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" TextAlignment="Center" Visibility="{x:Bind MetadataRowVisibility(ViewModel.AlbumName), Mode=OneWay}" />
-                                    </StackPanel>
-
-                                    <!-- CARD 1: ABOUT TRACK -->
-                                    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                            BorderThickness="1"
-                                            CornerRadius="10"
-                                            Padding="14,12">
-                                        <StackPanel Spacing="10">
-                                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                                <FontIcon Glyph="&#xE8D6;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" />
-                                                <TextBlock Text="ABOUT TRACK" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" CharacterSpacing="60" />
-                                            </StackPanel>
-
-                                            <StackPanel Spacing="8">
-                                                <!-- Genre -->
-                                                <Grid Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoGenre), Mode=OneWay}">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="90" />
-                                                        <ColumnDefinition Width="*" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <TextBlock Grid.Column="0" Text="Genre" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                                                    <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.InfoGenre, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" />
-                                                </Grid>
-
-                                                <!-- Year -->
-                                                <Grid Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoYear), Mode=OneWay}">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="90" />
-                                                        <ColumnDefinition Width="*" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <TextBlock Grid.Column="0" Text="Year" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                                                    <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.InfoYear, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
-                                                </Grid>
-
-                                                <!-- Track / Disc -->
-                                                <Grid Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoTrackNumber), Mode=OneWay}">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="90" />
-                                                        <ColumnDefinition Width="*" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <TextBlock Grid.Column="0" Text="Track / Disc" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
-                                                        <TextBlock Text="{x:Bind ViewModel.InfoTrackNumber, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
-                                                        <TextBlock Text="(Disc " FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoDiscNumber), Mode=OneWay}" />
-                                                        <TextBlock Text="{x:Bind ViewModel.InfoDiscNumber, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoDiscNumber), Mode=OneWay}" />
-                                                        <TextBlock Text=")" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoDiscNumber), Mode=OneWay}" />
-                                                    </StackPanel>
-                                                </Grid>
-
-                                                <!-- ReplayGain -->
-                                                <Grid Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoReplayGain), Mode=OneWay}">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="90" />
-                                                        <ColumnDefinition Width="*" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <TextBlock Grid.Column="0" Text="ReplayGain" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                                                    <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.InfoReplayGain, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
-                                                </Grid>
-                                            </StackPanel>
-                                        </StackPanel>
-                                    </Border>
-
-                                    <!-- CARD 2: AUDIO & FILE SPECIFICATIONS -->
-                                    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                            BorderThickness="1"
-                                            CornerRadius="10"
-                                            Padding="14,12">
-                                        <StackPanel Spacing="10">
-                                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                                <FontIcon Glyph="&#xE93C;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" />
-                                                <TextBlock Text="AUDIO &amp; FILE DETAILS" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" CharacterSpacing="60" />
-                                            </StackPanel>
-
-                                            <StackPanel Spacing="8">
-                                                <!-- Format -->
-                                                <Grid Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoFormat), Mode=OneWay}">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="90" />
-                                                        <ColumnDefinition Width="*" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <TextBlock Grid.Column="0" Text="Format" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                                                    <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.InfoFormat, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
-                                                </Grid>
-
-                                                <!-- Bitrate -->
-                                                <Grid Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoBitrate), Mode=OneWay}">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="90" />
-                                                        <ColumnDefinition Width="*" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <TextBlock Grid.Column="0" Text="Bitrate" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                                                    <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.InfoBitrate, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
-                                                </Grid>
-
-                                                <!-- Sample Rate -->
-                                                <Grid Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoSampleRate), Mode=OneWay}">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="90" />
-                                                        <ColumnDefinition Width="*" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <TextBlock Grid.Column="0" Text="Sample Rate" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                                                    <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.InfoSampleRate, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
-                                                </Grid>
-
-                                                <!-- Bit Depth -->
-                                                <Grid Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoBitDepth), Mode=OneWay}">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="90" />
-                                                        <ColumnDefinition Width="*" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <TextBlock Grid.Column="0" Text="Bit Depth" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                                                    <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.InfoBitDepth, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
-                                                </Grid>
-
-                                                <!-- Channels -->
-                                                <Grid Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoChannels), Mode=OneWay}">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="90" />
-                                                        <ColumnDefinition Width="*" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <TextBlock Grid.Column="0" Text="Channels" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                                                    <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.InfoChannels, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
-                                                </Grid>
-
-                                                <!-- File Size -->
-                                                <Grid Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoFileSize), Mode=OneWay}">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="90" />
-                                                        <ColumnDefinition Width="*" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <TextBlock Grid.Column="0" Text="File Size" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                                                    <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.InfoFileSize, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
-                                                </Grid>
-
-                                                <!-- Location -->
-                                                <Grid Visibility="{x:Bind MetadataRowVisibility(ViewModel.InfoLocation), Mode=OneWay}">
-                                                    <Grid.RowDefinitions>
-                                                        <RowDefinition Height="Auto" />
-                                                        <RowDefinition Height="Auto" />
-                                                    </Grid.RowDefinitions>
-                                                    <TextBlock Grid.Row="0" Text="File Location" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" Margin="0,0,0,2" />
-                                                    <TextBlock Grid.Row="1" Text="{x:Bind ViewModel.InfoLocation, Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                                                </Grid>
-                                            </StackPanel>
-                                        </StackPanel>
-                                    </Border>
-                                </StackPanel>
-                            </ScrollViewer>
-                        </PivotItem>
-
-                        <PivotItem Header="Up Next" Margin="0">
-                            <Grid Padding="12,4,12,12">
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="*" />
-                                </Grid.RowDefinitions>
-                                <Button Grid.Row="0" Content="Clear" HorizontalAlignment="Right" Margin="0,0,4,8" Padding="12,4" Command="{x:Bind ViewModel.ClearQueueCommand}" Style="{StaticResource GhostIconButtonStyle}" />
-                                <ListView Grid.Row="1" x:Name="SidebarQueueList" ItemsSource="{x:Bind ViewModel.QueueItems, Mode=OneWay}" CanReorderItems="True" AllowDrop="True" CanDragItems="True" SelectionMode="None" IsItemClickEnabled="True" ItemClick="QueueList_ItemClick">
-                                    <ListView.ItemTemplate>
-                                        <DataTemplate x:DataType="models:QueueItem">
-                                            <Grid ColumnSpacing="8" Padding="6,8" CornerRadius="6">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="Auto" />
-                                                    <ColumnDefinition Width="Auto" />
-                                                </Grid.ColumnDefinitions>
-                                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                                                    <TextBlock Text="{x:Bind Track.Title}" TextTrimming="CharacterEllipsis" FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
-                                                    <TextBlock Text="{x:Bind Track.ArtistName}" TextTrimming="CharacterEllipsis" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                                </StackPanel>
-                                                <Button Grid.Column="1" Click="SidebarQueueFavorite_Click" Loaded="SidebarQueueFavorite_Loaded" DataContextChanged="SidebarQueueFavorite_DataContextChanged" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Favorite" Padding="6">
-                                                    <FontIcon Glyph="&#xEB51;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                                                </Button>
-                                                <Button Grid.Column="2" Click="QueueRemove_Click" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Remove from queue" Padding="6">
-                                                    <FontIcon Glyph="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                                                </Button>
-                                            </Grid>
-                                        </DataTemplate>
-                                    </ListView.ItemTemplate>
-                                </ListView>
-                            </Grid>
-                        </PivotItem>
-
-                        <PivotItem Header="Lyrics" Margin="0">
-                            <Grid Padding="4,0,4,12">
-                                <np:LyricsPanel
-                                    x:Name="SidebarLyricsPanel"
-                                    State="{x:Bind NowPlayingViewModel.LyricsState, Mode=OneWay}"
-                                    SyncedLines="{x:Bind NowPlayingViewModel.SyncedLines, Mode=OneWay}"
-                                    UnsyncedText="{x:Bind NowPlayingViewModel.UnsyncedText, Mode=OneWay}"
-                                    CurrentLyricIndex="{x:Bind NowPlayingViewModel.CurrentLyricIndex, Mode=OneWay}"
-                                    OffsetMs="{x:Bind NowPlayingViewModel.LyricsOffsetMs, Mode=OneWay}"
-                                    SelectedMode="{x:Bind NowPlayingViewModel.SelectedLyricMode, Mode=OneWay}"
-                                    HasSyncedLyrics="{x:Bind NowPlayingViewModel.HasSyncedLyrics, Mode=OneWay}"
-                                    HasPlainLyrics="{x:Bind NowPlayingViewModel.HasPlainLyrics, Mode=OneWay}"
-                                    LyricsSource="{x:Bind NowPlayingViewModel.LyricsSource, Mode=OneWay}"
-                                    IsReloading="{x:Bind NowPlayingViewModel.IsReloadingLyrics, Mode=OneWay}"
-                                    OffsetChangeRequested="SidebarLyricsPanel_OffsetChangeRequested"
-                                    LyricModeChangeRequested="SidebarLyricsPanel_LyricModeChangeRequested"
-                                    ReloadLyricsCommand="{x:Bind NowPlayingViewModel.ReloadLyricsCommand, Mode=OneWay}" />
-                            </Grid>
-                        </PivotItem>
-                    </Pivot>
+                                <!-- Tab 2: Lyrics -->
+                                <PivotItem Margin="0">
+                                    <Grid Padding="12,12,12,12">
+                                        <np:LyricsPanel
+                                            x:Name="SidebarLyricsPanel"
+                                            State="{x:Bind NowPlayingViewModel.LyricsState, Mode=OneWay}"
+                                            SyncedLines="{x:Bind NowPlayingViewModel.SyncedLines, Mode=OneWay}"
+                                            UnsyncedText="{x:Bind NowPlayingViewModel.UnsyncedText, Mode=OneWay}"
+                                            CurrentLyricIndex="{x:Bind NowPlayingViewModel.CurrentLyricIndex, Mode=OneWay}"
+                                            OffsetMs="{x:Bind NowPlayingViewModel.LyricsOffsetMs, Mode=OneWay}"
+                                            SelectedMode="{x:Bind NowPlayingViewModel.SelectedLyricMode, Mode=OneWay}"
+                                            HasSyncedLyrics="{x:Bind NowPlayingViewModel.HasSyncedLyrics, Mode=OneWay}"
+                                            HasPlainLyrics="{x:Bind NowPlayingViewModel.HasPlainLyrics, Mode=OneWay}"
+                                            LyricsSource="{x:Bind NowPlayingViewModel.LyricsSource, Mode=OneWay}"
+                                            IsReloading="{x:Bind NowPlayingViewModel.IsReloadingLyrics, Mode=OneWay}"
+                                            OffsetChangeRequested="SidebarLyricsPanel_OffsetChangeRequested"
+                                            LyricModeChangeRequested="SidebarLyricsPanel_LyricModeChangeRequested"
+                                            ReloadLyricsCommand="{x:Bind NowPlayingViewModel.ReloadLyricsCommand, Mode=OneWay}" />
+                                    </Grid>
+                                </PivotItem>
+                            </Pivot>
+                        </Grid>
+                    </Border>
                 </Grid>
             </SplitView.Pane>
         </SplitView>
@@ -380,7 +458,7 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <Button Grid.Column="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Background="Transparent" BorderBrush="Transparent" Padding="4" Click="TrackDetails_Click">
+                <Button x:Name="BottomTrackDetailsBtn" Grid.Column="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Background="Transparent" BorderBrush="Transparent" Padding="4" Click="TrackDetails_Click">
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="16">
                         <Grid Width="56" Height="56">
                             <Border CornerRadius="4" Background="{ThemeResource SystemControlHighlightAccentBrush}" Opacity="0.15">
@@ -540,12 +618,12 @@
             <!-- Column 2: Utilities (Now Playing, Queue, Lyrics, Mute, Volume) -->
             <StackPanel Grid.Column="2" x:Name="ExtraControlsPanel" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Spacing="8">
                 <!-- Lyrics Toggle Button -->
-                <Button Click="LyricsButton_Click" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Lyrics">
+                <Button x:Name="BottomLyricsBtn" Click="LyricsButton_Click" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Lyrics">
                     <FontIcon Glyph="&#xEC4F;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="16" />
                 </Button>
 
                 <!-- Queue Toggle Button -->
-                <Button Click="QueueButton_Click" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Queue">
+                <Button x:Name="BottomQueueBtn" Click="QueueButton_Click" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Queue">
                     <FontIcon Glyph="&#xE8FD;" FontFamily="Segoe MDL2 Assets" Foreground="{x:Bind GetActiveColor(ViewModel.IsNowPlayingOpen), Mode=OneWay}" FontSize="16" />
                 </Button>
 
@@ -568,13 +646,13 @@
                 <Button.Flyout>
                     <Flyout Placement="TopEdgeAlignedRight">
                         <StackPanel Spacing="16" Width="200" Padding="12">
-                            <Button Click="LyricsButton_Click" Style="{StaticResource GhostIconButtonStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                            <Button x:Name="OverflowLyricsBtn" Click="LyricsButton_Click" Style="{StaticResource GhostIconButtonStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
                                 <StackPanel Orientation="Horizontal" Spacing="12">
                                     <FontIcon Glyph="&#xEC4F;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="16" />
                                     <TextBlock Text="Lyrics" />
                                 </StackPanel>
                             </Button>
-                            <Button Click="QueueButton_Click" Style="{StaticResource GhostIconButtonStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                            <Button x:Name="OverflowQueueBtn" Click="QueueButton_Click" Style="{StaticResource GhostIconButtonStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
                                 <StackPanel Orientation="Horizontal" Spacing="12">
                                     <FontIcon Glyph="&#xE8FD;" FontFamily="Segoe MDL2 Assets" Foreground="{x:Bind GetActiveColor(ViewModel.IsNowPlayingOpen), Mode=OneWay}" FontSize="16" />
                                     <TextBlock Text="Queue" />
