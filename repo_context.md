@@ -287,8 +287,7 @@ OCTAVE/
 ### 8.2 Converters, Helpers & Favorites System
 - **`FavoriteConverters`**: `FavoriteGlyphConverter` (`\uEB52` HeartFill / `\uEB51` HeartOutline), `FavoriteBrushConverter` (coral red `#FF4060` / theme-aware tertiary brush), and `FavoriteToolTipConverter` ("Remove from Favorites" / "Add to Favorites").
 - **Track Lists Favorite Buttons**: Available on every page listing songs (`LibraryPage`, `EntityDetailPage`, `PlaylistDetailPage`, `SearchResultsPage`, `QueuePanel`, `MainWindow` sidebar queue, and `HomePage` Spotlight Hero card) with live synchronization via `ILibraryService.FavoritesChanged`.
-- **`ArtworkPathConverter`**: High-performance, DPI-aware `IValueConverter` for WinUI 3 `Image.Source` with LRU caching (250 items) and weak-reference scale listeners.
-- **`SpectrumVisualizerControl`**: Frame-synchronized spectrum visualizer with cached theme accent brushes, zero-overhead idle state (0 CPU/GPU calculation when paused or disabled), and clean `ResetBars()` resting animation.
+- **`WindowsAudioDeviceHelper`**: Fast, cached audio endpoint query engine with 60-second positive TTL and 5-minute failure fallback caching to eliminate thread-pool COM activation thrashing and lag on page navigation.
 - **`WindowsSmtcService`**: Windows System Media Transport Controls integration supporting hardware media keys (Play, Pause, Next, Previous) and lock screen / flyout metadata.
 
 ---
