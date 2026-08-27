@@ -61,8 +61,14 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
         set
         {
             double safe = value;
-            if (double.IsNaN(safe) || double.IsInfinity(safe) || safe < 0) safe = 0.0;
-            else if (DurationSeconds > 0 && safe > DurationSeconds) safe = DurationSeconds;
+            if (double.IsNaN(safe) || double.IsInfinity(safe) || safe < 0 || DurationSeconds <= 0)
+            {
+                safe = 0.0;
+            }
+            else if (safe > DurationSeconds)
+            {
+                safe = DurationSeconds;
+            }
 
             if (Math.Abs(_positionSeconds - safe) > 0.0001)
             {
@@ -71,8 +77,25 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
         }
     }
 
-    [ObservableProperty]
-    public partial double DurationSeconds { get; set; }
+    private double _durationSeconds;
+    public double DurationSeconds
+    {
+        get => _durationSeconds;
+        set
+        {
+            double safe = value;
+            if (double.IsNaN(safe) || double.IsInfinity(safe) || safe < 0) safe = 0.0;
+
+            if (Math.Abs(_durationSeconds - safe) > 0.0001)
+            {
+                SetProperty(ref _durationSeconds, safe);
+                if (safe <= 0 || _positionSeconds > safe)
+                {
+                    PositionSeconds = (safe <= 0) ? 0.0 : safe;
+                }
+            }
+        }
+    }
 
     [ObservableProperty]
     public partial bool IsPlaying { get; set; }
