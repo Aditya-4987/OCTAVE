@@ -20,6 +20,11 @@
 
         <Grid.Resources>
             <converters:ArtworkPathConverter x:Key="ArtworkPathConverter" />
+            <converters:DurationFormatConverter x:Key="DurationFormatConverter" />
+            <converters:QueuePlayStateBrushConverter x:Key="QueuePlayStateBrushConverter" />
+            <converters:ConditionalValueConverter x:Key="PlayPauseGlyphConverter"
+                                                  TrueValue="&#xE769;"
+                                                  FalseValue="&#xE768;"/>
         </Grid.Resources>
         <Grid.KeyboardAccelerators>
             <KeyboardAccelerator Modifiers="Control" Key="P" Invoked="Accel_PlayPause" />
@@ -366,7 +371,7 @@
                                     VerticalAlignment="Stretch">
                                 <Grid RowDefinitions="Auto,*">
                                     <!-- Queue Header -->
-                                    <Grid Grid.Row="0" Padding="14,10,10,10" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1">
+                                    <Grid Grid.Row="0" Padding="14,10,12,10" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
@@ -374,31 +379,77 @@
                                         <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                                             <FontIcon Glyph="&#xE90B;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" />
                                             <TextBlock Text="UP NEXT" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" CharacterSpacing="60" />
+                                            <TextBlock Text="•" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" Margin="2,0" />
+                                            <TextBlock Text="{x:Bind ViewModel.QueueItems.Count, Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                            <TextBlock Text="tracks" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" Margin="2,0,0,0" />
                                         </StackPanel>
                                         <Button Grid.Column="1" Content="Clear" Padding="10,3" Command="{x:Bind ViewModel.ClearQueueCommand}" Style="{StaticResource GhostIconButtonStyle}" FontSize="12" />
                                     </Grid>
 
+                                    <!-- Queue Empty State -->
+                                    <StackPanel Grid.Row="1"
+                                                VerticalAlignment="Center"
+                                                HorizontalAlignment="Center"
+                                                Spacing="8"
+                                                Padding="16,40"
+                                                Visibility="{x:Bind QueueEmptyVisibility(ViewModel.QueueItems.Count), Mode=OneWay}">
+                                        <FontIcon Glyph="&#xE90B;" FontFamily="Segoe MDL2 Assets" FontSize="32" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Center" />
+                                        <TextBlock Text="Queue is empty" FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center" />
+                                        <TextBlock Text="Add tracks from your library or playlists" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Center" TextAlignment="Center" />
+                                    </StackPanel>
+
                                     <!-- Queue List -->
                                     <ListView Grid.Row="1" x:Name="SidebarQueueList" ItemsSource="{x:Bind ViewModel.QueueItems, Mode=OneWay}"
                                               CanReorderItems="True" AllowDrop="True" CanDragItems="True" SelectionMode="None" IsItemClickEnabled="True" ItemClick="QueueList_ItemClick"
-                                              Padding="0,4">
+                                              Padding="0,4"
+                                              Visibility="{x:Bind QueueListVisibility(ViewModel.QueueItems.Count), Mode=OneWay}">
                                         <ListView.ItemTemplate>
                                             <DataTemplate x:DataType="models:QueueItem">
-                                                <Grid ColumnSpacing="8" Padding="12,6" CornerRadius="6">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="*" />
-                                                        <ColumnDefinition Width="Auto" />
-                                                        <ColumnDefinition Width="Auto" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                                                        <TextBlock Text="{x:Bind Track.Title}" TextTrimming="CharacterEllipsis" FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
-                                                        <TextBlock Text="{x:Bind Track.ArtistName}" TextTrimming="CharacterEllipsis" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                                    </StackPanel>
-                                                    <Button Grid.Column="1" Click="SidebarQueueFavorite_Click" Loaded="SidebarQueueFavorite_Loaded" DataContextChanged="SidebarQueueFavorite_DataContextChanged" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Favorite" Padding="6">
-                                                        <FontIcon Glyph="&#xEB51;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                <Grid Padding="8,6,6,6"
+                                                      ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto"
+                                                      CornerRadius="6"
+                                                      Background="{Binding IsPlaying, Converter={StaticResource QueuePlayStateBrushConverter}, ConverterParameter=Background}">
+                                                    
+                                                    <!-- Play indicator / Play button -->
+                                                    <Button Grid.Column="0"
+                                                            Click="SidebarQueuePlay_Click"
+                                                            Style="{StaticResource GhostIconButtonStyle}"
+                                                            Padding="4"
+                                                            Margin="0,0,6,0"
+                                                            VerticalAlignment="Center">
+                                                        <FontIcon Glyph="{Binding IsPlaying, Converter={StaticResource PlayPauseGlyphConverter}}"
+                                                                  FontFamily="Segoe MDL2 Assets"
+                                                                  FontSize="12"
+                                                                  Foreground="{Binding IsPlaying, Converter={StaticResource QueuePlayStateBrushConverter}, ConverterParameter=Foreground}"/>
                                                     </Button>
-                                                    <Button Grid.Column="2" Click="QueueRemove_Click" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Remove from queue" Padding="6">
-                                                        <FontIcon Glyph="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+
+                                                    <!-- Artwork Thumbnail -->
+                                                    <Border Grid.Column="1" CornerRadius="4" Width="36" Height="36" Margin="0,0,10,0" Background="{ThemeResource LayerFillColorDefaultBrush}">
+                                                        <Image Source="{Binding ArtworkUrl, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=36}" Stretch="UniformToFill" />
+                                                    </Border>
+
+                                                    <!-- Track Title & Artist -->
+                                                    <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="2">
+                                                        <TextBlock Text="{Binding Track.Title}" TextTrimming="CharacterEllipsis" FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                                        <TextBlock Text="{Binding Track.ArtistName}" TextTrimming="CharacterEllipsis" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                    </StackPanel>
+
+                                                    <!-- Duration -->
+                                                    <TextBlock Grid.Column="3"
+                                                               Text="{Binding Track.DurationSeconds, Converter={StaticResource DurationFormatConverter}}"
+                                                               FontSize="11"
+                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                               VerticalAlignment="Center"
+                                                               Margin="6,0,2,0"/>
+
+                                                    <!-- Favorite -->
+                                                    <Button Grid.Column="4" Click="SidebarQueueFavorite_Click" Loaded="SidebarQueueFavorite_Loaded" DataContextChanged="SidebarQueueFavorite_DataContextChanged" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Favorite" Padding="4">
+                                                        <FontIcon Glyph="&#xEB51;" FontFamily="Segoe MDL2 Assets" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                    </Button>
+
+                                                    <!-- Remove from Queue -->
+                                                    <Button Grid.Column="5" Click="QueueRemove_Click" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Remove from queue" Padding="4">
+                                                        <FontIcon Glyph="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                                                     </Button>
                                                 </Grid>
                                             </DataTemplate>

@@ -115,8 +115,48 @@ public sealed partial class QueuePanel : UserControl
     {
         if (d is QueuePanel panel)
         {
+            if (e.OldValue is System.Collections.Specialized.INotifyCollectionChanged oldObs)
+            {
+                oldObs.CollectionChanged -= panel.OnCollectionChanged;
+            }
+
             panel.QueueListView.ItemsSource = panel.ItemsSource;
+            panel.UpdateEmptyState();
+
+            if (e.NewValue is System.Collections.Specialized.INotifyCollectionChanged newObs)
+            {
+                newObs.CollectionChanged += panel.OnCollectionChanged;
+            }
+
             _ = panel.RefreshFavoriteIdsAsync();
+        }
+    }
+
+    private void OnCollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    {
+        UpdateEmptyState();
+    }
+
+    private void UpdateEmptyState()
+    {
+        bool hasItems = false;
+        if (ItemsSource is ICollection col)
+        {
+            hasItems = col.Count > 0;
+        }
+        else if (ItemsSource is IEnumerable en)
+        {
+            var enumerator = en.GetEnumerator();
+            hasItems = enumerator.MoveNext();
+        }
+
+        if (EmptyQueueState != null)
+        {
+            EmptyQueueState.Visibility = hasItems ? Visibility.Collapsed : Visibility.Visible;
+        }
+        if (QueueListView != null)
+        {
+            QueueListView.Visibility = hasItems ? Visibility.Visible : Visibility.Collapsed;
         }
     }
 

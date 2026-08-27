@@ -58,11 +58,17 @@ public sealed partial class MainWindow : Window
                 if (ViewModel.IsNowPlayingOpen)
                 {
                     _wasNavPaneOpen = NavView.IsPaneOpen;
-                    NavView.IsPaneOpen = false;
+                    if (NavView.IsPaneOpen)
+                    {
+                        NavView.IsPaneOpen = false;
+                    }
                 }
                 else
                 {
-                    NavView.IsPaneOpen = _wasNavPaneOpen;
+                    if (_wasNavPaneOpen && !NavView.IsPaneOpen)
+                    {
+                        NavView.IsPaneOpen = true;
+                    }
                 }
             }
         };
@@ -707,6 +713,17 @@ public sealed partial class MainWindow : Window
     {
         ViewModel.IsNowPlayingOpen = false;
     }
+
+    private void SidebarQueuePlay_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement fe && fe.DataContext is QueueItem item)
+        {
+            ViewModel.PlayQueueItemCommand.Execute(item);
+        }
+    }
+
+    public Visibility QueueEmptyVisibility(int count) => count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility QueueListVisibility(int count) => count > 0 ? Visibility.Visible : Visibility.Collapsed;
 
     public Visibility MetadataRowVisibility(string? value)
     {

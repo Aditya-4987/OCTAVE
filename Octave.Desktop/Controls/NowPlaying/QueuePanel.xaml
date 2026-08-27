@@ -21,19 +21,18 @@
                                               FalseValue="&#xE768;"/>
     </UserControl.Resources>
 
-    <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
+    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
             BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
             BorderThickness="1"
-            CornerRadius="16"
-            Padding="20"
+            CornerRadius="8"
+            Padding="16,14"
             VerticalAlignment="Stretch">
         <Grid RowDefinitions="Auto,*">
             <!-- Header Row -->
-            <Grid Grid.Row="0" Margin="0,0,0,16">
+            <Grid Grid.Row="0" Margin="0,0,0,12">
                 <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                    <FontIcon Glyph="&#xE90B;" FontFamily="Segoe MDL2 Assets" FontSize="18" Foreground="{ThemeResource SystemControlHighlightAccentBrush}"/>
-                    <!-- MC-05: was hardcoded White -->
-                    <TextBlock Text="Up Next Queue" FontSize="18" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" VerticalAlignment="Center"/>
+                    <FontIcon Glyph="&#xE90B;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="{ThemeResource SystemControlHighlightAccentBrush}"/>
+                    <TextBlock Text="Up Next Queue" FontSize="16" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" VerticalAlignment="Center"/>
                 </StackPanel>
 
                 <Button x:Name="ClearQueueButton"
@@ -47,11 +46,23 @@
                         ToolTipService.ToolTip="Clear Queue (keeps current track)">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <FontIcon Glyph="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
-                        <!-- MC-06 family: were hardcoded #CCCCCC -->
                         <TextBlock Text="Clear All" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Button>
             </Grid>
+
+            <!-- Empty State -->
+            <StackPanel x:Name="EmptyQueueState"
+                        Grid.Row="1"
+                        VerticalAlignment="Center"
+                        HorizontalAlignment="Center"
+                        Spacing="8"
+                        Padding="16,40"
+                        Visibility="Collapsed">
+                <FontIcon Glyph="&#xE90B;" FontFamily="Segoe MDL2 Assets" FontSize="36" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Center"/>
+                <TextBlock Text="Queue is empty" FontSize="14" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center"/>
+                <TextBlock Text="Add tracks from your library or playlists to keep the music playing" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Center" TextAlignment="Center" MaxWidth="280"/>
+            </StackPanel>
 
             <!-- Scrollable Queue List inside Tile -->
             <ListView x:Name="QueueListView"

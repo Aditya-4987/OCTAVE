@@ -250,11 +250,59 @@ public partial class ShellViewModel : ObservableObject
             {
                 QueueItems.Add(item);
             }
+            HydrateQueueArtwork();
         }
         finally
         {
             _isRefreshingQueue = false;
         }
+    }
+
+    private void HydrateQueueArtwork()
+    {
+        List<(QueueItem Item, string AlbumId)>? pending = null;
+        foreach (var item in QueueItems)
+        {
+            if (item.ArtworkUrl != null) continue;
+            string albumId = item.Track.AlbumId;
+            if (string.IsNullOrWhiteSpace(albumId)) continue;
+
+            pending ??= new List<(QueueItem, string)>();
+            pending.Add((item, albumId));
+        }
+
+        if (pending == null || pending.Count == 0) return;
+        _ = HydrateQueueArtworkAsync(pending);
+    }
+
+    private async Task HydrateQueueArtworkAsync(List<(QueueItem Item, string AlbumId)> pending)
+    {
+        var albumIds = pending.Select(p => p.AlbumId).Distinct().ToList();
+        var albumMap = new Dictionary<string, string?>();
+
+        foreach (var albumId in albumIds)
+        {
+            try
+            {
+                var album = await _libraryService.GetAlbumByIdAsync(albumId);
+                albumMap[albumId] = album?.ArtworkUrl;
+            }
+            catch
+            {
+                albumMap[albumId] = null;
+            }
+        }
+
+        _dispatcher.TryEnqueue(() =>
+        {
+            foreach (var (item, albumId) in pending)
+            {
+                if (albumMap.TryGetValue(albumId, out var artUrl) && !string.IsNullOrEmpty(artUrl))
+                {
+                    item.ArtworkUrl = artUrl;
+                }
+            }
+        });
     }
 
     [RelayCommand]
