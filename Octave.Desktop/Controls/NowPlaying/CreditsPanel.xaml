@@ -14,11 +14,11 @@
 
     <StackPanel Spacing="16">
         <!-- Tile 1: Artists -->
-        <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
+        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                 BorderThickness="1"
-                CornerRadius="14"
-                Padding="18">
+                CornerRadius="8"
+                Padding="16,14">
             <StackPanel Spacing="12">
                 <TextBlock Text="ARTISTS" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" CharacterSpacing="80"/>
 
@@ -34,7 +34,7 @@
                                     Background="Transparent"
                                     BorderBrush="Transparent"
                                     Padding="4"
-                                    CornerRadius="8"
+                                    CornerRadius="6"
                                     HorizontalAlignment="Stretch"
                                     HorizontalContentAlignment="Left">
                                 <Grid ColumnDefinitions="Auto,*">
@@ -43,7 +43,7 @@
                                             <ImageBrush ImageSource="{x:Bind ArtworkUrl, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Artist}" Stretch="UniformToFill"/>
                                         </Ellipse.Fill>
                                     </Ellipse>
-                                    <TextBlock Grid.Column="1" Text="{x:Bind Name}" FontSize="16" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Grid.Column="1" Text="{x:Bind Name}" FontSize="15" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
                                 </Grid>
                             </Button>
                         </DataTemplate>
@@ -53,29 +53,29 @@
         </Border>
 
         <!-- Tile 2: Album -->
-        <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
+        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                 BorderThickness="1"
-                CornerRadius="14"
+                CornerRadius="8"
                 Padding="0"
                 Visibility="{x:Bind HasTextVisibility(AlbumTitle), Mode=OneWay}">
             <Button Click="AlbumTile_Click"
                     Background="Transparent"
                     BorderBrush="Transparent"
-                    Padding="18"
-                    CornerRadius="14"
+                    Padding="16,14"
+                    CornerRadius="8"
                     HorizontalAlignment="Stretch"
                     HorizontalContentAlignment="Left">
                 <StackPanel Spacing="12">
                     <TextBlock Text="ALBUM" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" CharacterSpacing="80"/>
 
                     <Grid ColumnDefinitions="Auto,*">
-                        <Border CornerRadius="8" Width="56" Height="56" Grid.Column="0" Margin="0,0,16,0" Background="{ThemeResource LayerFillColorDefaultBrush}">
+                        <Border CornerRadius="6" Width="56" Height="56" Grid.Column="0" Margin="0,0,16,0" Background="{ThemeResource LayerFillColorDefaultBrush}">
                             <Image Source="{x:Bind AlbumArtworkUrl, Mode=OneWay, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Small}" Stretch="UniformToFill"/>
                         </Border>
 
                         <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="4">
-                            <TextBlock Text="{x:Bind AlbumTitle, Mode=OneWay}" FontSize="16" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis"/>
+                            <TextBlock Text="{x:Bind AlbumTitle, Mode=OneWay}" FontSize="15" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis"/>
                             <TextBlock Text="{x:Bind AlbumYearText(AlbumYear), Mode=OneWay}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Visibility="{x:Bind AlbumYearVisibility(AlbumYear), Mode=OneWay}"/>
                         </StackPanel>
                     </Grid>
@@ -84,11 +84,11 @@
         </Border>
 
         <!-- Tile 3: Audio Info -->
-        <Border Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
+        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                 BorderThickness="1"
-                CornerRadius="14"
-                Padding="18">
+                CornerRadius="8"
+                Padding="16,14">
             <StackPanel Spacing="14">
                 <TextBlock Text="AUDIO INFO" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" CharacterSpacing="80"/>
 

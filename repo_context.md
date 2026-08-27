@@ -261,9 +261,9 @@ OCTAVE/
   - **Modern Segmented Pill Navigation**: Custom-styled segmented tab buttons ("Info", "Up Next", "Lyrics") with direct spacing beneath to the view body and a dedicated top-right **"✕"** close button.
   - **Glitch-Free Navigation Auto-Collapse**: Automatically collapses the left `NavigationView` pane into icon-only mode when the right sidebar opens and safely preserves user manual pane toggles without split-second jitter upon sidebar close.
   - **Overhauled Info Tab**: Distinguishes "About Track" and "Audio & File Details" within rounded elevated cards, dynamically hiding any missing metadata entries.
-  - **Up Next Tab (Overhauled)**: Elevated card container with dynamic track count in header (`UP NEXT • X tracks`), clean empty state placeholder, rich track rows with 36x36 artwork thumbnails, live active playing highlight tint, duration text, favorite toggle, play indicator, drag-and-drop reordering, and item removal.
+  - **Up Next Tab (Overhauled with Drag-to-Reorder)**: Elevated card container with dynamic track count in header (`UP NEXT • X tracks`), clean empty state placeholder, rich track rows with 36x36 artwork thumbnails, live active playing highlight tint, duration text, favorite toggle, play indicator, drag-and-drop reordering seamlessly synced with `IQueueService.Reorder`, and item removal.
   - **Lyrics Tab**: Real-time synchronized lyrics panel with ±500ms sync offset nudges (with conditional reset icon appearing only when offset != 0).
-  - **NowPlayingPage Integration**: Navigating to `NowPlayingPage` automatically collapses the right sidebar, disables/greys out bottom bar sidebar trigger buttons, and pauses the left track title trigger to prevent UI competition. Overhauled `QueuePanel` with matching `CardBackgroundFillColorDefaultBrush`, `CornerRadius="8"`, and empty state handling.
+  - **NowPlayingPage Integration**: Navigating to `NowPlayingPage` automatically collapses the right sidebar, disables/greys out bottom bar sidebar trigger buttons, and pauses the left track title trigger to prevent UI competition. Overhauled `QueuePanel` with matching `CardBackgroundFillColorDefaultBrush`, `CornerRadius="8"`, drag-to-reorder, and empty state handling.
 - **`HomePage.xaml`**: Dashboard featuring Recent tracks, Favorites, Recently Added, Most Played, and quick playback actions with responsive card hover elevations.
 - **`LibraryPage.xaml`**: Full sortable track grid with column headers, instant search/filter, full ThemeResource integration, 3-dot context menu, and **Multi-Select Mode** (Play Selected, Add to Queue, Add to Playlist with dynamic flyouts and new playlist dialog creator, Select All, and Done).
 - **`AlbumsPage.xaml` & `ArtistsPage.xaml`**: Responsive grid tiles with album art, artist imagery, track counts, card `PointerOver` visual state outlines, and seamless navigation to `EntityDetailPage`.
@@ -271,11 +271,12 @@ OCTAVE/
 - **`PlaylistsPage.xaml` & `PlaylistDetailPage.xaml`**: Playlist browsing, track management, reordering, creation, and deletion with:
   - **"Add Songs" Flow**: Search-enabled library track picker `ContentDialog` supporting bulk song insertion into the playlist.
   - **In-Playlist Multi-Select**: Bulk track removal, queueing, and playback.
+- **`SearchResultsPage.xaml`**: Uniform layout margins, sectioned category results (Tracks, Albums, Artists, Playlists), and rich elevated empty search state card.
 - **`NowPlayingPage.xaml`**: Full-window experience with 4 interchangeable panels:
   1. `AlbumArtPanel`: High-resolution album artwork with a translucent badge favorite toggle heart button in the bottom-left corner.
   2. `LyricsPanel`: Real-time synchronized scrolling lyrics with active line highlighting, ±500ms sync offset nudges (with conditional reset icon appearing only when offset != 0), auto-follow suspension on scroll, and streamlined toolbar.
-  3. `QueuePanel`: Interactive queue management with favorite toggle, reordering, remove, and play actions.
-  4. `CreditsPanel`: Technical audio stream metadata across 4 rich tiles (Artist Profile, Album Overview, Audio Stream Specifications, and Track & Tag Properties: Genre, Track/Disc #, ReplayGain, Bit Depth/Channels, Location).
+  3. `QueuePanel`: Interactive queue management with drag-to-reorder, favorite toggle, remove, and play actions.
+  4. `CreditsPanel`: Technical audio stream metadata across 4 rich elevated tiles (Artist Profile, Album Overview, Audio Stream Specifications, and Track & Tag Properties: Genre, Track/Disc #, ReplayGain, Bit Depth/Channels, Location) with `CardBackgroundFillColorDefaultBrush` and `CornerRadius="8"`.
 - **`SettingsPage.xaml`**:
   - **Playback**: Sleep timer, Session resume persistence, Waveform visualizer toggle, Crossfade duration (1-10s) with atomic SQLite `AppSettings` persistence.
   - **Equalizer**: 10-band interactive sliders, DSP status, preset gain curves (Flat, Bass Boost, Treble Boost, Vocal, Electronic, Acoustic), and persisted EQ gains array.
