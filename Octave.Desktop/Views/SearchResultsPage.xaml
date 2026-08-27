@@ -14,15 +14,17 @@
         <converters:ArtworkPathConverter x:Key="ArtworkPathConverter" />
     </Page.Resources>
 
-    <Grid Padding="24">
+    <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <TextBlock x:Name="SearchQueryText" FontSize="36" FontWeight="Bold" Margin="0,0,0,16" Padding="32,48,32,0" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+        <Grid Margin="0,0,0,16" Padding="32,48,32,0">
+            <TextBlock x:Name="SearchQueryText" FontSize="36" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" VerticalAlignment="Center" />
+        </Grid>
 
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="32,0,32,32">
             <StackPanel Spacing="32">
                 <!-- Section 1: Tracks -->
                 <StackPanel x:Name="TracksSection" Visibility="{x:Bind VisibilityFromCount(ViewModel.Tracks.Count), Mode=OneWay}">
@@ -236,13 +238,20 @@
                     </GridView>
                 </StackPanel>
 
-                <!-- No Results fallback -->
-                <TextBlock Text="No matches found." 
-                           FontSize="16" 
-                           Foreground="{ThemeResource TextFillColorTertiaryBrush}" 
-                           HorizontalAlignment="Center" 
-                           Margin="0,48,0,0"
-                           Visibility="{x:Bind NoResultsVisibility(ViewModel.Tracks.Count, ViewModel.Albums.Count, ViewModel.Artists.Count, ViewModel.Playlists.Count), Mode=OneWay}"/>
+                <!-- No Results Card -->
+                <Grid Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                      BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                      BorderThickness="1"
+                      CornerRadius="12" Padding="48" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="500" Margin="0,48,0,0"
+                      Visibility="{x:Bind NoResultsVisibility(ViewModel.Tracks.Count, ViewModel.Albums.Count, ViewModel.Artists.Count, ViewModel.Playlists.Count), Mode=OneWay}">
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16">
+                        <Border Width="64" Height="64" CornerRadius="32" Background="{ThemeResource LayerFillColorDefaultBrush}" HorizontalAlignment="Center">
+                            <FontIcon Glyph="&#xE721;" FontFamily="Segoe MDL2 Assets" FontSize="28" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" HorizontalAlignment="Center" />
+                        </Border>
+                        <TextBlock Text="No matches found" FontSize="20" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" HorizontalAlignment="Center" />
+                        <TextBlock Text="Check the spelling or try searching for another artist, track, album, or playlist." Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" TextAlignment="Center" FontSize="14" />
+                    </StackPanel>
+                </Grid>
             </StackPanel>
         </ScrollViewer>
     </Grid>
