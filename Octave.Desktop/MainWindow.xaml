@@ -58,7 +58,12 @@
                                 PaneDisplayMode="Auto"
                                 ItemInvoked="NavigationView_ItemInvoked"
                                 BackRequested="NavigationView_BackRequested"
-                                IsSettingsVisible="True">
+                                IsSettingsVisible="True"
+                                Margin="0,0,6,0">
+                    <NavigationView.Resources>
+                        <!-- Ensures the middle content card has symmetrical rounded corners on BOTH top-left and top-right -->
+                        <CornerRadius x:Key="NavigationViewContentGridCornerRadius">8,8,0,0</CornerRadius>
+                    </NavigationView.Resources>
                     <NavigationView.Header>
                         <AutoSuggestBox x:Name="GlobalSearchBox" 
                                         PlaceholderText="Search your library..." 
@@ -122,17 +127,14 @@
             </SplitView.Content>
             
             <SplitView.Pane>
-                <Grid Background="{ThemeResource NavigationViewDefaultPaneBackground}"
-                      BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                      BorderThickness="1,0,0,0"
-                      CornerRadius="8,0,0,0">
+                <Grid Background="Transparent">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
                     <!-- Top Action Bar: Segmented Tabs & Close Button -->
-                    <Grid Grid.Row="0" Padding="14,12,14,10" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1">
+                    <Grid Grid.Row="0" Padding="14,8,14,8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />

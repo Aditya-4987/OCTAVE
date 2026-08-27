@@ -256,10 +256,11 @@ OCTAVE/
 
 ### 8.1 Views & Navigation
 - **`MainWindow.xaml`**: Mica backdrop, unified single title bar (`ExtendsContentIntoTitleBar = true` with transparent caption buttons), top navigation bar, global search box with live suggestions dropdown, fluid `NavigationThemeTransition` (`EntranceNavigationTransitionInfo`), persistent bottom playback bar with dedicated Lyrics toggle, and a **Docked Inline Right Sidebar (`DisplayMode="Inline"`)**:
-  - **Seamless Native Container**: Integrated as a full-height pane using `NavigationViewDefaultPaneBackground`, left border stroke, and matching top-left corner rounding (`CornerRadius="8,0,0,0"`), perfectly matching the left `NavigationView` pane.
-  - **Modern Segmented Pill Navigation**: Custom-styled segmented tab buttons ("Info", "Up Next", "Lyrics") with direct 8px spacing beneath to the view body (zero Pivot ghost headers) and a dedicated top-right **"✕"** close button.
+  - **Dynamic Mica Window Backdrop**: Right sidebar pane uses a transparent container directly sitting over the multi-layered dynamic album art / Mica tint, matching the left sidebar and window title bar.
+  - **Symmetrical Middle App Island**: Overrode `NavigationViewContentGridCornerRadius` to `8,8,0,0` with right margin `6px`, ensuring the middle content app has smooth rounded curves on both its top-left and top-right corners.
+  - **Modern Segmented Pill Navigation**: Custom-styled segmented tab buttons ("Info", "Up Next", "Lyrics") with direct spacing beneath to the view body and a dedicated top-right **"✕"** close button.
   - **Dynamic Navigation Auto-Collapse**: Automatically collapses the left `NavigationView` pane into icon-only mode when the right sidebar opens and cleanly restores previous nav state upon closing.
-  - **Overhauled Info Tab**: Distinguishes "About Track" and "Audio & File Details" within rounded cards, dynamically hiding any missing metadata entries.
+  - **Overhauled Info Tab**: Distinguishes "About Track" and "Audio & File Details" within rounded elevated cards, dynamically hiding any missing metadata entries.
   - **Up Next Tab**: Clean queue list with header clear button, drag-and-drop reordering, favorite toggle, and removal, seamlessly expanding to fill the available panel width.
   - **Lyrics Tab**: Real-time synchronized lyrics panel with ±500ms sync offset nudges (with conditional reset icon appearing only when offset != 0).
   - **NowPlayingPage Integration**: Navigating to `NowPlayingPage` automatically collapses the right sidebar, disables/greys out bottom bar sidebar trigger buttons, and pauses the left track title trigger to prevent UI competition.
