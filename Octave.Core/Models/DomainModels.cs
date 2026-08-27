@@ -144,7 +144,7 @@ public class QueueItem : System.ComponentModel.INotifyPropertyChanged
             {
                 d.Invoke(this, args);
             }
-            catch (System.Runtime.InteropServices.COMException ex) when (ex.HResult == unchecked((int)0x8001010E) || ex.HResult == unchecked((int)0x80004002))
+            catch (System.Runtime.InteropServices.COMException ex) when (ex.HResult == unchecked((int)0x8001010E) || ex.HResult == unchecked((int)0x80004002) || ex.HResult == unchecked((int)0x8000FFFF))
             {
                 System.Diagnostics.Debug.WriteLine($"[QueueItem] Caught cross-thread COMException (0x{ex.HResult:X8}) on '{propertyName}': {ex.Message}");
             }

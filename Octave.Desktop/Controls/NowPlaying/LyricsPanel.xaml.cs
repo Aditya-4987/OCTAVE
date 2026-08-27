@@ -378,6 +378,8 @@ public sealed partial class LyricsPanel : UserControl
             if (idx < 0 || idx >= _lineElements.Count) return;
             var tb = _lineElements[idx];
 
+            if (!tb.IsLoaded || !SyncedItemsControl.IsLoaded || SyncedScrollViewer == null) return;
+
             tb.UpdateLayout();
 
             double contentY = tb.TransformToVisual(SyncedItemsControl)
@@ -389,7 +391,10 @@ public sealed partial class LyricsPanel : UserControl
             _autoScrollInFlight = true;
             SyncedScrollViewer.ChangeView(null, target, null, disableAnimation: false);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[LyricsPanel] ScrollActiveLineIntoView suppressed: {ex.Message}");
+        }
     }
 
     // NF-25: any view movement that is not our own auto-scroll animation is the

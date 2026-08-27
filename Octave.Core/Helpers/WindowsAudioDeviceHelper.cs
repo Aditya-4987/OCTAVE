@@ -102,12 +102,10 @@ public static class WindowsAudioDeviceHelper
 
     private static (string Name, string Format, double SampleRateKhz, ushort BitDepth) _cachedDeviceDetails = ("Default Audio Device", "Unknown", 44.1, 16);
     private static DateTime _lastCacheTime = DateTime.MinValue;
-    // A failed query is cached under the same TTL: without this a broken COM
-    // environment re-activated the class factory (and threw) on every property
-    // poll - dozens of first-chance exceptions per minute flooding diagnostics.
     private static bool _lastQueryFailed = false;
     private static readonly object _cacheLock = new();
-    private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan FailureCacheTtl = TimeSpan.FromMinutes(5);
 
     // TEST-07: pure parse of the PKEY_AudioEngine_DeviceFormat blob (a
     // WAVEFORMATEX or WAVEFORMATEXTENSIBLE) into the user-facing format string,
@@ -171,7 +169,8 @@ public static class WindowsAudioDeviceHelper
 
         lock (_cacheLock)
         {
-            if (!forceRefresh && DateTime.UtcNow - _lastCacheTime < CacheTtl)
+            var ttl = _lastQueryFailed ? FailureCacheTtl : CacheTtl;
+            if (!forceRefresh && DateTime.UtcNow - _lastCacheTime < ttl)
             {
                 return _cachedDeviceDetails;
             }
@@ -235,13 +234,13 @@ public static class WindowsAudioDeviceHelper
         {
             lock (_cacheLock)
             {
-                // Cache the failure for the TTL and log once per failure streak -
-                // a persistent COM breakage must not flood the debug output.
+                // Cache the failure for the FailureCacheTtl and log once per failure streak -
+                // a persistent COM breakage must not flood the debug output or freeze the UI.
                 _lastCacheTime = DateTime.UtcNow;
                 if (!_lastQueryFailed)
                 {
                     _lastQueryFailed = true;
-                    System.Diagnostics.Debug.WriteLine($"[WindowsAudioDeviceHelper] Query failed (cached {CacheTtl.TotalSeconds:0}s): {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"[WindowsAudioDeviceHelper] Query failed (cached {FailureCacheTtl.TotalMinutes:0}m): {ex.Message}");
                 }
                 var fallback = GetBassDeviceFallback();
                 _cachedDeviceDetails = fallback;
