@@ -25,6 +25,7 @@ public sealed partial class NowPlayingPage : Page
     public NowPlayingPage()
     {
         InitializeComponent();
+        NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
         ViewModel = App.Services.GetRequiredService<NowPlayingViewModel>();
         DataContext = ViewModel;
 
@@ -39,12 +40,6 @@ public sealed partial class NowPlayingPage : Page
             ViewModel.PropertyChanged += ViewModel_PropertyChanged;
             _vmPropertyChangedHooked = true;
         }
-
-        if (ViewModel.CurrentTrack == null)
-        {
-            ViewModel.RefreshState();
-        }
-
         AnimateLyricsTransition(ViewModel.IsLyricsPanelVisible, immediate: true);
         AnimateQueueTransition(ViewModel.IsQueuePanelVisible, immediate: true);
     }

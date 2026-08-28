@@ -439,15 +439,15 @@ public sealed partial class LyricsPanel : UserControl
     {
         if (active)
         {
-            tb.Opacity = 1.0;
+            if (Math.Abs(tb.Opacity - 1.0) > 0.01) tb.Opacity = 1.0;
             tb.Foreground = ResolveAccentBrush();
-            tb.FontSize = 22;
+            if (Math.Abs(tb.FontSize - 22) > 0.1) tb.FontSize = 22;
         }
         else
         {
-            tb.Opacity = 0.35;
-            tb.Foreground = ResolveDefaultBrush(); // NP-14: themed, not hardcoded White
-            tb.FontSize = 18;
+            if (Math.Abs(tb.Opacity - 0.35) > 0.01) tb.Opacity = 0.35;
+            tb.Foreground = ResolveDefaultBrush();
+            if (Math.Abs(tb.FontSize - 18) > 0.1) tb.FontSize = 18;
         }
     }
 

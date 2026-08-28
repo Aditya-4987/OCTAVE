@@ -143,13 +143,13 @@ public partial class ShellViewModel : ObservableObject
                 OnPropertyChanged(nameof(IsTimelineEnabled));
                 if (safe <= 0 || _positionSeconds > safe)
                 {
-                    PositionSeconds = (safe <= 0) ? 0.0 : safe;
+                    PositionSeconds = 0.0;
                 }
             }
         }
     }
 
-    public double SliderMaximum => DurationSeconds > 0 ? DurationSeconds : 1.0;
+    public double SliderMaximum => DurationSeconds > 0 ? DurationSeconds : 100.0;
     public bool IsTimelineEnabled => DurationSeconds > 0;
 
     public double Volume

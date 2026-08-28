@@ -102,7 +102,6 @@
                 <np:QueuePanel Grid.Column="1"
                                x:Name="QueuePanelControl"
                                VerticalAlignment="Stretch"
-                               MinHeight="400"
                                ItemsSource="{x:Bind ViewModel.UpNextQueue, Mode=OneWay}"
                                PlayItemRequested="QueuePanelControl_PlayItemRequested"
                                RemoveItemRequested="QueuePanelControl_RemoveItemRequested"
