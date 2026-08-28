@@ -272,7 +272,7 @@ OCTAVE/
   - **"Add Songs" Flow**: Search-enabled library track picker `ContentDialog` supporting bulk song insertion into the playlist.
   - **In-Playlist Multi-Select**: Bulk track removal, queueing, and playback.
 - **`SearchResultsPage.xaml`**: Uniform layout margins, sectioned category results (Tracks, Albums, Artists, Playlists), and rich elevated empty search state card.
-- **`NowPlayingPage.xaml`**: Full-window experience with 4 interchangeable panels:
+- **`NowPlayingPage.xaml`**: Full-window experience with `NavigationCacheMode="Required"` for instantaneous zero-latency navigation, featuring 4 interchangeable panels:
   1. `AlbumArtPanel`: High-resolution album artwork with a translucent badge favorite toggle heart button in the bottom-left corner.
   2. `LyricsPanel`: Real-time synchronized scrolling lyrics with active line highlighting, ±500ms sync offset nudges (with conditional reset icon appearing only when offset != 0), auto-follow suspension on scroll, and streamlined toolbar.
   3. `QueuePanel`: Interactive queue management with drag-to-reorder, favorite toggle, remove, and play actions.
@@ -305,8 +305,8 @@ OCTAVE/
    - Native BASS sync procedures (`OnTrackEndedCallback`) must never throw unhandled exceptions across the P/Invoke boundary and must dispatch work onto the `ThreadPool`.
 4. **WinUI 3 ListView SelectionMode Safety**:
    - When switching a WinUI 3 `ListView` from `SelectionMode.Multiple` to `SelectionMode.None`, WinUI internally tears down its selection vector. Calling `SelectedItems.Clear()` after changing `SelectionMode` or on an unselected/empty collection throws WinRT COMException `0x8000FFFF (E_UNEXPECTED)`. Selection clearing must always precede mode changes and be guarded safely.
-5. **WinUI 3 RangeBase (Slider) Value Clamping Safety**:
-   - In WinUI 3, assigning `RangeBase.Value > RangeBase.Maximum` (or `Value > 0` when `Maximum <= 0`) throws `COMException 0x8000FFFF (E_UNEXPECTED)` inside WinRT XAML binding setters. `PositionSeconds` and `DurationSeconds` properties in ViewModels must strictly enforce `PositionSeconds = 0.0` whenever `DurationSeconds <= 0` and clamp to `[0.0, DurationSeconds]`.
+5. **WinUI 3 RangeBase (Slider) Value Clamping & Non-Zero Range Safety**:
+   - In WinUI 3, assigning `RangeBase.Value > RangeBase.Maximum` or assigning `Value` when `Maximum == Minimum == 0` causes native C++ division by zero in `RangeBase::put_Value` (`normalized = (val - min) / (max - min)`), throwing unhandled `COMException 0x8000FFFF (E_UNEXPECTED)`. Slider maximums must bind to safe non-zero view model properties (`SliderMaximum => DurationSeconds > 0 ? DurationSeconds : 1.0`) and `IsEnabled => DurationSeconds > 0`, while `PositionSeconds` strictly clamps to 0 when `DurationSeconds <= 0`.
 
 ---
 
