@@ -25,7 +25,6 @@ public sealed partial class NowPlayingPage : Page
     public NowPlayingPage()
     {
         InitializeComponent();
-        NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
         ViewModel = App.Services.GetRequiredService<NowPlayingViewModel>();
         DataContext = ViewModel;
 
@@ -35,6 +34,10 @@ public sealed partial class NowPlayingPage : Page
 
     private void NowPlayingPage_Loaded(object sender, RoutedEventArgs e)
     {
+        // CRIT-01: the ViewModel's constructor already subscribes to the queue
+        // service; re-subscribing here made every event fire twice.
+        ViewModel.RefreshState();
+
         if (!_vmPropertyChangedHooked)
         {
             ViewModel.PropertyChanged += ViewModel_PropertyChanged;
@@ -226,7 +229,10 @@ public sealed partial class NowPlayingPage : Page
             // NP-05: only MaxHeight - also setting Height pinned the panel even
             // when its content was shorter.
             double boundedHeight = Math.Clamp(e.NewSize.Height, 440, 560);
-            LyricsPanelControl.MaxHeight = boundedHeight;
+            if (Math.Abs(LyricsPanelControl.MaxHeight - boundedHeight) > 1.0)
+            {
+                LyricsPanelControl.MaxHeight = boundedHeight;
+            }
         }
     }
 
@@ -235,7 +241,11 @@ public sealed partial class NowPlayingPage : Page
         if (e.NewSize.Height > 0)
         {
             // Give QueuePanel a generous minimum height of 400px to prevent cramped views with short credits
-            QueuePanelControl.MaxHeight = Math.Max(400, e.NewSize.Height);
+            double targetHeight = Math.Max(400, e.NewSize.Height);
+            if (Math.Abs(QueuePanelControl.MaxHeight - targetHeight) > 1.0)
+            {
+                QueuePanelControl.MaxHeight = targetHeight;
+            }
         }
     }
 

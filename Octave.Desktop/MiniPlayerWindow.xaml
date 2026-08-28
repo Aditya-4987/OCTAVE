@@ -74,9 +74,8 @@
             </Grid.ColumnDefinitions>
             <TextBlock Grid.Column="0" Text="{x:Bind FormatSeconds(ViewModel.PositionSeconds), Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" Width="36" TextAlignment="Right" />
             <Slider Grid.Column="1" x:Name="MiniSeek" Minimum="0"
-                    Maximum="{x:Bind ViewModel.SliderMaximum, Mode=OneWay}"
+                    Maximum="{x:Bind ViewModel.DurationSeconds, Mode=OneWay}"
                     Value="{x:Bind ViewModel.PositionSeconds, Mode=OneWay}"
-                    IsEnabled="{x:Bind ViewModel.IsTimelineEnabled, Mode=OneWay}"
                     IsThumbToolTipEnabled="False" VerticalAlignment="Center" Margin="0,-8,0,-8"
                     PointerPressed="MiniSeek_PointerPressed" PointerReleased="MiniSeek_PointerReleased"
                     PointerCaptureLost="MiniSeek_PointerCaptureLost" PointerCanceled="MiniSeek_PointerCanceled" />

@@ -81,6 +81,9 @@ public sealed partial class LibraryPage : Page
 
     public Visibility VisibleWhen(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
 
+    public Visibility EmptyVisibility(int itemCount, bool isLoading) =>
+        (!isLoading && itemCount == 0) ? Visibility.Visible : Visibility.Collapsed;
+
     public Visibility NormalHeaderVisibility(bool isSelectionMode) =>
         isSelectionMode ? Visibility.Collapsed : Visibility.Visible;
 

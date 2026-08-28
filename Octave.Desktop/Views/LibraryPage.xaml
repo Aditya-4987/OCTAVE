@@ -168,5 +168,19 @@
             <Border Height="44" CornerRadius="6" Background="{ThemeResource LayerFillColorDefaultBrush}" />
             <Border Height="44" CornerRadius="6" Background="{ThemeResource LayerFillColorDefaultBrush}" />
         </StackPanel>
+
+        <!-- Empty state placeholder shown when library has no songs -->
+        <Grid Grid.Row="1"
+              Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+              CornerRadius="12" Padding="48" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="500"
+              Visibility="{x:Bind EmptyVisibility(ViewModel.Items.Count, ViewModel.IsLoading), Mode=OneWay}">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16">
+                <Border Width="64" Height="64" CornerRadius="32" Background="{ThemeResource LayerFillColorDefaultBrush}" HorizontalAlignment="Center">
+                    <FontIcon Glyph="&#xEC4F;" FontFamily="Segoe MDL2 Assets" FontSize="28" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" VerticalAlignment="Center" HorizontalAlignment="Center" />
+                </Border>
+                <TextBlock Text="No Songs in your Library" FontSize="22" FontWeight="Bold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" HorizontalAlignment="Center" />
+                <TextBlock Text="Scan a folder from Settings to add your local music collection and start playing." Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" TextAlignment="Center" FontSize="14" />
+            </StackPanel>
+        </Grid>
     </Grid>
 </Page>

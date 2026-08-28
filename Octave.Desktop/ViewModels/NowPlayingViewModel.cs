@@ -89,18 +89,13 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
             if (Math.Abs(_durationSeconds - safe) > 0.0001)
             {
                 SetProperty(ref _durationSeconds, safe);
-                OnPropertyChanged(nameof(SliderMaximum));
-                OnPropertyChanged(nameof(IsTimelineEnabled));
                 if (safe <= 0 || _positionSeconds > safe)
                 {
-                    PositionSeconds = 0.0;
+                    PositionSeconds = (safe <= 0) ? 0.0 : safe;
                 }
             }
         }
     }
-
-    public double SliderMaximum => DurationSeconds > 0 ? DurationSeconds : 100.0;
-    public bool IsTimelineEnabled => DurationSeconds > 0;
 
     [ObservableProperty]
     public partial bool IsPlaying { get; set; }

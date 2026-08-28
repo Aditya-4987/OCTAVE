@@ -139,18 +139,13 @@ public partial class ShellViewModel : ObservableObject
             if (Math.Abs(_durationSeconds - safe) > 0.0001)
             {
                 SetProperty(ref _durationSeconds, safe);
-                OnPropertyChanged(nameof(SliderMaximum));
-                OnPropertyChanged(nameof(IsTimelineEnabled));
                 if (safe <= 0 || _positionSeconds > safe)
                 {
-                    PositionSeconds = 0.0;
+                    PositionSeconds = (safe <= 0) ? 0.0 : safe;
                 }
             }
         }
     }
-
-    public double SliderMaximum => DurationSeconds > 0 ? DurationSeconds : 100.0;
-    public bool IsTimelineEnabled => DurationSeconds > 0;
 
     public double Volume
     {
@@ -623,6 +618,34 @@ public partial class ShellViewModel : ObservableObject
         }
     }
 
+    // ---- Appearance / Background Blur Settings ----------------------------
+
+    private double _backgroundTintOpacity = 0.85;
+    public double BackgroundTintOpacity
+    {
+        get => _backgroundTintOpacity;
+        set
+        {
+            double safe = Math.Clamp(value, 0.0, 1.0);
+            if (Math.Abs(_backgroundTintOpacity - safe) > 0.001)
+            {
+                _backgroundTintOpacity = safe;
+                _ = _dbContext.SetSettingAsync("BackgroundTintOpacity", safe.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture));
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(BackgroundBlurPercent));
+            }
+        }
+    }
+
+    public double BackgroundBlurPercent
+    {
+        get => Math.Round(_backgroundTintOpacity * 100.0);
+        set
+        {
+            BackgroundTintOpacity = value / 100.0;
+        }
+    }
+
     // ---- Crossfade Settings ------------------------------------------------
 
     public bool IsCrossfadeEnabled
@@ -746,6 +769,18 @@ public partial class ShellViewModel : ObservableObject
                 {
                     _isVisualizerEnabled = visBool;
                     OnPropertyChanged(nameof(IsVisualizerEnabled));
+                });
+            }
+
+            // Background Artwork Blur & Tint
+            var tintVal = await _dbContext.GetSettingAsync("BackgroundTintOpacity");
+            if (double.TryParse(tintVal, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var tintDouble))
+            {
+                _dispatcher.TryEnqueue(() =>
+                {
+                    _backgroundTintOpacity = Math.Clamp(tintDouble, 0.0, 1.0);
+                    OnPropertyChanged(nameof(BackgroundTintOpacity));
+                    OnPropertyChanged(nameof(BackgroundBlurPercent));
                 });
             }
 

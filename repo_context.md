@@ -267,18 +267,19 @@ OCTAVE/
 - **`HomePage.xaml`**: Dashboard featuring Recent tracks, Favorites, Recently Added, Most Played, and quick playback actions with responsive card hover elevations.
 - **`LibraryPage.xaml`**: Full sortable track grid with column headers, instant search/filter, full ThemeResource integration, 3-dot context menu, and **Multi-Select Mode** (Play Selected, Add to Queue, Add to Playlist with dynamic flyouts and new playlist dialog creator, Select All, and Done).
 - **`AlbumsPage.xaml` & `ArtistsPage.xaml`**: Responsive grid tiles with album art, artist imagery, track counts, card `PointerOver` visual state outlines, and seamless navigation to `EntityDetailPage`.
+- **`LibraryPage.xaml`**: Songs library view with sorting, multi-select mode (Play, Add to Queue, Add to Playlist), skeleton loading pulses, and elevated empty state card with guidance suggestions when no songs exist in the library.
 - **`EntityDetailPage.xaml`**: Hero header banner with large artwork, title, subtitle, "Play All" button, and track list.
 - **`PlaylistsPage.xaml` & `PlaylistDetailPage.xaml`**: Playlist browsing, track management, reordering, creation, and deletion with:
   - **"Add Songs" Flow**: Search-enabled library track picker `ContentDialog` supporting bulk song insertion into the playlist.
   - **In-Playlist Multi-Select**: Bulk track removal, queueing, and playback.
 - **`SearchResultsPage.xaml`**: Uniform layout margins, sectioned category results (Tracks, Albums, Artists, Playlists), and rich elevated empty search state card.
-- **`NowPlayingPage.xaml`**: Full-window experience with 4 interchangeable panels:
+- **`NowPlayingPage.xaml`**: Full-window experience with `NavigationCacheMode="Required"` for instantaneous zero-latency navigation, featuring 4 interchangeable panels:
   1. `AlbumArtPanel`: High-resolution album artwork with a translucent badge favorite toggle heart button in the bottom-left corner.
   2. `LyricsPanel`: Real-time synchronized scrolling lyrics with active line highlighting, ±500ms sync offset nudges (with conditional reset icon appearing only when offset != 0), auto-follow suspension on scroll, and streamlined toolbar.
   3. `QueuePanel`: Interactive queue management with drag-to-reorder, favorite toggle, remove, and play actions.
   4. `CreditsPanel`: Technical audio stream metadata across 4 rich elevated tiles (Artist Profile, Album Overview, Audio Stream Specifications, and Track & Tag Properties: Genre, Track/Disc #, ReplayGain, Bit Depth/Channels, Location) with `CardBackgroundFillColorDefaultBrush` and `CornerRadius="8"`.
 - **`SettingsPage.xaml`**:
-  - **Playback**: Sleep timer, Session resume persistence, Waveform visualizer toggle, Crossfade duration (1-10s) with atomic SQLite `AppSettings` persistence.
+  - **Playback & Appearance**: Sleep timer, Session resume persistence, Waveform visualizer toggle, Crossfade duration (1-10s), and Background Artwork Blur & Tint slider (0-100%) with real-time acrylic backdrop preview and atomic SQLite `AppSettings` persistence.
   - **Equalizer**: 10-band interactive sliders, DSP status, preset gain curves (Flat, Bass Boost, Treble Boost, Vocal, Electronic, Acoustic), and persisted EQ gains array.
   - **Music Library**: Monitored folders management (Add Folder, Rescan All, Remove Folder), Duplicate Tracks finder, and Clear Library Database & Cache button.
   - **Engine Diagnostics**: Audio engine self-test static fire harness with live terminal output.

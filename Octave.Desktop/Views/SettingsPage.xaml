@@ -152,6 +152,23 @@
                                 <Run Text="{x:Bind ViewModel.CrossfadeSeconds, Mode=OneWay}" /><Run Text=" sec" />
                             </TextBlock>
                         </StackPanel>
+                        <MenuFlyoutSeparator />
+
+                        <!-- Background Artwork Blur & Tint -->
+                        <Grid ColumnDefinitions="*,Auto" Padding="0,8">
+                            <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center" Margin="0,0,12,0">
+                                <TextBlock Text="Background artwork blur &amp; tint" Style="{StaticResource RowTitleStyle}" />
+                                <TextBlock Text="Adjust the backdrop blur and opacity intensity of the ambient album artwork."
+                                           Style="{StaticResource RowDescStyle}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                <Slider Width="200" Minimum="0" Maximum="100" StepFrequency="1"
+                                        Value="{x:Bind ViewModel.BackgroundBlurPercent, Mode=TwoWay}" VerticalAlignment="Center" />
+                                <TextBlock VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorTertiaryBrush}" FontSize="13" Width="45" TextAlignment="Right">
+                                    <Run Text="{x:Bind ViewModel.BackgroundBlurPercent, Mode=OneWay}" /><Run Text="%" />
+                                </TextBlock>
+                            </StackPanel>
+                        </Grid>
                     </StackPanel>
                 </Border>
 
