@@ -34,15 +34,17 @@ public sealed partial class NowPlayingPage : Page
 
     private void NowPlayingPage_Loaded(object sender, RoutedEventArgs e)
     {
-        // CRIT-01: the ViewModel's constructor already subscribes to the queue
-        // service; re-subscribing here made every event fire twice.
-        ViewModel.RefreshState();
-
         if (!_vmPropertyChangedHooked)
         {
             ViewModel.PropertyChanged += ViewModel_PropertyChanged;
             _vmPropertyChangedHooked = true;
         }
+
+        if (ViewModel.CurrentTrack == null)
+        {
+            ViewModel.RefreshState();
+        }
+
         AnimateLyricsTransition(ViewModel.IsLyricsPanelVisible, immediate: true);
         AnimateQueueTransition(ViewModel.IsQueuePanelVisible, immediate: true);
     }

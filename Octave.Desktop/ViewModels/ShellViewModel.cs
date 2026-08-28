@@ -139,6 +139,8 @@ public partial class ShellViewModel : ObservableObject
             if (Math.Abs(_durationSeconds - safe) > 0.0001)
             {
                 SetProperty(ref _durationSeconds, safe);
+                OnPropertyChanged(nameof(SliderMaximum));
+                OnPropertyChanged(nameof(IsTimelineEnabled));
                 if (safe <= 0 || _positionSeconds > safe)
                 {
                     PositionSeconds = (safe <= 0) ? 0.0 : safe;
@@ -146,6 +148,9 @@ public partial class ShellViewModel : ObservableObject
             }
         }
     }
+
+    public double SliderMaximum => DurationSeconds > 0 ? DurationSeconds : 1.0;
+    public bool IsTimelineEnabled => DurationSeconds > 0;
 
     public double Volume
     {

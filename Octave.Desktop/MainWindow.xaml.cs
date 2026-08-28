@@ -51,6 +51,21 @@ public sealed partial class MainWindow : Window
         RootGrid.RequestedTheme = ThemeHelper.GetSavedTheme();
 
         // Responsive left-pane auto-collapse when right sidebar opens
+        NavView.PaneOpened += (s, e) =>
+        {
+            if (!ViewModel.IsNowPlayingOpen)
+            {
+                _wasNavPaneOpen = true;
+            }
+        };
+        NavView.PaneClosed += (s, e) =>
+        {
+            if (!ViewModel.IsNowPlayingOpen)
+            {
+                _wasNavPaneOpen = false;
+            }
+        };
+
         ViewModel.PropertyChanged += (s, e) =>
         {
             if (e.PropertyName == nameof(ShellViewModel.IsNowPlayingOpen))

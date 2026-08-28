@@ -63,7 +63,7 @@
                    PaneBackground="Transparent" Background="Transparent">
             <SplitView.Content>
                 <NavigationView x:Name="NavView" 
-                                PaneDisplayMode="Auto"
+                                PaneDisplayMode="LeftCompact"
                                 ItemInvoked="NavigationView_ItemInvoked"
                                 BackRequested="NavigationView_BackRequested"
                                 IsSettingsVisible="True"
@@ -648,7 +648,18 @@
                     <TextBlock Grid.Column="0" Text="{x:Bind FormatSeconds(ViewModel.PositionSeconds), Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Width="40" TextAlignment="Right" Margin="0,0,8,0"/>
                     <Grid Grid.Column="1" VerticalAlignment="Center">
                         <controls:SpectrumVisualizerControl x:Name="ProgressBarVisualizer" Visibility="{x:Bind BoolToVisibility(ViewModel.IsVisualizerEnabled), Mode=OneWay}" Margin="8,0,8,8" VerticalAlignment="Center" Height="25" />
-                        <Slider x:Name="PlaybackSlider" Minimum="0" Maximum="{x:Bind ViewModel.DurationSeconds, Mode=OneWay}" Value="{x:Bind ViewModel.PositionSeconds, Mode=OneWay}" IsThumbToolTipEnabled="False" VerticalAlignment="Center" Margin="0,-8,0,-8" ValueChanged="PlaybackSlider_ValueChanged" PointerPressed="PlaybackSlider_PointerPressed" PointerReleased="PlaybackSlider_PointerReleased" PointerCaptureLost="PlaybackSlider_PointerCaptureLost" PointerCanceled="PlaybackSlider_PointerCanceled" ManipulationStarted="PlaybackSlider_ManipulationStarted" ManipulationCompleted="PlaybackSlider_ManipulationCompleted"/>
+                        <Slider x:Name="PlaybackSlider" Minimum="0"
+                                Maximum="{x:Bind ViewModel.SliderMaximum, Mode=OneWay}"
+                                Value="{x:Bind ViewModel.PositionSeconds, Mode=OneWay}"
+                                IsEnabled="{x:Bind ViewModel.IsTimelineEnabled, Mode=OneWay}"
+                                IsThumbToolTipEnabled="False" VerticalAlignment="Center" Margin="0,-8,0,-8"
+                                ValueChanged="PlaybackSlider_ValueChanged"
+                                PointerPressed="PlaybackSlider_PointerPressed"
+                                PointerReleased="PlaybackSlider_PointerReleased"
+                                PointerCaptureLost="PlaybackSlider_PointerCaptureLost"
+                                PointerCanceled="PlaybackSlider_PointerCanceled"
+                                ManipulationStarted="PlaybackSlider_ManipulationStarted"
+                                ManipulationCompleted="PlaybackSlider_ManipulationCompleted"/>
                     </Grid>
                     <TextBlock Grid.Column="2" Text="{x:Bind FormatSeconds(ViewModel.DurationSeconds), Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Width="40" TextAlignment="Left" Margin="8,0,0,0"/>
                 </Grid>
