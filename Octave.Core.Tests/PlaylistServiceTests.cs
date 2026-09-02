@@ -177,4 +177,21 @@ public class PlaylistServiceTests : IDisposable
         Assert.Equal(4, updated.Count);
         Assert.Equal("b1", updated[3].Track.Id);
     }
+
+    [Fact]
+    public async Task EmptyOrWhitespaceIds_NoOpSafely()
+    {
+        int events = 0;
+        _service.PlaylistsChanged += (_, _) => events++;
+
+        await _service.DeletePlaylistAsync("");
+        await _service.RenamePlaylistAsync("", "New Name");
+        await _service.AddTrackAsync("", "t1");
+        await _service.AddTracksAsync("", new[] { "t1" });
+        await _service.RemoveTrackAsync("", "t1");
+        await _service.RemoveTrackEntryAsync("");
+        await _service.SetOrderAsync("", new[] { "t1" });
+
+        Assert.Equal(0, events);
+    }
 }

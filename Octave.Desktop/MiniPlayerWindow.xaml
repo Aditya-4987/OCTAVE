@@ -45,16 +45,16 @@
             </StackPanel>
 
             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                <Button Command="{x:Bind ViewModel.PreviousCommand}" Background="Transparent" BorderBrush="Transparent" Padding="6">
+                <Button Command="{x:Bind ViewModel.PreviousCommand}" Background="Transparent" BorderBrush="Transparent" Padding="6" ToolTipService.ToolTip="Previous">
                     <FontIcon Glyph="&#xE892;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="14" />
                 </Button>
-                <Button Command="{x:Bind ViewModel.PlayCommand}" Visibility="{x:Bind BoolToVisibilityNegation(ViewModel.IsPlaying), Mode=OneWay}" Background="Transparent" BorderBrush="Transparent" Padding="6">
+                <Button Command="{x:Bind ViewModel.PlayCommand}" Visibility="{x:Bind BoolToVisibilityNegation(ViewModel.IsPlaying), Mode=OneWay}" Background="Transparent" BorderBrush="Transparent" Padding="6" ToolTipService.ToolTip="Play">
                     <FontIcon Glyph="&#xE768;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="16" />
                 </Button>
-                <Button Command="{x:Bind ViewModel.PauseCommand}" Visibility="{x:Bind BoolToVisibility(ViewModel.IsPlaying), Mode=OneWay}" Background="Transparent" BorderBrush="Transparent" Padding="6">
+                <Button Command="{x:Bind ViewModel.PauseCommand}" Visibility="{x:Bind BoolToVisibility(ViewModel.IsPlaying), Mode=OneWay}" Background="Transparent" BorderBrush="Transparent" Padding="6" ToolTipService.ToolTip="Pause">
                     <FontIcon Glyph="&#xE769;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="16" />
                 </Button>
-                <Button Command="{x:Bind ViewModel.NextCommand}" Background="Transparent" BorderBrush="Transparent" Padding="6">
+                <Button Command="{x:Bind ViewModel.NextCommand}" Background="Transparent" BorderBrush="Transparent" Padding="6" ToolTipService.ToolTip="Next">
                     <FontIcon Glyph="&#xE893;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="14" />
                 </Button>
             </StackPanel>
@@ -74,11 +74,12 @@
             </Grid.ColumnDefinitions>
             <TextBlock Grid.Column="0" Text="{x:Bind FormatSeconds(ViewModel.PositionSeconds), Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" Width="36" TextAlignment="Right" />
             <Slider Grid.Column="1" x:Name="MiniSeek" Minimum="0"
-                    Maximum="{x:Bind ViewModel.DurationSeconds, Mode=OneWay}"
+                    Maximum="{x:Bind ViewModel.SliderMaximum, Mode=OneWay}"
                     Value="{x:Bind ViewModel.PositionSeconds, Mode=OneWay}"
+                    IsEnabled="{x:Bind ViewModel.IsTimelineEnabled, Mode=OneWay}"
+                    StepFrequency="0.1"
                     IsThumbToolTipEnabled="False" VerticalAlignment="Center" Margin="0,-8,0,-8"
-                    PointerPressed="MiniSeek_PointerPressed" PointerReleased="MiniSeek_PointerReleased"
-                    PointerCaptureLost="MiniSeek_PointerCaptureLost" PointerCanceled="MiniSeek_PointerCanceled" />
+                    PointerWheelChanged="MiniSeek_PointerWheelChanged" KeyDown="MiniSeek_KeyDown" />
             <TextBlock Grid.Column="2" Text="{x:Bind FormatSeconds(ViewModel.DurationSeconds), Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" Width="36" TextAlignment="Left" />
         </Grid>
     </Grid>

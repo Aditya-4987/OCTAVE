@@ -13,6 +13,8 @@ public sealed partial class MiniPlayerWindow : Window
     public ShellViewModel ViewModel { get; }
 
     private readonly Window _mainWindow;
+    private readonly ToolTip _miniSeekTooltip = new() { Placement = Microsoft.UI.Xaml.Controls.Primitives.PlacementMode.Top };
+    private readonly TextBlock _miniSeekTooltipText = new() { FontSize = 12 };
     private bool _restored;
 
     public MiniPlayerWindow(Window mainWindow)
@@ -52,9 +54,18 @@ public sealed partial class MiniPlayerWindow : Window
         }
         AppWindow.Resize(new SizeInt32(460, 180));
 
-        // Drag-to-seek on the mini seek bar (same pattern as the main window).
+        _miniSeekTooltip.Content = _miniSeekTooltipText;
+        ToolTipService.SetToolTip(MiniSeek, _miniSeekTooltip);
+
+        MiniSeek.AddHandler(UIElement.PointerEnteredEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(MiniSeek_PointerEntered), true);
+        MiniSeek.AddHandler(UIElement.PointerMovedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(MiniSeek_PointerMoved), true);
         MiniSeek.AddHandler(UIElement.PointerPressedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(MiniSeek_PointerPressed), true);
         MiniSeek.AddHandler(UIElement.PointerReleasedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(MiniSeek_PointerReleased), true);
+        MiniSeek.AddHandler(UIElement.PointerCaptureLostEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(MiniSeek_PointerCaptureLost), true);
+        MiniSeek.AddHandler(UIElement.PointerCanceledEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(MiniSeek_PointerCanceled), true);
+        MiniSeek.AddHandler(UIElement.PointerExitedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(MiniSeek_PointerExited), true);
+        MiniSeek.AddHandler(UIElement.PointerWheelChangedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(MiniSeek_PointerWheelChanged), true);
+        MiniSeek.AddHandler(UIElement.KeyDownEvent, new Microsoft.UI.Xaml.Input.KeyEventHandler(MiniSeek_KeyDown), true);
 
         this.Closed += MiniPlayerWindow_Closed;
         RootGrid.PreviewKeyDown += RootGrid_PreviewKeyDown;
@@ -84,9 +95,67 @@ public sealed partial class MiniPlayerWindow : Window
     public string FormatSeconds(double seconds) =>
         Octave.Core.Helpers.DurationFormatter.FormatSeconds(seconds);
 
+    private void UpdateMiniSeekTooltip(Slider? slider, double? cursorX = null)
+    {
+        if (slider == null)
+        {
+            return;
+        }
+
+        if (ViewModel.DurationSeconds <= 0)
+        {
+            _miniSeekTooltipText.Text = "No track loaded";
+            _miniSeekTooltip.IsOpen = false;
+            return;
+        }
+
+        double target;
+        if (ViewModel.IsDragging)
+        {
+            target = Math.Clamp(slider.Value, 0.0, ViewModel.DurationSeconds);
+        }
+        else if (cursorX.HasValue && slider.ActualWidth > 0)
+        {
+            double ratio = Math.Clamp(cursorX.Value / slider.ActualWidth, 0.0, 1.0);
+            target = ratio * ViewModel.DurationSeconds;
+        }
+        else
+        {
+            target = Math.Clamp(slider.Value, 0.0, ViewModel.DurationSeconds);
+        }
+
+        _miniSeekTooltipText.Text = $"Seek to {FormatSeconds(target)} / {FormatSeconds(ViewModel.DurationSeconds)}";
+    }
+
+    private void MiniSeek_PointerEntered(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (sender is Slider slider)
+        {
+            var point = e.GetCurrentPoint(slider);
+            UpdateMiniSeekTooltip(slider, point.Position.X);
+            _miniSeekTooltip.IsOpen = true;
+        }
+    }
+
+    private void MiniSeek_PointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (sender is Slider slider)
+        {
+            var point = e.GetCurrentPoint(slider);
+            UpdateMiniSeekTooltip(slider, point.Position.X);
+            _miniSeekTooltip.IsOpen = true;
+        }
+    }
+
     private void MiniSeek_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
         ViewModel.IsDragging = true;
+        if (sender is Slider slider)
+        {
+            var point = e.GetCurrentPoint(slider);
+            UpdateMiniSeekTooltip(slider, point.Position.X);
+        }
+        _miniSeekTooltip.IsOpen = true;
     }
 
     private void MiniSeek_PointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
@@ -94,18 +163,99 @@ public sealed partial class MiniPlayerWindow : Window
         if (sender is Slider slider)
         {
             ViewModel.SeekPlaybackCommand.Execute(slider.Value);
+            UpdateMiniSeekTooltip(slider);
         }
         ViewModel.IsDragging = false;
+        _miniSeekTooltip.IsOpen = false;
     }
 
     private void MiniSeek_PointerCaptureLost(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
+        if (ViewModel.IsDragging && sender is Slider slider)
+        {
+            ViewModel.SeekPlaybackCommand.Execute(slider.Value);
+        }
         ViewModel.IsDragging = false;
+        _miniSeekTooltip.IsOpen = false;
     }
 
     private void MiniSeek_PointerCanceled(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
+        if (ViewModel.IsDragging && sender is Slider slider)
+        {
+            ViewModel.SeekPlaybackCommand.Execute(slider.Value);
+        }
         ViewModel.IsDragging = false;
+        _miniSeekTooltip.IsOpen = false;
+    }
+
+    private void MiniSeek_PointerExited(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (!ViewModel.IsDragging)
+        {
+            _miniSeekTooltip.IsOpen = false;
+        }
+    }
+
+    private void MiniSeek_PointerWheelChanged(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (sender is Slider slider && ViewModel.DurationSeconds > 0)
+        {
+            var delta = e.GetCurrentPoint(slider).Properties.MouseWheelDelta;
+            double step = 5.0; // 5 seconds standard step
+
+            var ctrlState = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control);
+            if (ctrlState.HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down))
+            {
+                step = 1.0; // 1 second fine-tune step
+            }
+
+            double change = (delta > 0) ? step : -step;
+            ViewModel.SeekPlaybackByDeltaCommand.Execute(change);
+            e.Handled = true;
+        }
+    }
+
+    private void MiniSeek_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        bool shiftDown = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift)
+            .HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
+
+        switch (e.Key)
+        {
+            case Windows.System.VirtualKey.Home:
+                ViewModel.SeekPlaybackCommand.Execute(0.0);
+                e.Handled = true;
+                break;
+            case Windows.System.VirtualKey.End:
+                ViewModel.SeekPlaybackCommand.Execute(ViewModel.DurationSeconds);
+                e.Handled = true;
+                break;
+            case Windows.System.VirtualKey.PageUp:
+                ViewModel.SeekPlaybackByDeltaCommand.Execute(10.0);
+                e.Handled = true;
+                break;
+            case Windows.System.VirtualKey.PageDown:
+                ViewModel.SeekPlaybackByDeltaCommand.Execute(-10.0);
+                e.Handled = true;
+                break;
+            case Windows.System.VirtualKey.Left when shiftDown:
+                ViewModel.SeekPlaybackByDeltaCommand.Execute(-1.0);
+                e.Handled = true;
+                break;
+            case Windows.System.VirtualKey.Right when shiftDown:
+                ViewModel.SeekPlaybackByDeltaCommand.Execute(1.0);
+                e.Handled = true;
+                break;
+            case Windows.System.VirtualKey.Left:
+                ViewModel.SeekPlaybackByDeltaCommand.Execute(-5.0);
+                e.Handled = true;
+                break;
+            case Windows.System.VirtualKey.Right:
+                ViewModel.SeekPlaybackByDeltaCommand.Execute(5.0);
+                e.Handled = true;
+                break;
+        }
     }
 
     private void Expand_Click(object sender, RoutedEventArgs e)

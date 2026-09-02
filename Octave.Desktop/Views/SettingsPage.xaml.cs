@@ -16,6 +16,7 @@ public sealed partial class SettingsPage : Page
     public Visibility BoolToVisibility(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
     public Visibility BoolToVisibilityInverted(bool value) => value ? Visibility.Collapsed : Visibility.Visible;
     public bool BoolToInverted(bool value) => !value;
+    public Visibility NotEmptyToVisibility(string? text) => !string.IsNullOrWhiteSpace(text) ? Visibility.Visible : Visibility.Collapsed;
 
     // UI-ST-03: check glyph on the EQ preset button whose curve matches the
     // current band gains.
@@ -39,24 +40,25 @@ public sealed partial class SettingsPage : Page
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        ViewModel.RefreshOutputDevices();
         await ViewModel.LoadFoldersAsync();
     }
 
-    // Remade sleep timer: one ComboBox instead of five loose buttons; the
-    // status line stays the single source of truth for what is armed.
+    // Remade sleep timer: supports minutes, hours, and EndOfTrack modes with live countdown
     private void SleepTimerCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (ViewModel == null) return;
+        if (ViewModel == null || sender is not ComboBox cb || cb.SelectedItem is not ComboBoxItem item) return;
+        string? mode = item.Tag as string ?? item.Content?.ToString();
+        ViewModel.SetSleepTimerCommand.Execute(mode);
+    }
 
-        int minutes = (sender as ComboBox)?.SelectedIndex switch
+    private void EqBand_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
+    {
+        if (sender is FrameworkElement fe && fe.DataContext is EqBandViewModel band)
         {
-            1 => 15,
-            2 => 30,
-            3 => 45,
-            4 => 60,
-            _ => 0
-        };
-        ViewModel.SetSleepTimerCommand.Execute(minutes.ToString());
+            band.ResetGain();
+            e.Handled = true;
+        }
     }
 
 

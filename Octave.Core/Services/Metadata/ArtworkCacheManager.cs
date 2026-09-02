@@ -43,13 +43,21 @@ public class ArtworkCacheManager : IArtworkCacheManager
         byte[] hashBytes = SHA256.HashData(imageData);
         string sha256Hash = Convert.ToHexString(hashBytes).ToLowerInvariant();
 
-        // 2. Map the mimeType string to a clean file extension (.jpg, .png). Default to .jpg if null.
+        // 2. Map the mimeType string to a clean file extension (.jpg, .png, .webp, .gif). Default to .jpg if null.
         string extension = ".jpg";
         if (!string.IsNullOrWhiteSpace(mimeType))
         {
             if (mimeType.Contains("png", System.StringComparison.OrdinalIgnoreCase))
             {
                 extension = ".png";
+            }
+            else if (mimeType.Contains("webp", System.StringComparison.OrdinalIgnoreCase))
+            {
+                extension = ".webp";
+            }
+            else if (mimeType.Contains("gif", System.StringComparison.OrdinalIgnoreCase))
+            {
+                extension = ".gif";
             }
             else if (mimeType.Contains("jpg", System.StringComparison.OrdinalIgnoreCase) ||
                      mimeType.Contains("jpeg", System.StringComparison.OrdinalIgnoreCase))

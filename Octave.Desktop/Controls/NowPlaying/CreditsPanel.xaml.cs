@@ -120,9 +120,25 @@ public sealed partial class CreditsPanel : UserControl
     }
 
     public string FormatText(AudioQualityDetails? details) => details?.StreamQuality ?? "Lossless Stream";
-    public string OutputDeviceNameText(AudioQualityDetails? details) => details?.OutputDeviceName ?? "Default Playback Device";
+    public string OutputDeviceNameText(AudioQualityDetails? details)
+    {
+        if (details == null) return "Default Playback Device";
+        if (!string.IsNullOrWhiteSpace(details.OutputDeviceType) && details.OutputDeviceType != "Audio Endpoint")
+        {
+            return $"{details.OutputDeviceName} ({details.OutputDeviceType})";
+        }
+        return details.OutputDeviceName;
+    }
     public string DecoderEngineText(AudioQualityDetails? details) => details?.DecoderEngine ?? "ManagedBASS Engine";
-    public string OutputDeviceQualityText(AudioQualityDetails? details) => details?.OutputDeviceQuality ?? "DirectSound / WASAPI";
+    public string OutputDeviceQualityText(AudioQualityDetails? details)
+    {
+        if (details == null) return "DirectSound / WASAPI";
+        if (details.IsBitMatched)
+        {
+            return $"{details.OutputDeviceQuality} [Bit-Matched]";
+        }
+        return details.OutputDeviceQuality;
+    }
 
     public string TrackAndDiscText(int trackNum, int discNum)
     {

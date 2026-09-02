@@ -4,6 +4,7 @@ using Octave.Core.Models;
 using Octave.Core.Services.Library;
 using System;
 using System.Collections.ObjectModel;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Octave_Desktop.ViewModels;
@@ -50,6 +51,9 @@ public partial class HomeViewModel : ObservableObject
     [ObservableProperty]
     public partial string? LastError { get; set; }
 
+    [ObservableProperty]
+    public partial bool IsLoading { get; set; }
+
     public ObservableCollection<TrackDisplayItem> QuickPlayItems { get; } = new();
     public ObservableCollection<TrackDisplayItem> RecentlyPlayed { get; } = new();
     public ObservableCollection<TrackDisplayItem> MostPlayed { get; } = new();
@@ -58,6 +62,9 @@ public partial class HomeViewModel : ObservableObject
 
     private readonly EventHandler _libraryUpdatedHandler;
     private readonly EventHandler _favoritesChangedHandler;
+    private int _activeLoadOperations;
+    private long _loadGeneration;
+    private long _favoritesGeneration;
 
     public HomeViewModel(ILibraryService libraryService, IQueueService queueService)
     {
@@ -77,8 +84,27 @@ public partial class HomeViewModel : ObservableObject
         _libraryService.FavoritesChanged -= _favoritesChangedHandler;
     }
 
+    private void BeginLoading()
+    {
+        if (Interlocked.Increment(ref _activeLoadOperations) == 1)
+        {
+            _dispatcher.TryEnqueue(() => IsLoading = true);
+        }
+    }
+
+    private void EndLoading()
+    {
+        if (Interlocked.Decrement(ref _activeLoadOperations) == 0)
+        {
+            _dispatcher.TryEnqueue(() => IsLoading = false);
+        }
+    }
+
     public async Task LoadAsync()
     {
+        BeginLoading();
+        long generation = Interlocked.Increment(ref _loadGeneration);
+
         try
         {
             var recent = await _libraryService.GetRecentlyPlayedAsync(SectionLimit);
@@ -96,8 +122,10 @@ public partial class HomeViewModel : ObservableObject
 
             // Hydrate album artwork URLs for all tracks
             var allTracks = recent.Concat(most).Concat(lastAdded).Concat(favorites);
-            var albumIds = allTracks.Select(t => t.AlbumId).Distinct();
-            var albums = await _libraryService.GetAlbumsByIdsAsync(albumIds);
+            var albumIds = allTracks.Select(t => t.AlbumId).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
+            var albums = albumIds.Count > 0
+                ? await _libraryService.GetAlbumsByIdsAsync(albumIds)
+                : new System.Collections.Generic.List<Album>();
             var artMap = albums.ToDictionary(a => a.Id, a => a.ArtworkUrl);
 
             TrackDisplayItem ToDisplayItem(Track t) => new TrackDisplayItem(t, artMap.TryGetValue(t.AlbumId, out var url) ? url : null);
@@ -127,16 +155,16 @@ public partial class HomeViewModel : ObservableObject
 
             var hero = recent.Count > 0 ? recent[0] : (most.Count > 0 ? most[0] : (lastAdded.Count > 0 ? lastAdded[0] : null));
             var heroArt = hero != null && artMap.TryGetValue(hero.AlbumId, out var art) ? art : null;
-            bool isHeroFav = hero != null && await _libraryService.IsFavoriteAsync(hero.Id);
 
             _dispatcher.TryEnqueue(() =>
             {
+                if (generation != _loadGeneration) return;
+
                 Greeting = greeting;
                 HeroTrack = hero;
                 HeroTitle = hero?.Title ?? string.Empty;
                 HeroArtistName = hero?.ArtistName ?? string.Empty;
                 HeroArtworkUrl = heroArt;
-                IsHeroFavorite = isHeroFav;
 
                 Fill(QuickPlayItems, quickItems);
                 Fill(RecentlyPlayed, recentItems);
@@ -144,6 +172,8 @@ public partial class HomeViewModel : ObservableObject
                 Fill(LastAdded, lastAddedItems);
                 Fill(Favorites, favoritesItems);
             });
+
+            _ = RefreshHeroFavoriteAsync(hero);
         }
         catch (Exception ex)
         {
@@ -151,6 +181,10 @@ public partial class HomeViewModel : ObservableObject
             // throw used to vanish without a trace.
             LastError = ex.Message;
             System.Diagnostics.Debug.WriteLine($"[HomeViewModel] LoadAsync failed: {ex.Message}");
+        }
+        finally
+        {
+            EndLoading();
         }
     }
 
@@ -162,32 +196,102 @@ public partial class HomeViewModel : ObservableObject
         return newFav;
     }
 
+    public void PlayHeroTrack()
+    {
+        if (HeroTrack == null) return;
+
+        if (TryPlayHeroTrackFromSection(RecentlyPlayed) ||
+            TryPlayHeroTrackFromSection(MostPlayed) ||
+            TryPlayHeroTrackFromSection(LastAdded) ||
+            TryPlayHeroTrackFromSection(Favorites))
+        {
+            return;
+        }
+
+        _queueService.Clear();
+        _queueService.Enqueue(HeroTrack);
+        _queueService.PlayIndex(0);
+    }
+
+    private bool TryPlayHeroTrackFromSection(ObservableCollection<TrackDisplayItem> section)
+    {
+        if (HeroTrack == null) return false;
+
+        for (int i = 0; i < section.Count; i++)
+        {
+            if (section[i].Id == HeroTrack.Id)
+            {
+                PlaySection(section, section[i]);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private async Task LoadFavoritesAsync()
     {
+        BeginLoading();
+        long generation = Interlocked.Increment(ref _favoritesGeneration);
+
         try
         {
             var favorites = await _libraryService.GetFavoritesAsync();
-            var albumIds = favorites.Select(t => t.AlbumId).Distinct().ToList();
-            var artMap = new System.Collections.Generic.Dictionary<string, string?>();
-            foreach (var albumId in albumIds)
-            {
-                var album = await _libraryService.GetAlbumByIdAsync(albumId);
-                if (album != null) artMap[albumId] = album.ArtworkUrl;
-            }
+            var albumIds = favorites
+                .Select(t => t.AlbumId)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct()
+                .ToList();
+
+            var albums = albumIds.Count > 0
+                ? await _libraryService.GetAlbumsByIdsAsync(albumIds)
+                : new System.Collections.Generic.List<Album>();
+            var artMap = albums.ToDictionary(a => a.Id, a => a.ArtworkUrl);
 
             var favoriteItems = favorites.Select(t => new TrackDisplayItem(t, artMap.TryGetValue(t.AlbumId, out var url) ? url : null)).ToList();
-            bool isHeroFav = HeroTrack != null && await _libraryService.IsFavoriteAsync(HeroTrack.Id);
             _dispatcher.TryEnqueue(() =>
             {
-                IsHeroFavorite = isHeroFav;
+                if (generation != _favoritesGeneration) return;
+
                 Fill(Favorites, favoriteItems);
             });
+
+            _ = RefreshHeroFavoriteAsync(HeroTrack);
         }
         catch (Exception ex)
         {
             // VM-06: same fire-and-forget exposure as LoadAsync.
             LastError = ex.Message;
             System.Diagnostics.Debug.WriteLine($"[HomeViewModel] LoadFavoritesAsync failed: {ex.Message}");
+        }
+        finally
+        {
+            EndLoading();
+        }
+    }
+
+    private async Task RefreshHeroFavoriteAsync(Track? hero)
+    {
+        if (hero == null)
+        {
+            _dispatcher.TryEnqueue(() => IsHeroFavorite = false);
+            return;
+        }
+
+        try
+        {
+            bool isFav = await _libraryService.IsFavoriteAsync(hero.Id);
+            _dispatcher.TryEnqueue(() =>
+            {
+                if (HeroTrack?.Id == hero.Id)
+                {
+                    IsHeroFavorite = isFav;
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[HomeViewModel] RefreshHeroFavoriteAsync failed: {ex.Message}");
         }
     }
 

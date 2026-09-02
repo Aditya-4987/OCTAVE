@@ -9,11 +9,17 @@ using Octave.Core.Interfaces;
 
 namespace Octave.Core.Services.Library;
 
-public class LibraryService : ILibraryService
+public class LibraryService : ILibraryService, IDisposable
 {
     private readonly SqliteDbContext _dbContext;
     private readonly ILibraryScanner _scanner;
     private readonly ILibraryWatcherService? _watcherService;
+
+    private readonly object _coalesceLock = new();
+    private Timer? _trailingTimer;
+    private DateTime _lastFiredTime = DateTime.MinValue;
+    private const int CoalesceWindowMs = 350;
+    private bool _disposed;
 
     public event EventHandler? LibraryUpdated;
     public event EventHandler? FavoritesChanged;
@@ -24,10 +30,53 @@ public class LibraryService : ILibraryService
         _scanner = scanner ?? throw new ArgumentNullException(nameof(scanner));
         _watcherService = watcherService;
 
-        _scanner.LibraryChanged += (s, e) => LibraryUpdated?.Invoke(this, EventArgs.Empty);
+        _scanner.LibraryChanged += (s, e) => HandleScannerLibraryChanged();
     }
 
-    public void NotifyLibraryUpdated() => LibraryUpdated?.Invoke(this, EventArgs.Empty);
+    private void HandleScannerLibraryChanged()
+    {
+        if (_disposed) return;
+
+        lock (_coalesceLock)
+        {
+            var now = DateTime.UtcNow;
+            if (now - _lastFiredTime > TimeSpan.FromMilliseconds(CoalesceWindowMs))
+            {
+                // Leading edge: more than CoalesceWindowMs since last fire -> fire immediately!
+                _lastFiredTime = now;
+                _trailingTimer?.Dispose();
+                _trailingTimer = null;
+                LibraryUpdated?.Invoke(this, EventArgs.Empty);
+            }
+            else
+            {
+                // Trailing edge: burst in progress -> debounce to fire once after burst quietens
+                _trailingTimer?.Dispose();
+                _trailingTimer = new Timer(_ =>
+                {
+                    lock (_coalesceLock)
+                    {
+                        _lastFiredTime = DateTime.UtcNow;
+                        _trailingTimer?.Dispose();
+                        _trailingTimer = null;
+                    }
+                    LibraryUpdated?.Invoke(this, EventArgs.Empty);
+                }, null, CoalesceWindowMs, Timeout.Infinite);
+            }
+        }
+    }
+
+    public void NotifyLibraryUpdated() => HandleScannerLibraryChanged();
+
+    public void Dispose()
+    {
+        lock (_coalesceLock)
+        {
+            _disposed = true;
+            _trailingTimer?.Dispose();
+            _trailingTimer = null;
+        }
+    }
 
     public Task<List<Track>> GetRecentlyPlayedAsync(int limit) => _dbContext.GetRecentlyPlayedAsync(limit);
     public Task<List<Track>> GetMostPlayedAsync(int limit) => _dbContext.GetMostPlayedAsync(limit);
@@ -40,15 +89,13 @@ public class LibraryService : ILibraryService
 
     public async Task<bool> ToggleFavoriteAsync(string trackId)
     {
-        bool isFav = await _dbContext.IsFavoriteAsync(trackId);
-        if (isFav) await _dbContext.RemoveFavoriteAsync(trackId);
-        else await _dbContext.AddFavoriteAsync(trackId);
+        bool newFavState = await _dbContext.ToggleFavoriteAsync(trackId);
         FavoritesChanged?.Invoke(this, EventArgs.Empty);
-        return !isFav;
+        return newFavState;
     }
 
     public Task ScanLocalLibraryAsync(string rootDir, CancellationToken ct) =>
-        _scanner.ScanAsync(rootDir, ct);
+        AddFolderAsync(rootDir, ct);
 
     public Task<List<string>> GetMonitoredFoldersAsync() =>
         _dbContext.GetMonitoredFoldersAsync();

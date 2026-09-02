@@ -183,4 +183,26 @@ public class LibraryServiceTests : IDisposable
         Assert.Equal(1, libraryUpdatedEvents);
         Assert.Equal(1, favoritesChangedEvents);
     }
+
+    [Fact]
+    public async Task ToggleFavoriteAsync_TogglesStateAtomically_AndRaisesFavoritesChanged()
+    {
+        var track = new Track("tr_fav_toggle", "Fav Track", "ar1", "Artist", "al1", "Album", 180, "http://test/fav.mp3", 1, 2024, DateTime.UtcNow);
+        await _dbContext.UpsertTrackAsync(track);
+
+        int events = 0;
+        _service.FavoritesChanged += (_, _) => events++;
+
+        // Initial state: not favorite -> toggle -> becomes favorite (returns true)
+        bool state1 = await _service.ToggleFavoriteAsync(track.Id);
+        Assert.True(state1);
+        Assert.True(await _service.IsFavoriteAsync(track.Id));
+        Assert.Equal(1, events);
+
+        // Second toggle -> becomes not favorite (returns false)
+        bool state2 = await _service.ToggleFavoriteAsync(track.Id);
+        Assert.False(state2);
+        Assert.False(await _service.IsFavoriteAsync(track.Id));
+        Assert.Equal(2, events);
+    }
 }

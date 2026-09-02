@@ -378,4 +378,34 @@ public class LocalLibraryScannerTests : IDisposable
         var all = await _dbContext.GetAllTracksAsync();
         Assert.Contains(all, t => t.Id == "tr_midghost"); // survived: no reconciliation ran
     }
+
+    [Fact]
+    public void ParseArtistNames_MultiplePerformersWithFeaturing_ParsesCorrectly()
+    {
+        string testFile = Path.Combine(_tempDir, "feat_test.mp3");
+        WriteTaggedFile(testFile, "Collab Track", "Main Artist feat. Guest Singer; Producer", "Collab Album", 1);
+        using var tagFile = TagLib.File.Create(testFile);
+
+        var (individual, display, primary, albumArtist) = LocalLibraryScanner.ParseArtistNames(tagFile);
+
+        Assert.Contains("Main Artist", individual);
+        Assert.Contains("Guest Singer", individual);
+        Assert.Contains("Producer", individual);
+        Assert.Equal("Main Artist", primary);
+        Assert.Equal("Main Artist; Guest Singer; Producer", display);
+    }
+
+    [Fact]
+    public void ParseArtistNames_EmptyPerformers_FallsBackToUnknownArtist()
+    {
+        string testFile = Path.Combine(_tempDir, "unknown_test.mp3");
+        WriteTaggedFile(testFile, "No Artist Song", "", "Unknown Album", 1);
+        using var tagFile = TagLib.File.Create(testFile);
+
+        var (individual, display, primary, albumArtist) = LocalLibraryScanner.ParseArtistNames(tagFile);
+
+        Assert.Single(individual);
+        Assert.Equal("Unknown Artist", individual[0]);
+        Assert.Equal("Unknown Artist", primary);
+    }
 }

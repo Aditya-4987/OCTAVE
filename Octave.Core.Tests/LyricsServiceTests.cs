@@ -1262,4 +1262,16 @@ Line three of unsynced lyrics";
         var cachedAfterReload = await service.GetLocalAndCachedLyricsAsync(track);
         Assert.Equal("New Plain", cachedAfterReload.PlainText);
     }
+
+    [Fact]
+    public void ParseLrcContent_StripsEnhancedWordLevelSyncTags()
+    {
+        string rawLrc = "[00:10.00] <00:10.00>Hello <00:10.50>World <00:11.00>from <00:11.50>Octave";
+        var parsed = LyricsService.ParseLrcContent("track_word_sync", rawLrc);
+
+        Assert.True(parsed.HasSyncedLyrics);
+        Assert.Single(parsed.SyncedLines!);
+        Assert.Equal("Hello World from Octave", parsed.SyncedLines![0].Text);
+        Assert.Equal("Hello World from Octave", parsed.PlainText);
+    }
 }

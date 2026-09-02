@@ -29,6 +29,10 @@ public class LyricsService : ILyricsService
         @"^\[offset:\s*(?<offset>[+-]?\d+)\s*\]",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    private static readonly Regex WordSyncTagRegex = new(
+        @"<\d{1,3}:\d{2}(?:[\.:]\d{1,3})?>",
+        RegexOptions.Compiled);
+
     public static readonly TimeSpan NegativeCacheExpiration = TimeSpan.FromDays(7);
 
     // In-memory L1 cache for sub-millisecond instant lyrics delivery on repeated/pre-warmed tracks
@@ -1073,8 +1077,9 @@ public class LyricsService : ILyricsService
             var matches = LrcTimestampRegex.Matches(line);
             if (matches.Count > 0)
             {
-                // Each line may have multiple timestamps e.g. [00:12.50][01:15.20]Lyric text
-                string text = TagRegex.Replace(line, "").Trim();
+                // Each line may have multiple timestamps e.g. [00:12.50][01:15.20]Lyric text or word-level tags <00:12.50>
+                string text = TagRegex.Replace(line, "");
+                text = WordSyncTagRegex.Replace(text, "").Trim();
 
                 foreach (Match m in matches)
                 {
@@ -1109,7 +1114,7 @@ public class LyricsService : ILyricsService
                      !line.StartsWith("[by:", StringComparison.OrdinalIgnoreCase) &&
                      !line.StartsWith("[offset:", StringComparison.OrdinalIgnoreCase))
             {
-                plainLines.Add(line);
+                plainLines.Add(WordSyncTagRegex.Replace(line, "").Trim());
             }
         }
 

@@ -129,6 +129,9 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
 
             var batch = new System.Collections.Generic.List<PreparedTrack>(UpsertBatchSize);
 
+            // Pre-load known track signatures under this root to skip unchanged files
+            var existingSignatures = await _dbContext.GetTrackFileSignaturesUnderPathAsync(rootPath);
+
             // Lane 1: The Producer Task (recursive directory walk).
             // SCAN-02: the producer owns a linked CTS cancelled by the consumer's
             // error path, so it can never block forever on a channel nobody drains.
@@ -165,7 +168,44 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
                         {
                             Interlocked.Increment(ref totalFilesFound);
                             discoveredUris.Add(filePath);
-                            await channel.Writer.WriteAsync(filePath, producerCt);
+
+                            bool isUnchanged = false;
+                            string normalized = filePath;
+                            try { normalized = Path.GetFullPath(filePath); } catch { }
+
+                            if (existingSignatures.TryGetValue(normalized, out var sig))
+                            {
+                                try
+                                {
+                                    var fi = new FileInfo(filePath);
+                                    long diskMtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
+                                    long diskSize = fi.Length;
+
+                                    string expectedId = IdGenerator.FromTrackUri(filePath);
+                                    if (string.Equals(sig.Id, expectedId, StringComparison.OrdinalIgnoreCase) &&
+                                        sig.LastModified > 0 && Math.Abs(sig.LastModified - diskMtime) <= 2 && sig.FileSize == diskSize)
+                                    {
+                                        isUnchanged = true;
+                                    }
+                                }
+                                catch
+                                {
+                                    // Fall back to scanning if file stats probe fails
+                                }
+                            }
+
+                            if (isUnchanged)
+                            {
+                                int currentProcessed = Interlocked.Increment(ref processedCount);
+                                if (currentProcessed % 50 == 0)
+                                {
+                                    ReportProgress(ref totalFilesFound, currentProcessed, filePath, channel);
+                                }
+                            }
+                            else
+                            {
+                                await channel.Writer.WriteAsync(filePath, producerCt);
+                            }
                         }
                     }
 
@@ -627,6 +667,17 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
                 await _dbContext.UpsertAlbumAsync(prepared.Album, tx);
                 await _dbContext.UpsertTrackAsync(prepared.Track, tx);
 
+                // Prune any orphaned albums/artists if this track changed album or artist
+                using (var cleanCmd = txConnection.CreateCommand())
+                {
+                    cleanCmd.Transaction = tx;
+                    cleanCmd.CommandText = "DELETE FROM Albums WHERE Id NOT IN (SELECT DISTINCT AlbumId FROM Tracks);";
+                    await cleanCmd.ExecuteNonQueryAsync();
+
+                    cleanCmd.CommandText = "DELETE FROM Artists WHERE Id NOT IN (SELECT DISTINCT ArtistId FROM Albums UNION SELECT DISTINCT ArtistId FROM Tracks);";
+                    await cleanCmd.ExecuteNonQueryAsync();
+                }
+
                 await tx.CommitAsync();
                 LibraryChanged?.Invoke(this, EventArgs.Empty);
 
@@ -674,9 +725,22 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
                 using (var cmd = txConnection.CreateCommand())
                 {
                     cmd.Transaction = tx;
-                    cmd.CommandText = "DELETE FROM Tracks WHERE SourceUri = @path;";
+                    cmd.CommandText = "DELETE FROM Tracks WHERE SourceUri = @path COLLATE NOCASE;";
                     cmd.Parameters.AddWithValue("@path", path);
-                    await cmd.ExecuteNonQueryAsync();
+                    int rowsDeleted = await cmd.ExecuteNonQueryAsync();
+
+                    if (rowsDeleted == 0)
+                    {
+                        try
+                        {
+                            string normalized = Path.GetFullPath(path);
+                            cmd.Parameters.Clear();
+                            cmd.CommandText = "DELETE FROM Tracks WHERE SourceUri = @norm COLLATE NOCASE;";
+                            cmd.Parameters.AddWithValue("@norm", normalized);
+                            await cmd.ExecuteNonQueryAsync();
+                        }
+                        catch { }
+                    }
 
                     cmd.Parameters.Clear();
                     cmd.CommandText = "DELETE FROM Albums WHERE Id NOT IN (SELECT DISTINCT AlbumId FROM Tracks);";
@@ -690,9 +754,9 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
                 LibraryChanged?.Invoke(this, EventArgs.Empty);
 
                 ScanProgressChanged?.Invoke(this, new LibraryScanProgressEventArgs(
-                    TotalFilesFound: 0,
-                    FilesProcessed: 0,
-                    CurrentProcessingFile: $"Removed: {path}"
+                    TotalFilesFound: 1,
+                    FilesProcessed: 1,
+                    CurrentProcessingFile: path
                 ));
             }
             catch (Exception)
@@ -766,6 +830,10 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
         }
     }
 
+    private static readonly char[] ArtistDelimiters = { ';' };
+    private static readonly System.Text.RegularExpressions.Regex FeatSplitRegex =
+        new(@"\s+(?:feat\.|ft\.|featuring)\s+", System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
     private async Task<string?> ExtractHighestQualityArtworkAsync(TagLib.File tagFile, string filePath)
     {
         try
@@ -773,12 +841,12 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
             if (tagFile.Tag.Pictures != null && tagFile.Tag.Pictures.Length > 0)
             {
                 // 1. Prefer FrontCover frame if available with valid byte data
-                var picture = System.Linq.Enumerable.FirstOrDefault(tagFile.Tag.Pictures, p => p.Type == TagLib.PictureType.FrontCover && p.Data?.Data != null && p.Data.Data.Length > 0);
+                var picture = System.Linq.Enumerable.FirstOrDefault(tagFile.Tag.Pictures, p => p.Type == TagLib.PictureType.FrontCover && p.Data?.Data != null && p.Data.Data.Length > 512);
 
                 // 2. Otherwise pick the picture with the largest data payload (highest resolution)
                 if (picture == null)
                 {
-                    picture = System.Linq.Enumerable.OrderByDescending(tagFile.Tag.Pictures, p => p.Data?.Data?.Length ?? 0).FirstOrDefault();
+                    picture = System.Linq.Enumerable.OrderByDescending(tagFile.Tag.Pictures, p => p.Data?.Data?.Length ?? 0).FirstOrDefault(p => p.Data?.Data != null && p.Data.Data.Length > 512);
                 }
 
                 if (picture?.Data?.Data != null && picture.Data.Data.Length > 512)
@@ -850,21 +918,18 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
         }
         var individualArtists = new System.Collections.Generic.List<string>();
         var seen = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        // SCAN-03: '/' and '\' are NO LONGER delimiters — "AC/DC" is one artist, not
-        // two. ';' remains the explicit multi-value separator.
-        char[] delimiters = { ';' };
 
         foreach (var raw in rawArtists)
         {
             if (string.IsNullOrWhiteSpace(raw)) continue;
 
-            string[] parts = raw.Split(delimiters, StringSplitOptions.RemoveEmptyEntries);
+            string[] parts = raw.Split(ArtistDelimiters, StringSplitOptions.RemoveEmptyEntries);
             foreach (var part in parts)
             {
                 string cleaned = part.Trim();
                 if (string.IsNullOrWhiteSpace(cleaned)) continue;
 
-                string[] featParts = System.Text.RegularExpressions.Regex.Split(cleaned, @"\s+(?:feat\.|ft\.|featuring)\s+", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                string[] featParts = FeatSplitRegex.Split(cleaned);
                 foreach (var fPart in featParts)
                 {
                     string sub = fPart.Trim();
@@ -902,7 +967,7 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
         return string.IsNullOrWhiteSpace(first) ? null : first;
     }
 
-    // ReplayGain extraction shared by the full-scan and single-file paths.
+    // ReplayGain extraction shared by the full-scan and single-file paths across ID3v2, Xiph, APE, and MP4.
     private static float ExtractReplayGain(TagLib.File tagFile)
     {
         try
@@ -912,8 +977,9 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
                 var txxx = System.Linq.Enumerable.FirstOrDefault(id3v2.GetFrames<TagLib.Id3v2.UserTextInformationFrame>(), f => f.Description.Equals("REPLAYGAIN_TRACK_GAIN", StringComparison.OrdinalIgnoreCase));
                 if (txxx != null && txxx.Text.Length > 0)
                 {
-                    string val = txxx.Text[0].Replace(" dB", "").Trim();
-                    if (float.TryParse(val, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out float parsedRg))
+                    string val = txxx.Text[0].Replace(" dB", "", StringComparison.OrdinalIgnoreCase).Trim();
+                    if (float.TryParse(val, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out float parsedRg) &&
+                        !float.IsNaN(parsedRg) && !float.IsInfinity(parsedRg))
                     {
                         return parsedRg;
                     }
@@ -924,10 +990,38 @@ public class LocalLibraryScanner : Octave.Core.Interfaces.ILibraryScanner
                 string[] rgComments = xiph.GetField("REPLAYGAIN_TRACK_GAIN");
                 if (rgComments.Length > 0)
                 {
-                    string val = rgComments[0].Replace(" dB", "").Trim();
-                    if (float.TryParse(val, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out float parsedRg2))
+                    string val = rgComments[0].Replace(" dB", "", StringComparison.OrdinalIgnoreCase).Trim();
+                    if (float.TryParse(val, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out float parsedRg2) &&
+                        !float.IsNaN(parsedRg2) && !float.IsInfinity(parsedRg2))
                     {
                         return parsedRg2;
+                    }
+                }
+            }
+            else if (tagFile.GetTag(TagLib.TagTypes.Ape) is TagLib.Ape.Tag ape)
+            {
+                var item = ape.GetItem("REPLAYGAIN_TRACK_GAIN");
+                if (item != null)
+                {
+                    string val = item.ToString().Replace(" dB", "", StringComparison.OrdinalIgnoreCase).Trim();
+                    if (float.TryParse(val, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out float parsedRg3) &&
+                        !float.IsNaN(parsedRg3) && !float.IsInfinity(parsedRg3))
+                    {
+                        return parsedRg3;
+                    }
+                }
+            }
+            else if (tagFile.Tag is TagLib.CombinedTag combinedTag)
+            {
+                // Fallback through TagLib combined tag representations
+                string? rgText = combinedTag.Comment;
+                if (!string.IsNullOrEmpty(rgText) && rgText.Contains("REPLAYGAIN_TRACK_GAIN", StringComparison.OrdinalIgnoreCase))
+                {
+                    var match = System.Text.RegularExpressions.Regex.Match(rgText, @"REPLAYGAIN_TRACK_GAIN[=:]\s*([+-]?\d+(?:\.\d+)?)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    if (match.Success && float.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out float parsedRg4) &&
+                        !float.IsNaN(parsedRg4) && !float.IsInfinity(parsedRg4))
+                    {
+                        return parsedRg4;
                     }
                 }
             }

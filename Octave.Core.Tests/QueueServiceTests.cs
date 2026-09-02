@@ -282,6 +282,25 @@ public class QueueServiceTests : IDisposable
     }
 
     [Fact]
+    public void Seek_InvokesAudioPlayerSeek_AndRaisesPlaybackStateChanged()
+    {
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+        var track = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 200, "http://test/1.mp3", 1, 2024, DateTime.UtcNow);
+        queueService.Enqueue(track);
+        queueService.PlayIndex(0);
+
+        PlaybackState? receivedState = null;
+        queueService.PlaybackStateChanged += (s, state) => receivedState = state;
+
+        var returnedState = queueService.Seek(45.5);
+
+        _audioPlayerMock.Verify(a => a.Seek(45.5), Times.Once);
+        Assert.NotNull(receivedState);
+        Assert.Equal(returnedState.SequenceToken, receivedState.SequenceToken);
+        Assert.True(returnedState.SequenceToken > 0);
+    }
+
+    [Fact]
     public void Reorder_MovesTrackAndMaintainsSurrogateIds()
     {
         var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
@@ -845,5 +864,71 @@ public class QueueServiceTests : IDisposable
         _audioPlayerMock.Raise(a => a.TrackEnded += null, new TrackEndedEventArgs(session2, track2.SourceUri, isNaturalEnd: true));
         await advancedTo3.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal("t3", queueService.CurrentState.CurrentTrack?.Id);
+    }
+
+    [Fact]
+    public void Clear_WithKeepCurrentTrack_PreservesArtworkUrl()
+    {
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+        var track1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", 1, 2024, DateTime.UtcNow);
+        var track2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", 2, 2024, DateTime.UtcNow);
+
+        queueService.EnqueueRange(new[] { track1, track2 });
+        var queue = queueService.GetCurrentQueue();
+        queue[0].ArtworkUrl = "http://art/1.png";
+
+        _audioPlayerMock.Setup(a => a.Play("http://test/1.mp3", It.IsAny<double>())).Returns(1L);
+        queueService.PlayIndex(0);
+
+        // Clear with keepCurrentTrack = true
+        queueService.Clear(keepCurrentTrack: true);
+
+        var remaining = queueService.GetCurrentQueue();
+        Assert.Single(remaining);
+        Assert.Equal("t1", remaining[0].Track.Id);
+        Assert.Equal("http://art/1.png", remaining[0].ArtworkUrl);
+        Assert.True(remaining[0].IsPlaying);
+    }
+
+    [Fact]
+    public void Reorder_WithSameIndex_IsNoOp()
+    {
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+        var track1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", 1, 2024, DateTime.UtcNow);
+        var track2 = new Track("t2", "Track 2", "ar1", "Artist", "al1", "Album", 180, "http://test/2.mp3", 2, 2024, DateTime.UtcNow);
+
+        queueService.EnqueueRange(new[] { track1, track2 });
+        int queueChangedEvents = 0;
+        queueService.QueueChanged += (_, _) => queueChangedEvents++;
+
+        // Reorder index 0 to index 0 -> should be a no-op, firing 0 events
+        queueService.Reorder(0, 0);
+        Assert.Equal(0, queueChangedEvents);
+
+        var queue = queueService.GetCurrentQueue();
+        Assert.Equal("t1", queue[0].Track.Id);
+        Assert.Equal("t2", queue[1].Track.Id);
+    }
+
+    [Fact]
+    public void Seek_MarshalsToUIDispatcherWhenOffUIThread()
+    {
+        var dispatcherMock = new Mock<IDispatcherService>();
+        dispatcherMock.Setup(d => d.IsOnUIThread).Returns(false);
+        dispatcherMock.Setup(d => d.ExecuteOnUIThread(It.IsAny<Action>()))
+            .Callback<Action>(action => action());
+
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object, dispatcherMock.Object);
+        var track1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", 1, 2024, DateTime.UtcNow);
+        queueService.Enqueue(track1);
+
+        int stateChangedCount = 0;
+        queueService.PlaybackStateChanged += (_, _) => stateChangedCount++;
+
+        queueService.Seek(45.0);
+
+        _audioPlayerMock.Verify(a => a.Seek(45.0), Times.Once);
+        dispatcherMock.Verify(d => d.ExecuteOnUIThread(It.IsAny<Action>()), Times.AtLeastOnce);
+        Assert.True(stateChangedCount >= 1);
     }
 }

@@ -3,6 +3,5 @@
   <Project Path="Octave.Core.Tests/Octave.Core.Tests.csproj" />
   <Project Path="Octave.Desktop/Octave.Desktop.csproj">
     <Platform Project="x64" />
-    <Deploy Solution="Debug|*" />
   </Project>
 </Solution>

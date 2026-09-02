@@ -95,6 +95,8 @@ public class SqliteDbContext : ILyricsRepository
                 Genre TEXT NOT NULL DEFAULT '',
                 ReplayGain REAL NOT NULL DEFAULT 0.0,
                 Disc INTEGER NOT NULL DEFAULT 1, -- SCAN-11: disc number within a multi-disc album
+                LastModified INTEGER NOT NULL DEFAULT 0,
+                FileSize INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY(ArtistId) REFERENCES Artists(Id) ON DELETE CASCADE,
                 FOREIGN KEY(AlbumId) REFERENCES Albums(Id) ON DELETE CASCADE
             ) STRICT;
@@ -186,6 +188,7 @@ public class SqliteDbContext : ILyricsRepository
             CREATE INDEX IF NOT EXISTS idx_tracks_artist ON Tracks(ArtistId);
             CREATE INDEX IF NOT EXISTS idx_tracks_album ON Tracks(AlbumId);
             CREATE INDEX IF NOT EXISTS idx_tracks_title ON Tracks(Title COLLATE NOCASE);
+            CREATE INDEX IF NOT EXISTS idx_tracks_sourceuri ON Tracks(SourceUri);
             CREATE INDEX IF NOT EXISTS idx_albums_title ON Albums(Title COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS idx_artists_name ON Artists(Name COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS idx_playlisttracks_playlist ON PlaylistTracks(PlaylistId, SortOrder);
@@ -253,6 +256,9 @@ public class SqliteDbContext : ILyricsRepository
         await TryDropColumnAsync(conn, "Albums", "Provider");
         await TryDropColumnAsync(conn, "Tracks", "Provider");
         await TryDropColumnAsync(conn, "Playlists", "IsLocalOnly");
+
+        await TryAddColumnAsync(conn, "Tracks", "LastModified", "INTEGER NOT NULL DEFAULT 0");
+        await TryAddColumnAsync(conn, "Tracks", "FileSize", "INTEGER NOT NULL DEFAULT 0");
 
         // Clean up obsolete external enrichment tables if present from older versions.
         using (var dropObsoleteCmd = conn.CreateCommand())
@@ -469,9 +475,22 @@ public class SqliteDbContext : ILyricsRepository
             // DateAdded converted to Epoch Seconds to match strictly typed schema
             long epochSeconds = ((DateTimeOffset)track.DateAdded).ToUnixTimeSeconds();
 
+            long lastModified = 0;
+            long fileSize = 0;
+            try
+            {
+                if (System.IO.File.Exists(track.SourceUri))
+                {
+                    var fi = new System.IO.FileInfo(track.SourceUri);
+                    lastModified = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
+                    fileSize = fi.Length;
+                }
+            }
+            catch { }
+
             cmd.CommandText = @"
-                INSERT INTO Tracks (Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, TrackNumber, Year, DateAdded, Genre, ReplayGain, Disc)
-                VALUES (@id, @title, @artistId, @artistName, @albumId, @albumTitle, @durationSeconds, @sourceUri, @trackNumber, @year, @dateAdded, @genre, @replayGain, @disc)
+                INSERT INTO Tracks (Id, Title, ArtistId, ArtistName, AlbumId, AlbumTitle, DurationSeconds, SourceUri, TrackNumber, Year, DateAdded, Genre, ReplayGain, Disc, LastModified, FileSize)
+                VALUES (@id, @title, @artistId, @artistName, @albumId, @albumTitle, @durationSeconds, @sourceUri, @trackNumber, @year, @dateAdded, @genre, @replayGain, @disc, @lastModified, @fileSize)
                 ON CONFLICT(Id) DO UPDATE SET
                     Title = excluded.Title,
                     ArtistId = excluded.ArtistId,
@@ -485,7 +504,9 @@ public class SqliteDbContext : ILyricsRepository
                     DateAdded = excluded.DateAdded,
                     Genre = excluded.Genre,
                     ReplayGain = excluded.ReplayGain,
-                    Disc = excluded.Disc;";
+                    Disc = excluded.Disc,
+                    LastModified = excluded.LastModified,
+                    FileSize = excluded.FileSize;";
 
             cmd.Parameters.Add(new SqliteParameter("@id", track.Id));
             cmd.Parameters.Add(new SqliteParameter("@title", track.Title));
@@ -503,6 +524,8 @@ public class SqliteDbContext : ILyricsRepository
             // SCAN-11: tags occasionally carry Disc=0 when the field is present but
             // empty — clamp to disc 1 so ordering never sees a zero disc.
             cmd.Parameters.Add(new SqliteParameter("@disc", Math.Max(1, track.DiscNumber)));
+            cmd.Parameters.Add(new SqliteParameter("@lastModified", lastModified));
+            cmd.Parameters.Add(new SqliteParameter("@fileSize", fileSize));
 
             await cmd.ExecuteNonQueryAsync();
 
@@ -522,8 +545,49 @@ public class SqliteDbContext : ILyricsRepository
         finally
         {
             localTx?.Dispose();
-            if (localConn != null) await localConn.DisposeAsync();
+            localConn?.Dispose();
         }
+    }
+
+    public async Task<Dictionary<string, (string Id, long LastModified, long FileSize)>> GetTrackFileSignaturesUnderPathAsync(string rootPath)
+    {
+        var map = new Dictionary<string, (string Id, long LastModified, long FileSize)>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(rootPath)) return map;
+
+        string normalizedRoot;
+        try
+        {
+            normalizedRoot = System.IO.Path.GetFullPath(rootPath).TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar) + System.IO.Path.DirectorySeparatorChar;
+        }
+        catch
+        {
+            normalizedRoot = rootPath;
+        }
+
+        string likePattern = normalizedRoot.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
+
+        using var conn = await CreateConnectionAsync();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT Id, SourceUri, LastModified, FileSize FROM Tracks WHERE SourceUri LIKE @prefix ESCAPE '\\';";
+        cmd.Parameters.Add(new SqliteParameter("@prefix", likePattern));
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            string id = reader.GetString(0);
+            string uri = reader.GetString(1);
+            long lastMod = reader.IsDBNull(2) ? 0 : reader.GetInt64(2);
+            long size = reader.IsDBNull(3) ? 0 : reader.GetInt64(3);
+            try
+            {
+                map[System.IO.Path.GetFullPath(uri)] = (id, lastMod, size);
+            }
+            catch
+            {
+                map[uri] = (id, lastMod, size);
+            }
+        }
+        return map;
     }
 
     public async Task<List<Track>> GetAllTracksAsync()
@@ -1102,6 +1166,44 @@ public class SqliteDbContext : ILyricsRepository
         await cmd.ExecuteNonQueryAsync();
     }
 
+    public async Task<bool> ToggleFavoriteAsync(string trackId)
+    {
+        if (string.IsNullOrWhiteSpace(trackId)) return false;
+
+        using var conn = await CreateConnectionAsync();
+        using var tx = (SqliteTransaction)await conn.BeginTransactionAsync();
+        try
+        {
+            using var checkCmd = conn.CreateCommand();
+            checkCmd.Transaction = tx;
+            checkCmd.CommandText = "SELECT 1 FROM Favorites WHERE TrackId = @id LIMIT 1;";
+            checkCmd.Parameters.Add(new SqliteParameter("@id", trackId));
+            bool isFav = (await checkCmd.ExecuteScalarAsync()) != null;
+
+            using var modCmd = conn.CreateCommand();
+            modCmd.Transaction = tx;
+            if (isFav)
+            {
+                modCmd.CommandText = "DELETE FROM Favorites WHERE TrackId = @id;";
+                modCmd.Parameters.Add(new SqliteParameter("@id", trackId));
+            }
+            else
+            {
+                modCmd.CommandText = "INSERT OR IGNORE INTO Favorites (TrackId, AddedAt) VALUES (@id, @at);";
+                modCmd.Parameters.Add(new SqliteParameter("@id", trackId));
+                modCmd.Parameters.Add(new SqliteParameter("@at", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+            }
+            await modCmd.ExecuteNonQueryAsync();
+            await tx.CommitAsync();
+            return !isFav;
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+    }
+
     // Qualifies the shared column list with a table alias (e.g. "t.Id, t.Title, ...").
     private static string PrefixColumns(string alias) =>
         string.Join(", ", System.Array.ConvertAll(TrackColumns.Split(", "), c => $"{alias}.{c}"));
@@ -1232,7 +1334,7 @@ public class SqliteDbContext : ILyricsRepository
         if (idList == null || idList.Count == 0) return;
 
         using var conn = await CreateConnectionAsync();
-        using var tx = conn.BeginTransaction();
+        using var tx = (SqliteTransaction)await conn.BeginTransactionAsync();
         try
         {
             long nextSortOrder = 0;
@@ -1265,11 +1367,11 @@ public class SqliteDbContext : ILyricsRepository
                 await cmd.ExecuteNonQueryAsync();
             }
 
-            tx.Commit();
+            await tx.CommitAsync();
         }
         catch
         {
-            tx.Rollback();
+            await tx.RollbackAsync();
             throw;
         }
     }
@@ -1566,6 +1668,68 @@ public class SqliteDbContext : ILyricsRepository
         cmd.CommandText = "DELETE FROM MonitoredFolders WHERE Path = @path;";
         cmd.Parameters.Add(new SqliteParameter("@path", path));
         await cmd.ExecuteNonQueryAsync();
+    }
+
+    /// <summary>
+    /// Self-healing fallback: if MonitoredFolders is empty but Tracks already contains records
+    /// (e.g. after unpacking the app or initial crawl), infer the common root directories
+    /// from the stored tracks so real-time watching and reconciliation are active.
+    /// </summary>
+    public async Task<List<string>> InferMonitoredFoldersFromTracksAsync()
+    {
+        var inferred = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using var conn = await CreateConnectionAsync();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT DISTINCT SourceUri FROM Tracks;";
+        using var reader = await cmd.ExecuteReaderAsync();
+
+        string specialMusic = Environment.GetFolderPath(Environment.SpecialFolder.MyMusic);
+        var sampleUris = new List<string>();
+        while (await reader.ReadAsync())
+        {
+            string uri = reader.GetString(0);
+            if (!string.IsNullOrWhiteSpace(uri))
+            {
+                sampleUris.Add(uri);
+            }
+        }
+
+        if (sampleUris.Count == 0) return inferred.ToList();
+
+        // 1. Check if files reside inside the user's standard Music folder
+        if (!string.IsNullOrWhiteSpace(specialMusic) && Directory.Exists(specialMusic))
+        {
+            string normMusic = Path.GetFullPath(specialMusic).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            if (sampleUris.Any(u =>
+            {
+                try { return Path.GetFullPath(u).StartsWith(normMusic, StringComparison.OrdinalIgnoreCase); }
+                catch { return false; }
+            }))
+            {
+                inferred.Add(Path.GetFullPath(specialMusic));
+            }
+        }
+
+        // 2. For remaining files outside standard Music, extract their common top directory
+        foreach (var uri in sampleUris)
+        {
+            try
+            {
+                string? dir = Path.GetDirectoryName(uri);
+                if (!string.IsNullOrWhiteSpace(dir) && Directory.Exists(dir))
+                {
+                    string normDir = Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                    bool covered = inferred.Any(parent => normDir.StartsWith(Path.GetFullPath(parent).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+                    if (!covered)
+                    {
+                        inferred.Add(Path.GetFullPath(dir));
+                    }
+                }
+            }
+            catch { }
+        }
+
+        return inferred.ToList();
     }
 
     // Deletes all tracks whose file lives under the given folder, then purges the

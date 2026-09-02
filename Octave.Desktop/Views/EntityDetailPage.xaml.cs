@@ -57,7 +57,10 @@ public sealed partial class EntityDetailPage : Page
                 }
             });
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[EntityDetail] RefreshFavoriteIdsAsync failed: {ex.Message}");
+        }
     }
 
     private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)

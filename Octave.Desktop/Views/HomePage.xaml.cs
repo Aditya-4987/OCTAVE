@@ -30,19 +30,16 @@ public sealed partial class HomePage : Page
 
     public Visibility SectionVisibility(int count) => count > 0 ? Visibility.Visible : Visibility.Collapsed;
 
+    public Visibility HeroVisibility(Track? heroTrack) => heroTrack != null ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility LoadingVisibility(bool isLoading) => isLoading ? Visibility.Visible : Visibility.Collapsed;
+
     public Visibility AllEmptyVisibility(int a, int b, int c, int d) =>
         (a + b + c + d) == 0 ? Visibility.Visible : Visibility.Collapsed;
 
     private void HeroPlay_Click(object sender, RoutedEventArgs e)
     {
-        if (ViewModel.RecentlyPlayed.Count > 0)
-        {
-            ViewModel.PlaySection(ViewModel.RecentlyPlayed, ViewModel.RecentlyPlayed[0]);
-        }
-        else if (ViewModel.LastAdded.Count > 0)
-        {
-            ViewModel.PlaySection(ViewModel.LastAdded, ViewModel.LastAdded[0]);
-        }
+        ViewModel.PlayHeroTrack();
     }
 
     private async void HeroFavorite_Click(object sender, RoutedEventArgs e)

@@ -26,3 +26,5 @@ TestResults/
 # Stray logs and scratch files at the repo root
 build.log
 temp
+repo_structure_grouping.md
+session_master_context.md

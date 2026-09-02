@@ -35,42 +35,49 @@ public class PlaylistService : IPlaylistService
 
     public async Task DeletePlaylistAsync(string id)
     {
+        if (string.IsNullOrWhiteSpace(id)) return;
         await _dbContext.DeletePlaylistAsync(id);
         PlaylistsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public async Task RenamePlaylistAsync(string id, string title)
     {
+        if (string.IsNullOrWhiteSpace(id)) return;
         await _dbContext.RenamePlaylistAsync(id, title);
         PlaylistsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public async Task AddTrackAsync(string playlistId, string trackId)
     {
+        if (string.IsNullOrWhiteSpace(playlistId) || string.IsNullOrWhiteSpace(trackId)) return;
         await _dbContext.AddTrackToPlaylistAsync(playlistId, trackId);
         PlaylistsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public async Task AddTracksAsync(string playlistId, IEnumerable<string> trackIds)
     {
+        if (string.IsNullOrWhiteSpace(playlistId) || trackIds == null) return;
         await _dbContext.AddTracksToPlaylistAsync(playlistId, trackIds);
         PlaylistsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public async Task RemoveTrackAsync(string playlistId, string trackId)
     {
+        if (string.IsNullOrWhiteSpace(playlistId) || string.IsNullOrWhiteSpace(trackId)) return;
         await _dbContext.RemoveTrackFromPlaylistAsync(playlistId, trackId);
         PlaylistsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public async Task RemoveTrackEntryAsync(string entryId)
     {
+        if (string.IsNullOrWhiteSpace(entryId)) return;
         await _dbContext.RemoveTrackEntryFromPlaylistAsync(entryId);
         PlaylistsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public async Task SetOrderAsync(string playlistId, IReadOnlyList<string> orderedTrackOrEntryIds)
     {
+        if (string.IsNullOrWhiteSpace(playlistId) || orderedTrackOrEntryIds == null) return;
         await _dbContext.SetPlaylistOrderAsync(playlistId, orderedTrackOrEntryIds);
         PlaylistsChanged?.Invoke(this, EventArgs.Empty);
     }

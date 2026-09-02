@@ -22,6 +22,7 @@ public interface IAudioPlayerService
     event EventHandler<string>? TrackStarted;
     event EventHandler<TrackEndedEventArgs>? TrackEnded;
     event EventHandler<double>? PositionChanged;
+    event EventHandler? PlaybackInterrupted;
 
     bool Init();
     long Play(string urlOrPath, double replayGain = 0.0);
@@ -59,4 +60,12 @@ public interface IAudioPlayerService
     // Digital preamp gain control (-15 dB to +15 dB)
     float PreampGainDb { get; }
     void SetPreampGain(float gainDb);
+
+    // Output Device Management
+    event EventHandler? OutputDeviceChanged;
+    System.Collections.Generic.IReadOnlyList<AudioOutputDeviceInfo> GetAvailableOutputDevices();
+    int CurrentOutputDeviceIndex { get; }
+    string? CurrentOutputDeviceId { get; }
+    void SetOutputDevice(int deviceIndex);
+    void SetOutputDevice(string? deviceId);
 }

@@ -195,6 +195,39 @@ public class ManagedBassAudioServiceTests : IDisposable
     }
 
     [Fact]
+    public void Seek_WithoutStreamOrWithInvalidBounds_IsSafeAndClamped()
+    {
+        using var service = new ManagedBassAudioService();
+
+        // Calling Seek when no stream is loaded must not throw
+        service.Seek(10.0);
+        service.Seek(-5.0);
+        service.Seek(double.NaN);
+        service.Seek(double.PositiveInfinity);
+
+        // Playing a valid WAV file and seeking with various values
+        string testWav = Path.Combine(_dir, "seek_test.wav");
+        WriteWavFile(testWav, 4.0); // 4 seconds duration
+
+        service.Play(testWav);
+
+        // Valid seek
+        service.Seek(2.0);
+
+        // Negative seek should clamp to 0 without throwing
+        service.Seek(-10.0);
+
+        // Beyond duration seek should clamp to duration without throwing
+        service.Seek(100.0);
+
+        // NaN and Infinity should clamp to 0 without throwing
+        service.Seek(double.NaN);
+        service.Seek(double.PositiveInfinity);
+
+        service.Stop();
+    }
+
+    [Fact]
     public void Dispose_IsIdempotent_AndSafeWithoutPlayback()
     {
         // AUDIO-04: teardown is deterministic-only (no finalizer). Disposing

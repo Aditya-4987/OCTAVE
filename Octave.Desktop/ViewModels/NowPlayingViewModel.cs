@@ -88,14 +88,21 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
 
             if (Math.Abs(_durationSeconds - safe) > 0.0001)
             {
-                SetProperty(ref _durationSeconds, safe);
                 if (safe <= 0 || _positionSeconds > safe)
                 {
-                    PositionSeconds = (safe <= 0) ? 0.0 : safe;
+                    _positionSeconds = 0.0;
+                    OnPropertyChanged(nameof(PositionSeconds));
                 }
+
+                SetProperty(ref _durationSeconds, safe);
+                OnPropertyChanged(nameof(SliderMaximum));
+                OnPropertyChanged(nameof(IsTimelineEnabled));
             }
         }
     }
+
+    public double SliderMaximum => DurationSeconds > 0 ? DurationSeconds : 100.0;
+    public bool IsTimelineEnabled => DurationSeconds > 0;
 
     [ObservableProperty]
     public partial bool IsPlaying { get; set; }
@@ -237,7 +244,10 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
                 IsCurrentTrackFavorite = isFav;
             });
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[NowPlayingViewModel] Favorite status refresh failed: {ex.Message}");
+        }
     }
 
     public void RefreshState()
@@ -327,7 +337,10 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
                 oldLyricsCts?.Cancel();
                 oldLyricsCts?.Dispose();
             }
-            catch { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[NowPlayingViewModel] Dispose old lyrics CTS failed: {ex.Message}");
+            }
 
             var oldCreditsCts = Interlocked.Exchange(ref _creditsCts, new CancellationTokenSource());
             try
@@ -335,7 +348,10 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
                 oldCreditsCts?.Cancel();
                 oldCreditsCts?.Dispose();
             }
-            catch { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[NowPlayingViewModel] Dispose old credits CTS failed: {ex.Message}");
+            }
 
             if (state.CurrentTrack != null)
             {
@@ -355,6 +371,10 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
                 CurrentArtist = null;
                 CurrentAlbum = null;
             }
+        }
+        else
+        {
+            UpdateLyricPosition(state.PositionSeconds);
         }
     }
 
@@ -474,7 +494,10 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
             oldLyricsCts?.Cancel();
             oldLyricsCts?.Dispose();
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[NowPlayingViewModel] Reload old lyrics CTS failed: {ex.Message}");
+        }
 
         var ct = newCts.Token;
 
@@ -909,7 +932,10 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
             oldCts?.Cancel();
             oldCts?.Dispose();
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[NowPlayingViewModel] Reload old queue CTS failed: {ex.Message}");
+        }
 
         var token = newCts.Token;
         _ = Task.Run(async () =>
@@ -1054,7 +1080,10 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
             prewarmCts?.Cancel();
             prewarmCts?.Dispose();
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[NowPlayingViewModel] Dispose prewarm CTS failed: {ex.Message}");
+        }
         UnsubscribeEvents();
     }
 }

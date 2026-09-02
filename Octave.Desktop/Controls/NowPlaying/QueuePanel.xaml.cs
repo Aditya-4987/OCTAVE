@@ -67,7 +67,10 @@ public sealed partial class QueuePanel : UserControl
                 }
             });
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[QueuePanel] RefreshFavoriteIdsAsync failed: {ex.Message}");
+        }
     }
 
     private void ItemFavoriteButton_Loaded(object sender, RoutedEventArgs e)

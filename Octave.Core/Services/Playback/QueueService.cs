@@ -127,6 +127,15 @@ public class QueueService : IQueueService, IDisposable
             }
         };
         _audioPlayer.TrackEnded += _trackEndedHandler;
+        _audioPlayer.PlaybackInterrupted += (s, e) =>
+        {
+            PlaybackState? state = null;
+            lock (_queueLock)
+            {
+                state = CaptureStateUnlocked();
+            }
+            if (state != null) RaisePlaybackEvents(state);
+        };
 
         _libraryChangedHandler = (s, e) =>
         {
@@ -526,8 +535,8 @@ public class QueueService : IQueueService, IDisposable
                 var currentItem = _activeQueue[_currentIndex];
                 _activeQueue.Clear();
                 _unshuffledQueue.Clear();
-                _activeQueue.Add(new QueueItem { Id = currentItem.Id, Track = currentItem.Track, IsPlaying = currentItem.IsPlaying });
-                _unshuffledQueue.Add(new QueueItem { Id = currentItem.Id, Track = currentItem.Track, IsPlaying = currentItem.IsPlaying });
+                _activeQueue.Add(new QueueItem { Id = currentItem.Id, Track = currentItem.Track, IsPlaying = currentItem.IsPlaying, ArtworkUrl = currentItem.ArtworkUrl });
+                _unshuffledQueue.Add(new QueueItem { Id = currentItem.Id, Track = currentItem.Track, IsPlaying = currentItem.IsPlaying, ArtworkUrl = currentItem.ArtworkUrl });
                 _currentIndex = 0;
             }
             else
@@ -550,6 +559,8 @@ public class QueueService : IQueueService, IDisposable
 
     public void Reorder(int oldIndex, int newIndex)
     {
+        if (oldIndex == newIndex) return;
+
         PlaybackState? state = null;
         lock (_queueLock)
         {
@@ -775,10 +786,20 @@ public class QueueService : IQueueService, IDisposable
             if (_audioPlayer.Status == PlaybackStatus.Paused)
             {
                 _audioPlayer.Resume();
-                state = CaptureStateUnlocked();
+                // If resume failed because the device was disconnected, re-play the current track
+                if (_audioPlayer.Status != PlaybackStatus.Playing && _activeQueue.Count > 0)
+                {
+                    int indexToPlay = _currentIndex >= 0 ? _currentIndex : 0;
+                    state = PlayIndexInternal(indexToPlay);
+                }
+                else
+                {
+                    state = CaptureStateUnlocked();
+                }
             }
-            else if (_audioPlayer.Status == PlaybackStatus.Stopped && _activeQueue.Count > 0)
+            else if (_activeQueue.Count > 0)
             {
+                // Stopped, Stalled/Buffering, or dead device state: re-play current track
                 int indexToPlay = _currentIndex >= 0 ? _currentIndex : 0;
                 state = PlayIndexInternal(indexToPlay);
             }
@@ -824,6 +845,19 @@ public class QueueService : IQueueService, IDisposable
             if (isLocal && !System.IO.File.Exists(track.SourceUri))
             {
                 System.Diagnostics.Debug.WriteLine($"[QueueService] Missing physical file detected (Storage may be offline): {track.SourceUri}");
+
+                // Clean up the missing track from the database and library so the user doesn't see ghost tracks
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _libraryScanner.RemoveStalePathAsync(track.SourceUri);
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[QueueService] Stale track cleanup failed: {ex.Message}");
+                    }
+                });
 
                 _activeQueue.RemoveAt(index);
                 _unshuffledQueue.RemoveAll(i => i.Id == item.Id);
@@ -1095,7 +1129,14 @@ public class QueueService : IQueueService, IDisposable
             _audioPlayer.Seek(positionSeconds);
             state = CaptureStateUnlocked();
         }
-        PlaybackStateChanged?.Invoke(this, state);
+        if (_dispatcher != null && !_dispatcher.IsOnUIThread)
+        {
+            _dispatcher.ExecuteOnUIThread(() => PlaybackStateChanged?.Invoke(this, state));
+        }
+        else
+        {
+            PlaybackStateChanged?.Invoke(this, state);
+        }
         return state;
     }
 
@@ -1109,5 +1150,6 @@ public class QueueService : IQueueService, IDisposable
         _audioPlayer.TrackEnded -= _trackEndedHandler;
         _audioPlayer.PositionChanged -= _positionChangedHandler;
         _libraryScanner.LibraryChanged -= _libraryChangedHandler;
+        _persistenceSemaphore.Dispose();
     }
 }

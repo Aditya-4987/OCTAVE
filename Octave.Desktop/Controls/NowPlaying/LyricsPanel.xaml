@@ -85,6 +85,18 @@
                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                         </Button>
                     </StackPanel>
+
+                    <!-- Copy Lyrics Button -->
+                    <Button x:Name="CopyLyricsButton"
+                            Click="CopyLyricsButton_Click"
+                            Background="Transparent"
+                            BorderBrush="Transparent"
+                            Padding="7,3,7,3"
+                            CornerRadius="6"
+                            ToolTipService.ToolTip="Copy lyrics to clipboard">
+                        <FontIcon Glyph="&#xE8C8;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    </Button>
                 </StackPanel>
             </Grid>
 

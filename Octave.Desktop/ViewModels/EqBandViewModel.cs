@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using System;
 
 namespace Octave_Desktop.ViewModels;
@@ -37,6 +38,12 @@ public partial class EqBandViewModel : ObservableObject
     {
         _apply(Index, (float)Gain);
         _suppressEngineApply = false;
+    }
+
+    [RelayCommand]
+    public void ResetGain()
+    {
+        Gain = 0.0;
     }
 
     partial void OnGainChanged(double value)

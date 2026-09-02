@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.Extensions.DependencyInjection;
 using Octave_Desktop.ViewModels;
 using Octave.Core.Models;
@@ -17,7 +18,14 @@ public sealed partial class MainWindow : Window
     private readonly System.Collections.Generic.List<Button> _sidebarFavoriteButtons = new();
     private readonly System.Collections.Generic.HashSet<string> _sidebarFavoriteTrackIds = new(StringComparer.Ordinal);
     private readonly EventHandler _favoritesChangedHandler;
+    private readonly ToolTip _playbackSliderTooltip = new() { Placement = Microsoft.UI.Xaml.Controls.Primitives.PlacementMode.Top };
+    private readonly TextBlock _playbackSliderTooltipText = new() { FontSize = 12 };
     private bool _wasNavPaneOpen = true;
+    private bool _isSpectrumRenderingHooked;
+    private bool _isImageAActive = true;
+    private string? _lastRenderedArtworkUrl = "__OCTAVE_UNINITIALIZED__";
+    private int _artworkTransitionGeneration = 0;
+    private Microsoft.UI.Xaml.Media.Animation.Storyboard? _crossfadeStoryboard;
 
     public MainWindow()
     {
@@ -25,6 +33,8 @@ public sealed partial class MainWindow : Window
         NowPlayingViewModel = App.Services.GetRequiredService<NowPlayingViewModel>();
         InitializeComponent();
         RootGrid.DataContext = this;
+        _playbackSliderTooltip.Content = _playbackSliderTooltipText;
+        ToolTipService.SetToolTip(PlaybackSlider, _playbackSliderTooltip);
         UpdateSidebarTabStyles(0);
 
         ExtendsContentIntoTitleBar = true;
@@ -46,6 +56,10 @@ public sealed partial class MainWindow : Window
         Octave_Desktop.Helpers.WindowMinSizeHelper.SetMinSize(this, 750, 500);
 
         RootGrid.SizeChanged += RootGrid_SizeChanged;
+        RootGrid.Loaded += (s, e) =>
+        {
+            InitializeBackgroundArtwork();
+        };
 
         // Apply the saved theme to the window root.
         RootGrid.RequestedTheme = ThemeHelper.GetSavedTheme();
@@ -72,21 +86,41 @@ public sealed partial class MainWindow : Window
                 }
                 UpdateBottomBarButtonsState();
             }
+            else if (e.PropertyName == nameof(ShellViewModel.IsPlaying) || e.PropertyName == nameof(ShellViewModel.IsVisualizerEnabled))
+            {
+                UpdateSpectrumRenderingSubscription();
+            }
+            else if (e.PropertyName == nameof(ShellViewModel.BackdropMaterialIndex))
+            {
+                ApplyBackdrop(ViewModel.BackdropMaterialIndex);
+            }
+            else if (e.PropertyName == nameof(ShellViewModel.CurrentArtworkUrl))
+            {
+                TransitionBackgroundArtwork(ViewModel.CurrentArtworkUrl);
+            }
         };
+
+        ApplyBackdrop(ViewModel.BackdropMaterialIndex);
 
         // Default navigation
         ContentFrame.Navigated += ContentFrame_Navigated;
         ContentFrame.Navigate(typeof(Views.HomePage));
         NavView.SelectedItem = HomeItem;
 
-        // Register pointer and manipulation handlers with handledEventsToo = true
-        PlaybackSlider.AddHandler(UIElement.PointerPressedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(PlaybackSlider_PointerPressed), true);
-        PlaybackSlider.AddHandler(UIElement.PointerReleasedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(PlaybackSlider_PointerReleased), true);
-        PlaybackSlider.AddHandler(UIElement.ManipulationStartedEvent, new Microsoft.UI.Xaml.Input.ManipulationStartedEventHandler(PlaybackSlider_ManipulationStarted), true);
-        PlaybackSlider.AddHandler(UIElement.ManipulationCompletedEvent, new Microsoft.UI.Xaml.Input.ManipulationCompletedEventHandler(PlaybackSlider_ManipulationCompleted), true);
-
         // Global Spacebar Play/Pause handler before UI controls consume Space for selection
         RootGrid.PreviewKeyDown += RootGrid_PreviewKeyDown;
+
+        PlaybackSlider.AddHandler(UIElement.PointerEnteredEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(PlaybackSlider_PointerEntered), true);
+        PlaybackSlider.AddHandler(UIElement.PointerMovedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(PlaybackSlider_PointerMoved), true);
+        PlaybackSlider.AddHandler(UIElement.PointerPressedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(PlaybackSlider_PointerPressed), true);
+        PlaybackSlider.AddHandler(UIElement.PointerReleasedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(PlaybackSlider_PointerReleased), true);
+        PlaybackSlider.AddHandler(UIElement.PointerCaptureLostEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(PlaybackSlider_PointerCaptureLost), true);
+        PlaybackSlider.AddHandler(UIElement.PointerCanceledEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(PlaybackSlider_PointerCanceled), true);
+        PlaybackSlider.AddHandler(UIElement.PointerExitedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(PlaybackSlider_PointerExited), true);
+        PlaybackSlider.AddHandler(UIElement.PointerWheelChangedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(PlaybackSlider_PointerWheelChanged), true);
+        PlaybackSlider.AddHandler(UIElement.KeyDownEvent, new Microsoft.UI.Xaml.Input.KeyEventHandler(PlaybackSlider_KeyDown), true);
+        PlaybackSlider.AddHandler(UIElement.ManipulationStartedEvent, new Microsoft.UI.Xaml.Input.ManipulationStartedEventHandler(PlaybackSlider_ManipulationStarted), true);
+        PlaybackSlider.AddHandler(UIElement.ManipulationCompletedEvent, new Microsoft.UI.Xaml.Input.ManipulationCompletedEventHandler(PlaybackSlider_ManipulationCompleted), true);
 
         // Favorites changed listener for sidebar queue
         _favoritesChangedHandler = (s, e) => _ = RefreshSidebarFavoritesAsync();
@@ -104,8 +138,7 @@ public sealed partial class MainWindow : Window
         // boundary" signal - re-evaluate the rasterization scale on both paths.
         AppWindow.Changed += OnAppWindowChangedForScale;
 
-        // Real-time audio spectrum rendering tick
-        CompositionTarget.Rendering += CompositionTarget_Rendering;
+        UpdateSpectrumRenderingSubscription();
 
         // SYS-05/NF-11: process-level hooks previously outlived the window they
         // were bound to - the SMTC subscriptions kept the OS reacting to a dead
@@ -113,7 +146,11 @@ public sealed partial class MainWindow : Window
         // per-frame rendering callback was never detached.
         Closed += (s, e) =>
         {
-            CompositionTarget.Rendering -= CompositionTarget_Rendering;
+            if (_isSpectrumRenderingHooked)
+            {
+                CompositionTarget.Rendering -= CompositionTarget_Rendering;
+                _isSpectrumRenderingHooked = false;
+            }
             _libraryService.FavoritesChanged -= _favoritesChangedHandler;
             Octave_Desktop.Helpers.WindowMinSizeHelper.ClearMinSize(WinRT.Interop.WindowNative.GetWindowHandle(this));
             App.Services.GetRequiredService<Octave_Desktop.Services.System.ISmtcService>().Dispose();
@@ -125,6 +162,27 @@ public sealed partial class MainWindow : Window
         if (args.DidPositionChange)
         {
             Converters.ArtworkPathConverter.CheckDisplayScale(RootGrid);
+        }
+    }
+
+    private void UpdateSpectrumRenderingSubscription()
+    {
+        bool shouldRender = ProgressBarVisualizer != null &&
+                            ProgressBarVisualizer.Visibility == Visibility.Visible &&
+                            ViewModel.IsVisualizerEnabled &&
+                            ViewModel.IsPlaying;
+
+        if (shouldRender && !_isSpectrumRenderingHooked)
+        {
+            CompositionTarget.Rendering += CompositionTarget_Rendering;
+            _isSpectrumRenderingHooked = true;
+        }
+        else if (!shouldRender && _isSpectrumRenderingHooked)
+        {
+            CompositionTarget.Rendering -= CompositionTarget_Rendering;
+            _isSpectrumRenderingHooked = false;
+            _wasVisualizerActive = false;
+            ProgressBarVisualizer?.ResetBars();
         }
     }
 
@@ -149,8 +207,9 @@ public sealed partial class MainWindow : Window
             }
 
             _wasVisualizerActive = true;
-            var fft = _audioPlayer.GetFftData(36);
-            double ratio = (ViewModel.DurationSeconds > 0) ? (ViewModel.PositionSeconds / ViewModel.DurationSeconds) : 0.0;
+            var fft = _audioPlayer.GetFftData(48);
+            double currentPos = ViewModel.IsDragging ? PlaybackSlider.Value : ViewModel.PositionSeconds;
+            double ratio = (ViewModel.DurationSeconds > 0) ? (currentPos / ViewModel.DurationSeconds) : 0.0;
             ProgressBarVisualizer.UpdateSpectrum(fft, ratio);
         }
         catch (Exception ex)
@@ -398,28 +457,211 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void BackgroundImage_ImageOpened(object sender, RoutedEventArgs e)
+    private void InitializeBackgroundArtwork()
     {
-        if (sender is Image img)
+        TransitionBackgroundArtwork(ViewModel.CurrentArtworkUrl, immediate: true);
+    }
+
+    private void TransitionBackgroundArtwork(string? newArtworkUrl, bool immediate = false)
+    {
+        if (BackgroundArtworkImageA == null || BackgroundArtworkImageB == null) return;
+
+        // If the artwork URL hasn't changed, no transition needed
+        if (!immediate && string.Equals(newArtworkUrl, _lastRenderedArtworkUrl, StringComparison.OrdinalIgnoreCase))
         {
-            var storyboard = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
-            var fade = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
+            return;
+        }
+
+        _lastRenderedArtworkUrl = newArtworkUrl;
+        int generation = ++_artworkTransitionGeneration;
+
+        // Resolve ImageSource via ArtworkPathConverter
+        ImageSource? newImageSource = null;
+        try
+        {
+            if (RootGrid.Resources.TryGetValue("ArtworkPathConverter", out var convObj) && convObj is Microsoft.UI.Xaml.Data.IValueConverter conv)
             {
-                From = 0.0,
-                To = 0.3,
-                Duration = new Duration(TimeSpan.FromMilliseconds(500)),
-                EasingFunction = new Microsoft.UI.Xaml.Media.Animation.QuadraticEase { EasingMode = Microsoft.UI.Xaml.Media.Animation.EasingMode.EaseOut }
-            };
-            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(fade, img);
-            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(fade, "Opacity");
-            storyboard.Children.Add(fade);
-            storyboard.Begin();
+                newImageSource = conv.Convert(newArtworkUrl ?? string.Empty, typeof(ImageSource), "Background", string.Empty) as ImageSource;
+            }
+            else
+            {
+                newImageSource = new Octave_Desktop.Converters.ArtworkPathConverter().Convert(newArtworkUrl ?? string.Empty, typeof(ImageSource), "Background", string.Empty) as ImageSource;
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[OCTAVE] Background artwork converter exception: {ex.Message}");
+        }
+
+        if (immediate)
+        {
+            if (_crossfadeStoryboard != null)
+            {
+                _crossfadeStoryboard.Stop();
+                _crossfadeStoryboard = null;
+            }
+
+            var active = _isImageAActive ? BackgroundArtworkImageA : BackgroundArtworkImageB;
+            var inactive = _isImageAActive ? BackgroundArtworkImageB : BackgroundArtworkImageA;
+
+            active.Source = newImageSource;
+            active.Opacity = 1.0;
+
+            inactive.Opacity = 0.0;
+            inactive.Source = null;
+            return;
+        }
+
+        // If a previous crossfade was in-flight, cleanly finalize it
+        if (_crossfadeStoryboard != null)
+        {
+            _crossfadeStoryboard.Stop();
+            _crossfadeStoryboard = null;
+
+            var prevIncoming = _isImageAActive ? BackgroundArtworkImageB : BackgroundArtworkImageA;
+            var prevActive = _isImageAActive ? BackgroundArtworkImageA : BackgroundArtworkImageB;
+
+            prevIncoming.Opacity = 1.0;
+            prevActive.Opacity = 0.0;
+            prevActive.Source = null;
+            _isImageAActive = !_isImageAActive;
+        }
+
+        var currentVisibleImage = _isImageAActive ? BackgroundArtworkImageA : BackgroundArtworkImageB;
+        var incomingImage = _isImageAActive ? BackgroundArtworkImageB : BackgroundArtworkImageA;
+
+        // Prepare incoming buffer hidden
+        incomingImage.Opacity = 0.0;
+
+        bool crossfadeStarted = false;
+        void TriggerCrossfade()
+        {
+            if (crossfadeStarted) return;
+            crossfadeStarted = true;
+            incomingImage.ImageOpened -= OnIncomingOpened;
+            incomingImage.ImageFailed -= OnIncomingFailed;
+
+            if (generation != _artworkTransitionGeneration) return;
+            ExecuteBackgroundCrossfade(incomingImage, currentVisibleImage, generation);
+        }
+
+        void OnIncomingOpened(object sender, RoutedEventArgs args)
+        {
+            TriggerCrossfade();
+        }
+
+        void OnIncomingFailed(object sender, ExceptionRoutedEventArgs args)
+        {
+            if (generation != _artworkTransitionGeneration) return;
+            try
+            {
+                if (RootGrid.Resources.TryGetValue("ArtworkPathConverter", out var convObj) && convObj is Microsoft.UI.Xaml.Data.IValueConverter conv)
+                {
+                    incomingImage.Source = conv.Convert(string.Empty, typeof(ImageSource), "Background", string.Empty) as ImageSource;
+                }
+            }
+            catch { }
+            TriggerCrossfade();
+        }
+
+        incomingImage.ImageOpened += OnIncomingOpened;
+        incomingImage.ImageFailed += OnIncomingFailed;
+        incomingImage.Source = newImageSource;
+
+        // Safety timeout: if ImageOpened doesn't fire within 350ms (e.g. cached bitmap already decoded)
+        var timer = DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromMilliseconds(350);
+        timer.Tick += (s, e) =>
+        {
+            timer.Stop();
+            if (!crossfadeStarted && generation == _artworkTransitionGeneration)
+            {
+                TriggerCrossfade();
+            }
+        };
+        timer.Start();
+    }
+
+    private void ExecuteBackgroundCrossfade(Image incoming, Image current, int generation)
+    {
+        _crossfadeStoryboard?.Stop();
+
+        var storyboard = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
+        var duration = new Duration(TimeSpan.FromMilliseconds(750));
+        var ease = new Microsoft.UI.Xaml.Media.Animation.CubicEase { EasingMode = Microsoft.UI.Xaml.Media.Animation.EasingMode.EaseInOut };
+
+        // Fade in incoming image
+        var fadeIn = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
+        {
+            From = incoming.Opacity,
+            To = 1.0,
+            Duration = duration,
+            EasingFunction = ease
+        };
+        Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(fadeIn, incoming);
+        Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(fadeIn, "Opacity");
+        storyboard.Children.Add(fadeIn);
+
+        // Fade out current visible image
+        var fadeOut = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
+        {
+            From = current.Opacity,
+            To = 0.0,
+            Duration = duration,
+            EasingFunction = ease
+        };
+        Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(fadeOut, current);
+        Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(fadeOut, "Opacity");
+        storyboard.Children.Add(fadeOut);
+
+        storyboard.Completed += (s, e) =>
+        {
+            if (generation == _artworkTransitionGeneration)
+            {
+                storyboard.Stop();
+                incoming.Opacity = 1.0;
+                current.Opacity = 0.0;
+                current.Source = null;
+                _isImageAActive = !_isImageAActive;
+                _crossfadeStoryboard = null;
+            }
+        };
+
+        _crossfadeStoryboard = storyboard;
+        storyboard.Begin();
+    }
+
+    public void ApplyBackdrop(int materialIndex)
+    {
+        try
+        {
+            switch (materialIndex)
+            {
+                case 1: // Mica Alt
+                    SystemBackdrop = new MicaBackdrop { Kind = MicaKind.BaseAlt };
+                    break;
+                case 2: // Desktop Acrylic
+                    SystemBackdrop = new DesktopAcrylicBackdrop();
+                    break;
+                case 3: // Solid Dark
+                    SystemBackdrop = null;
+                    break;
+                case 0: // Mica Base
+                default:
+                    SystemBackdrop = new MicaBackdrop { Kind = MicaKind.Base };
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[MainWindow] ApplyBackdrop failed: {ex.Message}");
         }
     }
 
     // Helper methods for XAML bindings
     public Visibility BoolToVisibility(bool isPlaying) => isPlaying ? Visibility.Visible : Visibility.Collapsed;
     public Visibility BoolToVisibilityNegation(bool isPlaying) => isPlaying ? Visibility.Collapsed : Visibility.Visible;
+    public Visibility NotEmptyToVisibility(string? text) => !string.IsNullOrWhiteSpace(text) ? Visibility.Visible : Visibility.Collapsed;
 
     public string FormatSeconds(double seconds) => Converters.DurationFormatConverter.FormatSeconds(seconds);
 
@@ -492,22 +734,80 @@ public sealed partial class MainWindow : Window
         {
             var delta = e.GetCurrentPoint(slider).Properties.MouseWheelDelta;
             double step = 2.0; // standard: 2%
-            
+
             var ctrlState = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control);
             if (ctrlState.HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down))
             {
                 step = 0.5; // fine adjustment: 0.5%
             }
-            
+
             double change = (delta > 0) ? step : -step;
             slider.Value = Math.Clamp(slider.Value + change, 0, 100);
             e.Handled = true;
         }
     }
 
+    private void UpdatePlaybackSeekTooltip(Slider? slider, double? cursorX = null)
+    {
+        if (slider == null)
+        {
+            return;
+        }
+
+        if (ViewModel.DurationSeconds <= 0)
+        {
+            _playbackSliderTooltipText.Text = "No track loaded";
+            _playbackSliderTooltip.IsOpen = false;
+            return;
+        }
+
+        double target;
+        if (ViewModel.IsDragging)
+        {
+            target = Math.Clamp(slider.Value, 0.0, ViewModel.DurationSeconds);
+        }
+        else if (cursorX.HasValue && slider.ActualWidth > 0)
+        {
+            double ratio = Math.Clamp(cursorX.Value / slider.ActualWidth, 0.0, 1.0);
+            target = ratio * ViewModel.DurationSeconds;
+        }
+        else
+        {
+            target = Math.Clamp(slider.Value, 0.0, ViewModel.DurationSeconds);
+        }
+
+        _playbackSliderTooltipText.Text = $"Seek to {FormatSeconds(target)} / {FormatSeconds(ViewModel.DurationSeconds)}";
+    }
+
+    private void PlaybackSlider_PointerEntered(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (sender is Slider slider)
+        {
+            var point = e.GetCurrentPoint(slider);
+            UpdatePlaybackSeekTooltip(slider, point.Position.X);
+            _playbackSliderTooltip.IsOpen = true;
+        }
+    }
+
+    private void PlaybackSlider_PointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (sender is Slider slider)
+        {
+            var point = e.GetCurrentPoint(slider);
+            UpdatePlaybackSeekTooltip(slider, point.Position.X);
+            _playbackSliderTooltip.IsOpen = true;
+        }
+    }
+
     private void PlaybackSlider_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
         ViewModel.IsDragging = true;
+        if (sender is Slider slider)
+        {
+            var point = e.GetCurrentPoint(slider);
+            UpdatePlaybackSeekTooltip(slider, point.Position.X);
+        }
+        _playbackSliderTooltip.IsOpen = true;
     }
 
     private void PlaybackSlider_PointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
@@ -515,23 +815,64 @@ public sealed partial class MainWindow : Window
         if (sender is Slider slider)
         {
             ViewModel.SeekPlaybackCommand.Execute(slider.Value);
+            UpdatePlaybackSeekTooltip(slider);
         }
         ViewModel.IsDragging = false;
+        _playbackSliderTooltip.IsOpen = false;
     }
 
     private void PlaybackSlider_PointerCaptureLost(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
+        if (ViewModel.IsDragging && sender is Slider slider)
+        {
+            ViewModel.SeekPlaybackCommand.Execute(slider.Value);
+        }
         ViewModel.IsDragging = false;
+        _playbackSliderTooltip.IsOpen = false;
     }
 
     private void PlaybackSlider_PointerCanceled(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
+        if (ViewModel.IsDragging && sender is Slider slider)
+        {
+            ViewModel.SeekPlaybackCommand.Execute(slider.Value);
+        }
         ViewModel.IsDragging = false;
+        _playbackSliderTooltip.IsOpen = false;
+    }
+
+    private void PlaybackSlider_PointerExited(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (!ViewModel.IsDragging)
+        {
+            _playbackSliderTooltip.IsOpen = false;
+        }
+    }
+
+    private void PlaybackSlider_PointerWheelChanged(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (sender is Slider slider && ViewModel.DurationSeconds > 0)
+        {
+            var delta = e.GetCurrentPoint(slider).Properties.MouseWheelDelta;
+            double step = 5.0; // 5 seconds standard step
+
+            var ctrlState = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control);
+            if (ctrlState.HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down))
+            {
+                step = 1.0; // 1 second fine-tune step
+            }
+
+            double change = (delta > 0) ? step : -step;
+            SeekPlaybackByDelta(change);
+            e.Handled = true;
+        }
     }
 
     private void PlaybackSlider_ManipulationStarted(object sender, Microsoft.UI.Xaml.Input.ManipulationStartedRoutedEventArgs e)
     {
         ViewModel.IsDragging = true;
+        UpdatePlaybackSeekTooltip(sender as Slider);
+        _playbackSliderTooltip.IsOpen = true;
     }
 
     private void PlaybackSlider_ManipulationCompleted(object sender, Microsoft.UI.Xaml.Input.ManipulationCompletedRoutedEventArgs e)
@@ -539,16 +880,74 @@ public sealed partial class MainWindow : Window
         if (sender is Slider slider)
         {
             ViewModel.SeekPlaybackCommand.Execute(slider.Value);
+            UpdatePlaybackSeekTooltip(slider);
         }
         ViewModel.IsDragging = false;
+        _playbackSliderTooltip.IsOpen = false;
     }
 
     private void PlaybackSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
-        if (sender is Slider slider && slider.FocusState == FocusState.Keyboard)
+        if (sender is Slider slider)
         {
-            ViewModel.SeekPlaybackCommand.Execute(slider.Value);
+            if (slider.FocusState == FocusState.Keyboard)
+            {
+                ViewModel.SeekPlaybackCommand.Execute(slider.Value);
+            }
+
+            if (ViewModel.IsDragging)
+            {
+                UpdatePlaybackSeekTooltip(slider);
+                _playbackSliderTooltip.IsOpen = true;
+            }
         }
+    }
+
+    private void PlaybackSlider_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        bool shiftDown = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift)
+            .HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
+
+        switch (e.Key)
+        {
+            case Windows.System.VirtualKey.Home:
+                ViewModel.SeekPlaybackCommand.Execute(0.0);
+                e.Handled = true;
+                break;
+            case Windows.System.VirtualKey.End:
+                ViewModel.SeekPlaybackCommand.Execute(ViewModel.DurationSeconds);
+                e.Handled = true;
+                break;
+            case Windows.System.VirtualKey.PageUp:
+                SeekPlaybackByDelta(10.0);
+                e.Handled = true;
+                break;
+            case Windows.System.VirtualKey.PageDown:
+                SeekPlaybackByDelta(-10.0);
+                e.Handled = true;
+                break;
+            case Windows.System.VirtualKey.Left when shiftDown:
+                SeekPlaybackByDelta(-1.0);
+                e.Handled = true;
+                break;
+            case Windows.System.VirtualKey.Right when shiftDown:
+                SeekPlaybackByDelta(1.0);
+                e.Handled = true;
+                break;
+            case Windows.System.VirtualKey.Left:
+                SeekPlaybackByDelta(-5.0);
+                e.Handled = true;
+                break;
+            case Windows.System.VirtualKey.Right:
+                SeekPlaybackByDelta(5.0);
+                e.Handled = true;
+                break;
+        }
+    }
+
+    private void SeekPlaybackByDelta(double deltaSeconds)
+    {
+        ViewModel.SeekPlaybackByDeltaCommand.Execute(deltaSeconds);
     }
 
     // ---- Keyboard shortcuts ----------------------------------------------
@@ -685,7 +1084,10 @@ public sealed partial class MainWindow : Window
                 }
             });
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[MainWindow] RefreshSidebarFavoritesAsync failed: {ex.Message}");
+        }
     }
 
     private void SidebarQueueFavorite_Loaded(object sender, RoutedEventArgs e)

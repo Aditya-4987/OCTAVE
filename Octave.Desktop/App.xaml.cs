@@ -17,6 +17,7 @@ using Octave.Core.Interfaces;
 using Octave.Core.Services.Playback;
 using Octave.Core.Services.Metadata;
 using Octave.Core.Models;
+using Octave.Core.Helpers;
 using Octave_Desktop.ViewModels;
 using Octave_Desktop.Services.System;
 using System.IO;
@@ -221,10 +222,57 @@ public partial class App : Application
         try
         {
             await queueService.RestoreAsync();
+            await HandleCommandLinePlaybackAsync();
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[Startup Diagnostics] Queue restore failed: {ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"[Startup Diagnostics] Queue restore / CLI launch failed: {ex.Message}");
+        }
+    }
+
+    private static async Task HandleCommandLinePlaybackAsync()
+    {
+        try
+        {
+            string[] cmdArgs = Environment.GetCommandLineArgs();
+            if (cmdArgs == null || cmdArgs.Length <= 1) return;
+
+            string? targetFilePath = null;
+            for (int i = 1; i < cmdArgs.Length; i++)
+            {
+                string arg = cmdArgs[i].Trim('"');
+                if (System.IO.File.Exists(arg) && AudioFormatRegistry.IsSupported(System.IO.Path.GetExtension(arg)))
+                {
+                    targetFilePath = arg;
+                    break;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(targetFilePath))
+            {
+                var scanner = Services.GetRequiredService<ILibraryScanner>();
+                var db = Services.GetRequiredService<SqliteDbContext>();
+                var queue = Services.GetRequiredService<IQueueService>();
+
+                string trackId = IdGenerator.FromTrackUri(targetFilePath);
+                var existingTrack = await db.GetTrackByIdAsync(trackId);
+                if (existingTrack == null)
+                {
+                    await scanner.ScanFileAsync(targetFilePath);
+                    existingTrack = await db.GetTrackByIdAsync(trackId);
+                }
+
+                if (existingTrack != null)
+                {
+                    queue.Clear();
+                    queue.Enqueue(existingTrack);
+                    queue.PlayIndex(0);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Startup Diagnostics] HandleCommandLinePlaybackAsync failed: {ex.Message}");
         }
     }
 
@@ -254,9 +302,21 @@ public partial class App : Application
             var db = Services.GetRequiredService<SqliteDbContext>();
             var watcher = Services.GetRequiredService<ILibraryWatcherService>();
             var folders = await db.GetMonitoredFoldersAsync();
-            // INT-04: first run no longer silently claims the user's Music library.
-            // Monitoring starts only from folders the user explicitly added; the
-            // library empty-state offers the "Add your music folder" entry point.
+
+            // Self-healing: if MonitoredFolders is empty but tracks exist in the database,
+            // automatically infer and register the root folder(s) so real-time watching
+            // and startup reconciliation become active immediately.
+            if (folders.Count == 0)
+            {
+                var inferred = await db.InferMonitoredFoldersFromTracksAsync();
+                foreach (var inf in inferred)
+                {
+                    await db.AddMonitoredFolderAsync(inf);
+                    folders.Add(inf);
+                    System.Diagnostics.Debug.WriteLine($"[Startup Diagnostics] Inferred monitored folder from existing tracks: {inf}");
+                }
+            }
+
             if (folders.Count == 0)
             {
                 System.Diagnostics.Debug.WriteLine("[Startup Diagnostics] No monitored folders configured; library watching idle until the user adds one.");
@@ -265,6 +325,17 @@ public partial class App : Application
             {
                 watcher.AddMonitoredPath(folder);
             }
+
+            // Sync the registered folders with ShellViewModel so Settings UI displays them
+            try
+            {
+                var shellVm = Services.GetService<ViewModels.ShellViewModel>();
+                if (shellVm != null)
+                {
+                    _ = shellVm.LoadFoldersAsync();
+                }
+            }
+            catch { }
 
             System.Diagnostics.Debug.WriteLine("[Startup Diagnostics] Library Watcher Service: INITIALIZED");
         }

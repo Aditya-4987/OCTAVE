@@ -6,6 +6,7 @@ using Octave.Core.Interfaces;
 using Octave.Core.Models;
 using Microsoft.UI.Xaml;
 using System;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 
 namespace Octave_Desktop.Views;
@@ -95,11 +96,43 @@ public sealed partial class LibraryPage : Page
 
     public bool IsClickEnabled(bool isSelectionMode) => !isSelectionMode;
 
+    private void ClearSelectionSafely()
+    {
+        if (TracksListView.SelectionMode == ListViewSelectionMode.None)
+        {
+            return;
+        }
+
+        try
+        {
+            TracksListView.SelectedItems.Clear();
+        }
+        catch (COMException ex) when ((uint)ex.HResult == 0x8000FFFF)
+        {
+        }
+    }
+
+    private void SelectAllSafely()
+    {
+        if (TracksListView.SelectionMode == ListViewSelectionMode.None)
+        {
+            return;
+        }
+
+        try
+        {
+            TracksListView.SelectAll();
+        }
+        catch (COMException ex) when ((uint)ex.HResult == 0x8000FFFF)
+        {
+        }
+    }
+
     private void ToggleSelectionMode_Click(object sender, RoutedEventArgs e)
     {
         if (ViewModel.IsSelectionMode)
         {
-            try { TracksListView.SelectedItems?.Clear(); } catch { }
+            ClearSelectionSafely();
             ViewModel.IsSelectionMode = false;
         }
         else
@@ -110,7 +143,7 @@ public sealed partial class LibraryPage : Page
 
     private void ExitSelectionMode_Click(object sender, RoutedEventArgs e)
     {
-        try { TracksListView.SelectedItems?.Clear(); } catch { }
+        ClearSelectionSafely();
         ViewModel.IsSelectionMode = false;
     }
 
@@ -119,11 +152,11 @@ public sealed partial class LibraryPage : Page
         if (TracksListView.SelectionMode == ListViewSelectionMode.None) return;
         if (TracksListView.SelectedItems.Count >= ViewModel.Items.Count && ViewModel.Items.Count > 0)
         {
-            try { TracksListView.SelectedItems.Clear(); } catch { }
+            ClearSelectionSafely();
         }
         else
         {
-            try { TracksListView.SelectAll(); } catch { }
+            SelectAllSafely();
         }
     }
 
@@ -145,7 +178,7 @@ public sealed partial class LibraryPage : Page
         if (tracks.Count > 0)
         {
             ViewModel.PlaySelectedTracks(tracks);
-            try { TracksListView.SelectedItems?.Clear(); } catch { }
+            ClearSelectionSafely();
             ViewModel.IsSelectionMode = false;
         }
     }
@@ -156,7 +189,7 @@ public sealed partial class LibraryPage : Page
         if (tracks.Count > 0)
         {
             ViewModel.AddSelectedTracksToQueue(tracks);
-            try { TracksListView.SelectedItems?.Clear(); } catch { }
+            ClearSelectionSafely();
             ViewModel.IsSelectionMode = false;
         }
     }
@@ -186,7 +219,7 @@ public sealed partial class LibraryPage : Page
                     var item = new MenuFlyoutItem { Text = pl.Title };
                     item.Click += async (s, a) =>
                     {
-                        try { TracksListView.SelectedItems?.Clear(); } catch { }
+                        ClearSelectionSafely();
                         ViewModel.IsSelectionMode = false;
                         await ViewModel.AddSelectedTracksToPlaylistAsync(pl.Id, tracks);
                     };
@@ -222,8 +255,8 @@ public sealed partial class LibraryPage : Page
             if (result == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(input.Text))
             {
                 await ViewModel.CreatePlaylistWithTracksAsync(input.Text, tracks);
+                ClearSelectionSafely();
                 ViewModel.IsSelectionMode = false;
-                TracksListView.SelectedItems.Clear();
             }
         }
         catch (Exception ex)

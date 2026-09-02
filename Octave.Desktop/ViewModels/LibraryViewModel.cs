@@ -87,7 +87,10 @@ public partial class LibraryViewModel : ObservableObject
                     }
                 });
             }
-            catch { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[LibraryViewModel] Favorites refresh failed: {ex.Message}");
+            }
         };
         _libraryService.FavoritesChanged += _favoritesChangedHandler;
     }

@@ -98,7 +98,7 @@
                      in dark theme; swapped for the themed card surface. -->
                 <Grid CornerRadius="12" Padding="24" Margin="0,8,0,0"
                       Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                      Visibility="{x:Bind SectionVisibility(ViewModel.RecentlyPlayed.Count), Mode=OneWay}">
+                      Visibility="{x:Bind HeroVisibility(ViewModel.HeroTrack), Mode=OneWay}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
@@ -133,6 +133,15 @@
                             </Button>
                         </StackPanel>
                     </StackPanel>
+                </Grid>
+
+                <Grid Visibility="{x:Bind LoadingVisibility(ViewModel.IsLoading), Mode=OneWay}" HorizontalAlignment="Center" Margin="0,0,0,0">
+                    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="12" Padding="18,14" HorizontalAlignment="Center">
+                        <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                            <ProgressRing Width="20" Height="20" IsActive="True" />
+                            <TextBlock Text="Loading your library..." FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
                 </Grid>
             </StackPanel>
 

@@ -78,6 +78,80 @@
             <StackPanel Spacing="12" MaxWidth="980" HorizontalAlignment="Stretch" Padding="0,0,4,40">
 
                 <!-- ================================================== -->
+                <!-- AUDIO OUTPUT & DAC DEVICE                          -->
+                <!-- ================================================== -->
+                <Border Style="{StaticResource SettingsCard}">
+                    <StackPanel Spacing="10">
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="Audio Output &amp; DAC Device" Style="{StaticResource CardTitleStyle}" />
+                            <TextBlock Text="Direct hardware routing, external USB DAC detection, and real-time output resolution."
+                                       Style="{StaticResource RowDescStyle}" />
+                        </StackPanel>
+
+                        <MenuFlyoutSeparator />
+
+                        <!-- Device Selector -->
+                        <Grid ColumnDefinitions="*,Auto" Padding="0,4">
+                            <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center" Margin="0,0,12,0">
+                                <TextBlock Text="Active Output Device" Style="{StaticResource RowTitleStyle}" />
+                                <TextBlock Text="Select which sound card, external DAC, or audio endpoint receives playback."
+                                           Style="{StaticResource RowDescStyle}" />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" MinWidth="260" VerticalAlignment="Center"
+                                      ItemsSource="{x:Bind ViewModel.AvailableOutputDevices, Mode=OneWay}"
+                                      SelectedItem="{x:Bind ViewModel.SelectedOutputDevice, Mode=TwoWay}">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate x:DataType="models:AudioOutputDeviceInfo">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <FontIcon Glyph="&#xE7F6;" FontSize="13" FontFamily="Segoe MDL2 Assets"
+                                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                                            <TextBlock Text="{x:Bind Name}" FontSize="13" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                        </Grid>
+
+                        <!-- Live Hardware Output Status Badge Banner -->
+                        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1" CornerRadius="6" Padding="14,10" Margin="0,4,0,0">
+                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                    <Border Background="#1AFFFFFF" CornerRadius="4" Padding="6" VerticalAlignment="Center">
+                                        <FontIcon Glyph="&#xE8D6;" FontSize="16" FontFamily="Segoe MDL2 Assets"
+                                                  Foreground="{ThemeResource SystemControlHighlightAccentBrush}" />
+                                    </Border>
+                                    <StackPanel Spacing="2">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="{x:Bind ViewModel.OutputDeviceName, Mode=OneWay}"
+                                                       FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                            <Border Background="#2000E676" CornerRadius="3" Padding="6,1" VerticalAlignment="Center"
+                                                    Visibility="{x:Bind NotEmptyToVisibility(ViewModel.AudioQualityInfo.OutputDeviceType), Mode=OneWay}">
+                                                <TextBlock Text="{x:Bind ViewModel.AudioQualityInfo.OutputDeviceType, Mode=OneWay}"
+                                                           FontSize="10" FontWeight="Bold" Foreground="#00E676" />
+                                            </Border>
+                                        </StackPanel>
+                                        <TextBlock Text="{x:Bind ViewModel.OutputDeviceQuality, Mode=OneWay}"
+                                                   FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </StackPanel>
+                                </StackPanel>
+
+                                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                    <Border Background="#20FFD54F" CornerRadius="4" Padding="8,3"
+                                            Visibility="{x:Bind BoolToVisibility(ViewModel.IsBitMatched), Mode=OneWay}">
+                                        <StackPanel Orientation="Horizontal" Spacing="4">
+                                            <FontIcon Glyph="&#xE735;" FontSize="11" FontFamily="Segoe MDL2 Assets" Foreground="#FFD54F" />
+                                            <TextBlock Text="BIT-MATCHED DIRECT" FontSize="10" FontWeight="Bold" Foreground="#FFD54F" />
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <!-- ================================================== -->
                 <!-- PLAYBACK                                          -->
                 <!-- ================================================== -->
                 <Border Style="{StaticResource SettingsCard}">
@@ -88,20 +162,33 @@
                         <Grid ColumnDefinitions="*,Auto" Padding="0,8">
                             <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
                                 <TextBlock Text="Sleep timer" Style="{StaticResource RowTitleStyle}" />
-                                <TextBlock Text="Automatically pause playback after the chosen interval."
+                                <TextBlock Text="Automatically pause playback with gentle volume fade-out after the chosen interval."
                                            Style="{StaticResource RowDescStyle}" />
-                                <TextBlock Text="{x:Bind ViewModel.SleepTimerStatus, Mode=OneWay}"
-                                           FontSize="12" Foreground="{ThemeResource SystemControlHighlightAccentBrush}"
-                                           Visibility="{x:Bind StatusVisibleWhenActive(ViewModel.SleepTimerStatus), Mode=OneWay}" />
+                                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0"
+                                            Visibility="{x:Bind StatusVisibleWhenActive(ViewModel.SleepTimerStatus), Mode=OneWay}">
+                                    <FontIcon Glyph="&#xEC46;" FontSize="12" FontFamily="Segoe MDL2 Assets"
+                                              Foreground="{ThemeResource SystemControlHighlightAccentBrush}" VerticalAlignment="Center" />
+                                    <TextBlock Text="{x:Bind ViewModel.SleepTimerStatus, Mode=OneWay}"
+                                               FontSize="12" FontWeight="SemiBold"
+                                               Foreground="{ThemeResource SystemControlHighlightAccentBrush}"
+                                               VerticalAlignment="Center" />
+                                    <Button Content="Cancel" Command="{x:Bind ViewModel.CancelSleepTimerCommand}"
+                                            Padding="8,2" FontSize="11" Margin="8,0,0,0" VerticalAlignment="Center" />
+                                </StackPanel>
                             </StackPanel>
-                            <ComboBox Grid.Column="1" MinWidth="130" SelectedIndex="0"
+                            <ComboBox x:Name="SleepTimerCombo" Grid.Column="1" MinWidth="170" SelectedIndex="0"
                                       VerticalAlignment="Center" Margin="12,0,0,0"
                                       SelectionChanged="SleepTimerCombo_SelectionChanged">
-                                <ComboBoxItem Content="Off" />
-                                <ComboBoxItem Content="15 minutes" />
-                                <ComboBoxItem Content="30 minutes" />
-                                <ComboBoxItem Content="45 minutes" />
-                                <ComboBoxItem Content="60 minutes" />
+                                <ComboBoxItem Content="Off" Tag="Off" />
+                                <ComboBoxItem Content="End of current track" Tag="EndOfTrack" />
+                                <ComboBoxItem Content="5 minutes" Tag="5" />
+                                <ComboBoxItem Content="10 minutes" Tag="10" />
+                                <ComboBoxItem Content="15 minutes" Tag="15" />
+                                <ComboBoxItem Content="30 minutes" Tag="30" />
+                                <ComboBoxItem Content="45 minutes" Tag="45" />
+                                <ComboBoxItem Content="1 hour" Tag="60" />
+                                <ComboBoxItem Content="1.5 hours" Tag="90" />
+                                <ComboBoxItem Content="2 hours" Tag="120" />
                             </ComboBox>
                         </Grid>
                         <MenuFlyoutSeparator />
@@ -154,11 +241,49 @@
                         </StackPanel>
                         <MenuFlyoutSeparator />
 
-                        <!-- Background Artwork Blur & Tint -->
+                        <!-- ============================================== -->
+                        <!-- Background & Ambient Appearance Settings       -->
+                        <!-- ============================================== -->
+
+                        <!-- System Backdrop Material -->
                         <Grid ColumnDefinitions="*,Auto" Padding="0,8">
                             <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center" Margin="0,0,12,0">
-                                <TextBlock Text="Background artwork blur &amp; tint" Style="{StaticResource RowTitleStyle}" />
-                                <TextBlock Text="Adjust the backdrop blur and opacity intensity of the ambient album artwork."
+                                <TextBlock Text="Backdrop material style" Style="{StaticResource RowTitleStyle}" />
+                                <TextBlock Text="Select the native desktop composition material used behind the window."
+                                           Style="{StaticResource RowDescStyle}" />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" Width="180" VerticalAlignment="Center"
+                                      SelectedIndex="{x:Bind ViewModel.BackdropMaterialIndex, Mode=TwoWay}">
+                                <ComboBoxItem Content="Mica (Standard)" />
+                                <ComboBoxItem Content="Mica Alt (Deep)" />
+                                <ComboBoxItem Content="Desktop Acrylic" />
+                                <ComboBoxItem Content="Solid Dark" />
+                            </ComboBox>
+                        </Grid>
+                        <MenuFlyoutSeparator />
+
+                        <!-- Album Artwork Opacity -->
+                        <Grid ColumnDefinitions="*,Auto" Padding="0,8">
+                            <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center" Margin="0,0,12,0">
+                                <TextBlock Text="Album artwork opacity" Style="{StaticResource RowTitleStyle}" />
+                                <TextBlock Text="Base visibility of the album artwork (0% = hidden, 100% = fully visible)."
+                                           Style="{StaticResource RowDescStyle}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                <Slider Width="200" Minimum="0" Maximum="100" StepFrequency="1"
+                                        Value="{x:Bind ViewModel.BackgroundArtworkOpacityPercent, Mode=TwoWay}" VerticalAlignment="Center" />
+                                <TextBlock VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorTertiaryBrush}" FontSize="13" Width="45" TextAlignment="Right">
+                                    <Run Text="{x:Bind ViewModel.BackgroundArtworkOpacityPercent, Mode=OneWay}" /><Run Text="%" />
+                                </TextBlock>
+                            </StackPanel>
+                        </Grid>
+                        <MenuFlyoutSeparator />
+
+                        <!-- Frosted Blur Intensity -->
+                        <Grid ColumnDefinitions="*,Auto" Padding="0,8">
+                            <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center" Margin="0,0,12,0">
+                                <TextBlock Text="Frosted blur intensity" Style="{StaticResource RowTitleStyle}" />
+                                <TextBlock Text="Frosted glass blur over the artwork (0% = crystal clear &amp; sharp, 100% = heavy frosted blur)."
                                            Style="{StaticResource RowDescStyle}" />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
@@ -168,6 +293,53 @@
                                     <Run Text="{x:Bind ViewModel.BackgroundBlurPercent, Mode=OneWay}" /><Run Text="%" />
                                 </TextBlock>
                             </StackPanel>
+                        </Grid>
+                        <MenuFlyoutSeparator />
+
+                        <!-- Black Tint & Dimness -->
+                        <Grid ColumnDefinitions="*,Auto" Padding="0,8">
+                            <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center" Margin="0,0,12,0">
+                                <TextBlock Text="Black tint &amp; dimness" Style="{StaticResource RowTitleStyle}" />
+                                <TextBlock Text="Dark overlay covering the artwork (0% = vivid natural colors, 100% = solid black covering artwork)."
+                                           Style="{StaticResource RowDescStyle}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                <Slider Width="200" Minimum="0" Maximum="100" StepFrequency="1"
+                                        Value="{x:Bind ViewModel.BackgroundTintPercent, Mode=TwoWay}" VerticalAlignment="Center" />
+                                <TextBlock VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorTertiaryBrush}" FontSize="13" Width="45" TextAlignment="Right">
+                                    <Run Text="{x:Bind ViewModel.BackgroundTintPercent, Mode=OneWay}" /><Run Text="%" />
+                                </TextBlock>
+                            </StackPanel>
+                        </Grid>
+                        <MenuFlyoutSeparator />
+
+                        <!-- Vignette / Edge Depth -->
+                        <Grid ColumnDefinitions="*,Auto" Padding="0,8">
+                            <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center" Margin="0,0,12,0">
+                                <TextBlock Text="Edge vignette &amp; contrast framing" Style="{StaticResource RowTitleStyle}" />
+                                <TextBlock Text="Cinematic edge darkening (0% = none, 100% = deep top/bottom framing for text contrast)."
+                                           Style="{StaticResource RowDescStyle}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                <Slider Width="200" Minimum="0" Maximum="100" StepFrequency="1"
+                                        Value="{x:Bind ViewModel.BackgroundVignettePercent, Mode=TwoWay}" VerticalAlignment="Center" />
+                                <TextBlock VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorTertiaryBrush}" FontSize="13" Width="45" TextAlignment="Right">
+                                    <Run Text="{x:Bind ViewModel.BackgroundVignettePercent, Mode=OneWay}" /><Run Text="%" />
+                                </TextBlock>
+                            </StackPanel>
+                        </Grid>
+                        <MenuFlyoutSeparator />
+
+                        <!-- Reset Background Settings Action -->
+                        <Grid ColumnDefinitions="*,Auto" Padding="0,8">
+                            <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center" Margin="0,0,12,0">
+                                <TextBlock Text="Reset backdrop settings" Style="{StaticResource RowTitleStyle}" />
+                                <TextBlock Text="Restore all ambient background and backdrop sliders to default values."
+                                           Style="{StaticResource RowDescStyle}" />
+                            </StackPanel>
+                            <Button Grid.Column="1" Content="Reset to Defaults"
+                                    Command="{x:Bind ViewModel.ResetBackgroundSettingsCommand}"
+                                    VerticalAlignment="Center" />
                         </Grid>
                     </StackPanel>
                 </Border>
@@ -214,26 +386,38 @@
                                     <StackPanel Width="50" HorizontalAlignment="Center">
                                         <TextBlock Text="{x:Bind Gain, Mode=OneWay, Converter={StaticResource DbFormatConverter}}"
                                                    FontSize="12" Foreground="{ThemeResource SystemControlHighlightAccentBrush}"
-                                                   HorizontalAlignment="Center" Margin="0,0,0,8" />
+                                                   HorizontalAlignment="Center" Margin="0,0,0,8"
+                                                   ToolTipService.ToolTip="Double-click to reset to 0 dB"
+                                                   DoubleTapped="EqBand_DoubleTapped" />
                                         <Slider Orientation="Vertical" Height="200" Minimum="-15" Maximum="15" StepFrequency="0.5"
                                                 Value="{x:Bind Gain, Mode=TwoWay}" HorizontalAlignment="Center"
-                                                IsThumbToolTipEnabled="False" />
+                                                IsThumbToolTipEnabled="False"
+                                                DoubleTapped="EqBand_DoubleTapped"
+                                                ToolTipService.ToolTip="{x:Bind Gain, Mode=OneWay, Converter={StaticResource DbFormatConverter}}" />
                                         <TextBlock Text="{x:Bind Label}" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                                   HorizontalAlignment="Center" Margin="0,10,0,0" />
+                                                   HorizontalAlignment="Center" Margin="0,10,0,0"
+                                                   ToolTipService.ToolTip="Double-click to reset to 0 dB"
+                                                   DoubleTapped="EqBand_DoubleTapped" />
                                     </StackPanel>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
 
-                        <!-- UI-ST-03: presets show which one is active (check glyph +
-                             caption); hand-tuning any band flips the caption to Custom. -->
+                        <!-- Presets with fixed encoding and full genre options -->
                         <StackPanel Spacing="8" Margin="0,8,0,8">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <TextBlock Text="Presets â€” active:" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
-                                <TextBlock Text="{x:Bind ViewModel.ActivePresetName, Mode=OneWay}"
-                                           FontSize="12" FontWeight="Bold"
-                                           Foreground="{ThemeResource SystemControlHighlightAccentBrush}" VerticalAlignment="Center" />
-                            </StackPanel>
+                            <Grid ColumnDefinitions="*,Auto">
+                                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                    <TextBlock Text="Presets — active:" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
+                                    <TextBlock Text="{x:Bind ViewModel.ActivePresetName, Mode=OneWay}"
+                                               FontSize="12" FontWeight="Bold"
+                                               Foreground="{ThemeResource SystemControlHighlightAccentBrush}" VerticalAlignment="Center" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Reset to Flat"
+                                        Command="{x:Bind ViewModel.ResetEqToFlatCommand}"
+                                        Padding="10,4" FontSize="11" />
+                            </Grid>
+                            
+                            <!-- Row 1 Presets -->
                             <StackPanel Orientation="Horizontal" Spacing="8">
                                 <Button Command="{x:Bind ViewModel.EqPresetCommand}" CommandParameter="Flat">
                                     <StackPanel Orientation="Horizontal" Spacing="6">
@@ -254,6 +438,45 @@
                                         <FontIcon Glyph="&#xE73E;" FontSize="12" FontFamily="Segoe MDL2 Assets"
                                                   Visibility="{x:Bind PresetCheckVisible('TrebleBoost', ViewModel.ActivePresetName), Mode=OneWay}" />
                                         <TextBlock Text="Treble Boost" />
+                                    </StackPanel>
+                                </Button>
+                                <Button Command="{x:Bind ViewModel.EqPresetCommand}" CommandParameter="Rock">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <FontIcon Glyph="&#xE73E;" FontSize="12" FontFamily="Segoe MDL2 Assets"
+                                                  Visibility="{x:Bind PresetCheckVisible('Rock', ViewModel.ActivePresetName), Mode=OneWay}" />
+                                        <TextBlock Text="Rock" />
+                                    </StackPanel>
+                                </Button>
+                                <Button Command="{x:Bind ViewModel.EqPresetCommand}" CommandParameter="Pop">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <FontIcon Glyph="&#xE73E;" FontSize="12" FontFamily="Segoe MDL2 Assets"
+                                                  Visibility="{x:Bind PresetCheckVisible('Pop', ViewModel.ActivePresetName), Mode=OneWay}" />
+                                        <TextBlock Text="Pop" />
+                                    </StackPanel>
+                                </Button>
+                                <Button Command="{x:Bind ViewModel.EqPresetCommand}" CommandParameter="Jazz">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <FontIcon Glyph="&#xE73E;" FontSize="12" FontFamily="Segoe MDL2 Assets"
+                                                  Visibility="{x:Bind PresetCheckVisible('Jazz', ViewModel.ActivePresetName), Mode=OneWay}" />
+                                        <TextBlock Text="Jazz" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+
+                            <!-- Row 2 Presets -->
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button Command="{x:Bind ViewModel.EqPresetCommand}" CommandParameter="Classical">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <FontIcon Glyph="&#xE73E;" FontSize="12" FontFamily="Segoe MDL2 Assets"
+                                                  Visibility="{x:Bind PresetCheckVisible('Classical', ViewModel.ActivePresetName), Mode=OneWay}" />
+                                        <TextBlock Text="Classical" />
+                                    </StackPanel>
+                                </Button>
+                                <Button Command="{x:Bind ViewModel.EqPresetCommand}" CommandParameter="HipHop">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <FontIcon Glyph="&#xE73E;" FontSize="12" FontFamily="Segoe MDL2 Assets"
+                                                  Visibility="{x:Bind PresetCheckVisible('HipHop', ViewModel.ActivePresetName), Mode=OneWay}" />
+                                        <TextBlock Text="Hip Hop" />
                                     </StackPanel>
                                 </Button>
                                 <Button Command="{x:Bind ViewModel.EqPresetCommand}" CommandParameter="Vocal">

@@ -319,4 +319,30 @@ public class SqliteDbContextTests : IDisposable
         var searchResults = await _dbContext.SearchLibraryAsync("Track Clear");
         Assert.Empty(searchResults.Tracks);
     }
+
+    [Fact]
+    public async Task InferMonitoredFoldersFromTracksAsync_DiscoversParentDirectoryFromExistingTracks()
+    {
+        string tempMusicDir = Path.Combine(Path.GetTempPath(), "InferTest_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempMusicDir);
+        try
+        {
+            string trackPath1 = Path.Combine(tempMusicDir, "song1.mp3");
+            string trackPath2 = Path.Combine(tempMusicDir, "SubDir", "song2.mp3");
+            Directory.CreateDirectory(Path.Combine(tempMusicDir, "SubDir"));
+
+            var track1 = new Track("inf1", "Infer Song 1", "ar1", "Artist", "al1", "Album", 180, trackPath1, 1, 2024, DateTime.UtcNow);
+            var track2 = new Track("inf2", "Infer Song 2", "ar1", "Artist", "al1", "Album", 180, trackPath2, 2, 2024, DateTime.UtcNow);
+            await _dbContext.UpsertTrackAsync(track1);
+            await _dbContext.UpsertTrackAsync(track2);
+
+            var inferred = await _dbContext.InferMonitoredFoldersFromTracksAsync();
+            Assert.NotEmpty(inferred);
+            Assert.Contains(inferred, f => tempMusicDir.StartsWith(f, StringComparison.OrdinalIgnoreCase) || f.StartsWith(tempMusicDir, StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            try { Directory.Delete(tempMusicDir, true); } catch { }
+        }
+    }
 }

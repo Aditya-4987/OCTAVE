@@ -54,12 +54,13 @@ public class ArtworkPathConverter : IValueConverter
         // SourceContexts cleans itself up with its images.
     }
 
-    public object Convert(object value, Type targetType, object parameter, string language)
+    public object? Convert(object value, Type targetType, object parameter, string language)
     {
         string parameterString = parameter as string ?? string.Empty;
         try
         {
-            return GetImageAtScale(value as string, parameterString, ResolveScale(ScaleProvider));
+            string? artworkUrl = value as string;
+            return GetImageAtScale(artworkUrl, parameterString, ResolveScale(ScaleProvider));
         }
         catch (Exception ex)
         {
@@ -87,7 +88,10 @@ public class ArtworkPathConverter : IValueConverter
                 return App.MainWindowInstance.Content.XamlRoot.RasterizationScale;
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[ArtworkPathConverter] ResolveScale failed: {ex.Message}");
+        }
         return 1.0;
     }
 

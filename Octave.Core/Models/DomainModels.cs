@@ -197,6 +197,16 @@ public record SearchSuggestion(string Title, EntityType Type, string Id);
 // A cluster of tracks that appear to be the same composition across formats.
 public record DuplicateGroup(string Title, string ArtistName, System.Collections.Generic.List<Track> Tracks);
 
+public record AudioOutputDeviceInfo(
+    int Index,
+    string Id,
+    string Name,
+    string Driver,
+    string DeviceType,
+    bool IsDefault,
+    bool IsEnabled
+);
+
 public record AudioQualityDetails(
     string StreamQuality,
     string CodecFormat,
@@ -208,5 +218,8 @@ public record AudioQualityDetails(
     string QualityBadgeType,
     string OutputDeviceName,
     string OutputDeviceQuality,
-    string DspStatus
+    string DspStatus,
+    string OutputDeviceType = "Audio Endpoint",
+    bool IsBitMatched = false,
+    int? BitrateKbps = null
 );

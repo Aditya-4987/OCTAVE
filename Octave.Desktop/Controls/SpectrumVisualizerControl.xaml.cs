@@ -10,17 +10,17 @@ namespace Octave.Desktop.Controls;
 
 public sealed partial class SpectrumVisualizerControl : UserControl
 {
-    private const int BarCount = 36;
+    private const int BarCount = 48;
     private readonly List<Rectangle> _bars = new();
-    private readonly Brush _unplayedBrush = new SolidColorBrush(Color.FromArgb(50, 255, 255, 255));
+    private Brush _unplayedBrush = new SolidColorBrush(Color.FromArgb(60, 160, 160, 160));
     private Brush? _accentBrush;
 
-    public double BaselineOffset { get; set; } = 10;
+    public bool IsCenteredWaveform { get; set; } = false;
+    public double BaselineOffset { get; set; } = 8;
 
     // HLP-01: UpdateSpectrum mutates UI-thread-affine properties (bar.Height,
     // Canvas.SetTop, bar.Fill) but its data source (FFT frames) can arrive from a
-    // background thread. The control now owns the marshaling contract itself
-    // instead of trusting each call site to remember.
+    // background thread. The control owns the marshaling contract itself.
     private readonly Microsoft.UI.Dispatching.DispatcherQueue _dispatcher =
         Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
 
@@ -28,11 +28,24 @@ public sealed partial class SpectrumVisualizerControl : UserControl
     {
         InitializeComponent();
         Loaded += SpectrumVisualizerControl_Loaded;
+        ActualThemeChanged += SpectrumVisualizerControl_ActualThemeChanged;
     }
 
     private void SpectrumVisualizerControl_Loaded(object sender, RoutedEventArgs e)
     {
-        if (Resources.TryGetValue("SystemControlHighlightAccentBrush", out var accentObj) && accentObj is Brush b)
+        RefreshBrushes();
+        EnsureBarsCreated();
+        UpdateBarLayout();
+    }
+
+    private void SpectrumVisualizerControl_ActualThemeChanged(FrameworkElement sender, object args)
+    {
+        RefreshBrushes();
+    }
+
+    private void RefreshBrushes()
+    {
+        if (Application.Current.Resources.TryGetValue("SystemControlHighlightAccentBrush", out var accentObj) && accentObj is Brush b)
         {
             _accentBrush = b;
         }
@@ -41,8 +54,14 @@ public sealed partial class SpectrumVisualizerControl : UserControl
             _accentBrush = (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"];
         }
 
-        EnsureBarsCreated();
-        UpdateBarLayout();
+        if (Application.Current.Resources.TryGetValue("TextFillColorTertiaryBrush", out var tertiaryObj) && tertiaryObj is Brush tb)
+        {
+            _unplayedBrush = tb;
+        }
+        else
+        {
+            _unplayedBrush = new SolidColorBrush(Color.FromArgb(60, 160, 160, 160));
+        }
     }
 
     private void WaveformCanvas_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -63,8 +82,8 @@ public sealed partial class SpectrumVisualizerControl : UserControl
             {
                 Width = 2.0,
                 Height = 2.0,
-                RadiusX = 1.0,
-                RadiusY = 1.0,
+                RadiusX = 1.5,
+                RadiusY = 1.5,
                 Fill = _unplayedBrush
             };
 
@@ -84,7 +103,8 @@ public sealed partial class SpectrumVisualizerControl : UserControl
 
         double spacing = 2.0;
         double totalSpacing = spacing * (BarCount - 1);
-        double barWidth = Math.Max(1.0, (canvasWidth - totalSpacing) / BarCount);
+        double barWidth = Math.Max(1.5, (canvasWidth - totalSpacing) / BarCount);
+        double centerY = canvasHeight / 2.0;
         double baseline = canvasHeight - BaselineOffset;
 
         for (int i = 0; i < _bars.Count; i++)
@@ -93,7 +113,15 @@ public sealed partial class SpectrumVisualizerControl : UserControl
             bar.Width = barWidth;
             double left = i * (barWidth + spacing);
             Canvas.SetLeft(bar, left);
-            Canvas.SetTop(bar, baseline - bar.Height);
+
+            if (IsCenteredWaveform)
+            {
+                Canvas.SetTop(bar, centerY - (bar.Height / 2.0));
+            }
+            else
+            {
+                Canvas.SetTop(bar, baseline - bar.Height);
+            }
         }
     }
 
@@ -118,8 +146,9 @@ public sealed partial class SpectrumVisualizerControl : UserControl
         _accentBrush ??= (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"];
         Brush activeAccent = _accentBrush;
         double clampedRatio = Math.Clamp(progressRatio, 0.0, 1.0);
+        double centerY = canvasHeight / 2.0;
         double baseline = canvasHeight - BaselineOffset;
-        double maxAvailableHeight = Math.Max(2.0, canvasHeight - BaselineOffset);
+        double maxAvailableHeight = IsCenteredWaveform ? Math.Max(4.0, canvasHeight - 2.0) : Math.Max(2.0, canvasHeight - BaselineOffset);
 
         for (int i = 0; i < _bars.Count; i++)
         {
@@ -128,10 +157,22 @@ public sealed partial class SpectrumVisualizerControl : UserControl
 
             var bar = _bars[i];
             bar.Height = barHeight;
-            Canvas.SetTop(bar, baseline - barHeight); // Rises upwards (+ve gain) precisely from baseline
+
+            if (IsCenteredWaveform)
+            {
+                Canvas.SetTop(bar, centerY - (barHeight / 2.0));
+            }
+            else
+            {
+                Canvas.SetTop(bar, baseline - barHeight);
+            }
 
             double barFraction = (double)i / _bars.Count;
-            bar.Fill = (barFraction <= clampedRatio) ? activeAccent : _unplayedBrush;
+            Brush targetBrush = (barFraction <= clampedRatio) ? activeAccent : _unplayedBrush;
+            if (!ReferenceEquals(bar.Fill, targetBrush))
+            {
+                bar.Fill = targetBrush;
+            }
         }
     }
 
@@ -139,16 +180,28 @@ public sealed partial class SpectrumVisualizerControl : UserControl
     {
         if (_bars.Count == 0) return;
         double canvasHeight = WaveformCanvas.ActualHeight;
+        double centerY = canvasHeight / 2.0;
         double baseline = canvasHeight - BaselineOffset;
+
         for (int i = 0; i < _bars.Count; i++)
         {
             var bar = _bars[i];
             bar.Height = 2.0;
             if (canvasHeight > 0)
             {
-                Canvas.SetTop(bar, baseline - 2.0);
+                if (IsCenteredWaveform)
+                {
+                    Canvas.SetTop(bar, centerY - 1.0);
+                }
+                else
+                {
+                    Canvas.SetTop(bar, baseline - 2.0);
+                }
             }
-            bar.Fill = _unplayedBrush;
+            if (!ReferenceEquals(bar.Fill, _unplayedBrush))
+            {
+                bar.Fill = _unplayedBrush;
+            }
         }
     }
 }

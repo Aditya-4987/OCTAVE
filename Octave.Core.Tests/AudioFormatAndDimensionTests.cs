@@ -59,4 +59,46 @@ public class AudioFormatAndDimensionTests
             if (File.Exists(tempPath)) File.Delete(tempPath);
         }
     }
+
+    [Fact]
+    public void ImageDimensionReader_CorruptedLengthReturnsNull()
+    {
+        // JPEG header FF D8 FF E0 with 0 segment length (corrupted)
+        byte[] corruptedJpeg = new byte[] { 0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x00 };
+        string tempPath = Path.Combine(Path.GetTempPath(), $"test_corrupt_{Guid.NewGuid():N}.jpg");
+        try
+        {
+            File.WriteAllBytes(tempPath, corruptedJpeg);
+            int? width = ImageDimensionReader.TryReadWidth(tempPath);
+            Assert.Null(width);
+        }
+        finally
+        {
+            if (File.Exists(tempPath)) File.Delete(tempPath);
+        }
+    }
+
+    [Fact]
+    public async Task ArtworkCacheManager_MapsWebpAndGifCorrectly()
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), $"art_test_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var manager = new Octave.Core.Services.Metadata.ArtworkCacheManager(tempDir);
+            byte[] dummy = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 };
+
+            string? tokenWebp = await manager.CacheBytesAsync(dummy, "image/webp");
+            Assert.NotNull(tokenWebp);
+            Assert.EndsWith(".webp", tokenWebp);
+
+            string? tokenGif = await manager.CacheBytesAsync(dummy, "image/gif");
+            Assert.NotNull(tokenGif);
+            Assert.EndsWith(".gif", tokenGif);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+        }
+    }
 }

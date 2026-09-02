@@ -41,14 +41,51 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
         
-        <!-- Ambient Album Artwork Background -->
+        <!-- Decoupled 4-Layer Ambient Background -->
         <Grid Grid.RowSpan="3">
-            <Image Source="{Binding ViewModel.CurrentArtworkUrl, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Background}" Stretch="UniformToFill" Opacity="0.35" ImageOpened="BackgroundImage_ImageOpened" />
-            <Border>
+            <!-- Layer 1: Ambient Album Artwork Container (dual-buffer crossfade) -->
+            <Grid x:Name="BackgroundArtworkContainer" Opacity="{x:Bind ViewModel.BackgroundArtworkOpacity, Mode=OneWay}">
+                <Image x:Name="BackgroundArtworkImageA" Stretch="UniformToFill" Opacity="1.0" />
+                <Image x:Name="BackgroundArtworkImageB" Stretch="UniformToFill" Opacity="0.0" />
+            </Grid>
+
+            <!-- Layer 2: Frosted Glass Blur Overlay (pure black tint, eliminates milky grey haze) -->
+            <Border Opacity="{x:Bind ViewModel.BackgroundBlurOpacity, Mode=OneWay}" IsHitTestVisible="False">
                 <Border.Background>
-                    <AcrylicBrush TintColor="{ThemeResource SystemAltHighColor}" TintOpacity="{Binding ViewModel.BackgroundTintOpacity, FallbackValue=0.85}" FallbackColor="Transparent" />
+                    <AcrylicBrush TintColor="#000000" TintOpacity="0.15" FallbackColor="#000000" />
                 </Border.Background>
             </Border>
+
+            <!-- Layer 3: Black Tint & Dimness Overlay (0% = bright vivid colors, 100% = solid black covering art) -->
+            <Border Background="#000000" Opacity="{x:Bind ViewModel.BackgroundTintOpacity, Mode=OneWay}" IsHitTestVisible="False" />
+
+            <!-- Layer 4: Pure Black Edge Vignette / Contrast Framing (no grey or white interpolation) -->
+            <Grid Opacity="{x:Bind ViewModel.BackgroundVignetteOpacity, Mode=OneWay}" IsHitTestVisible="False">
+                <!-- Top & Bottom Deep Black Framing -->
+                <Border>
+                    <Border.Background>
+                        <LinearGradientBrush StartPoint="0.5,0" EndPoint="0.5,1">
+                            <GradientStop Color="#F8000000" Offset="0.0" />
+                            <GradientStop Color="#80000000" Offset="0.15" />
+                            <GradientStop Color="#00000000" Offset="0.35" />
+                            <GradientStop Color="#00000000" Offset="0.65" />
+                            <GradientStop Color="#A0000000" Offset="0.85" />
+                            <GradientStop Color="#FC000000" Offset="1.0" />
+                        </LinearGradientBrush>
+                    </Border.Background>
+                </Border>
+                <!-- Left & Right Black Edge Vignette -->
+                <Border>
+                    <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
+                            <GradientStop Color="#B0000000" Offset="0.0" />
+                            <GradientStop Color="#00000000" Offset="0.15" />
+                            <GradientStop Color="#00000000" Offset="0.85" />
+                            <GradientStop Color="#B0000000" Offset="1.0" />
+                        </LinearGradientBrush>
+                    </Border.Background>
+                </Border>
+            </Grid>
         </Grid>
 
         <TitleBar x:Name="AppTitleBar" Title="Octave.Desktop" Grid.Row="0">
@@ -512,19 +549,22 @@
                             <TextBlock Text="{x:Bind ViewModel.ArtistName, Mode=OneWay}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" MaxWidth="220" />
                             <Border Margin="0,4,0,0" HorizontalAlignment="Left" CornerRadius="4" Padding="6,2" Background="{ThemeResource LayerFillColorDefaultBrush}" ToolTipService.Placement="Top">
                                 <ToolTipService.ToolTip>
-                                    <!-- Hotfix: was {ThemeResource
-                                         SolidBackgroundFillColorDefaultBrush},
-                                         which is NOT a WinUI theme-dictionary
-                                         key and crashed at window load; the
-                                         tertiary solid fill is the existing
-                                         equivalent of the old #18181A surface. -->
                                     <ToolTip Background="{ThemeResource SolidBackgroundFillColorTertiaryBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="10" Padding="14" MaxWidth="450">
                                         <StackPanel Spacing="8">
                                             <!-- Header -->
-                                            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                                                <FontIcon Glyph="&#xE93E;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#00E676" />
-                                                <TextBlock Text="AUDIO PIPELINE &amp; STREAM QUALITY" FontSize="10" FontWeight="Bold" Foreground="{ThemeResource TextFillColorTertiaryBrush}" CharacterSpacing="50" />
-                                            </StackPanel>
+                                            <Grid ColumnDefinitions="*,Auto">
+                                                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                                    <FontIcon Glyph="&#xE93E;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#00E676" />
+                                                    <TextBlock Text="AUDIO PIPELINE &amp; STREAM QUALITY" FontSize="10" FontWeight="Bold" Foreground="{ThemeResource TextFillColorTertiaryBrush}" CharacterSpacing="50" />
+                                                </StackPanel>
+                                                <Border Grid.Column="1" Background="#26FFD54F" BorderBrush="#80FFD54F" BorderThickness="1" CornerRadius="3" Padding="6,2"
+                                                        Visibility="{x:Bind BoolToVisibility(ViewModel.IsBitMatched), Mode=OneWay}">
+                                                    <StackPanel Orientation="Horizontal" Spacing="4">
+                                                        <FontIcon Glyph="&#xE735;" FontFamily="Segoe MDL2 Assets" FontSize="9" Foreground="#FFD54F" />
+                                                        <TextBlock Text="BIT-MATCHED DIRECT" FontSize="9" FontWeight="Bold" Foreground="#FFD54F" />
+                                                    </StackPanel>
+                                                </Border>
+                                            </Grid>
 
                                             <MenuFlyoutSeparator Margin="0,0,0,2" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
 
@@ -534,6 +574,7 @@
                                                     <ColumnDefinition Width="*"/>
                                                 </Grid.ColumnDefinitions>
                                                 <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
                                                     <RowDefinition Height="Auto"/>
                                                     <RowDefinition Height="Auto"/>
                                                     <RowDefinition Height="Auto"/>
@@ -571,6 +612,10 @@
                                                 <!-- Output Device Name -->
                                                 <TextBlock Grid.Row="6" Grid.Column="0" Text="Active Output:" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
                                                 <TextBlock Grid.Row="6" Grid.Column="1" Text="{x:Bind ViewModel.AudioQualityInfo.OutputDeviceName, Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" MaxWidth="170" VerticalAlignment="Center" />
+
+                                                <!-- Device Category / DAC Type -->
+                                                <TextBlock Grid.Row="7" Grid.Column="0" Text="Device Category:" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Row="7" Grid.Column="1" Text="{x:Bind ViewModel.AudioQualityInfo.OutputDeviceType, Mode=OneWay}" FontSize="11" FontWeight="SemiBold" Foreground="#00E676" VerticalAlignment="Center" />
                                             </Grid>
 
                                             <MenuFlyoutSeparator Margin="0,2,0,0" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
@@ -583,8 +628,21 @@
                                         </StackPanel>
                                     </ToolTip>
                                 </ToolTipService.ToolTip>
-                                <StackPanel Orientation="Horizontal" Spacing="5">
-                                    <FontIcon Glyph="&#xE93E;" FontFamily="Segoe MDL2 Assets" FontSize="10" Foreground="#00E676" VerticalAlignment="Center" />
+                                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                    <!-- Audiophile Tier Badge (HI-RES / LOSSLESS / AAC / MP3) -->
+                                    <Border Background="#20FFFFFF" BorderBrush="{x:Bind ViewModel.QualityBadgeColor, Mode=OneWay}"
+                                            BorderThickness="1" CornerRadius="3" Padding="4,1" VerticalAlignment="Center"
+                                            Visibility="{x:Bind NotEmptyToVisibility(ViewModel.QualityBadgeText), Mode=OneWay}">
+                                        <TextBlock Text="{x:Bind ViewModel.QualityBadgeText, Mode=OneWay}"
+                                                    FontSize="9" FontWeight="Bold" Foreground="{x:Bind ViewModel.QualityBadgeColor, Mode=OneWay}" VerticalAlignment="Center" />
+                                    </Border>
+
+                                    <!-- Bit-Matched Direct Indicator Star -->
+                                    <FontIcon Glyph="&#xE735;" FontFamily="Segoe MDL2 Assets" FontSize="9" Foreground="#FFD54F"
+                                                VerticalAlignment="Center" ToolTipService.ToolTip="Bit-Matched Direct Audio"
+                                                Visibility="{x:Bind BoolToVisibility(ViewModel.IsBitMatched), Mode=OneWay}" />
+
+                                    <!-- Stream Quality Text (e.g. 24-bit 96.0kHz or 320 kbps 44.1kHz) -->
                                     <TextBlock Text="{x:Bind ViewModel.StreamingQuality, Mode=OneWay}" FontSize="10" FontWeight="Medium" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Border>
@@ -603,37 +661,38 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 
                 <!-- Transport Controls -->
                 <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="24" HorizontalAlignment="Center" Margin="0,0,0,4">
                     <!-- Shuffle -->
-                    <Button Command="{x:Bind ViewModel.ToggleShuffleCommand}" Style="{StaticResource GhostIconButtonStyle}">
+                    <Button Command="{x:Bind ViewModel.ToggleShuffleCommand}" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Shuffle">
                         <FontIcon Glyph="&#xE8B1;" FontFamily="Segoe MDL2 Assets" Foreground="{x:Bind GetShuffleColor(ViewModel.IsShuffle), Mode=OneWay}" FontSize="16" />
                     </Button>
                     
                     <!-- Previous -->
-                    <Button Command="{x:Bind ViewModel.PreviousCommand}" Style="{StaticResource GhostIconButtonStyle}">
+                    <Button Command="{x:Bind ViewModel.PreviousCommand}" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Previous">
                         <FontIcon Glyph="&#xE892;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="18" />
                     </Button>
                     
                     <!-- Play / Pause (Circular) -->
                     <Grid Width="40" Height="40">
-                        <Button Command="{x:Bind ViewModel.PlayCommand}" Visibility="{x:Bind BoolToVisibilityNegation(ViewModel.IsPlaying), Mode=OneWay}" Style="{StaticResource SmallPlayButtonStyle}">
+                        <Button Command="{x:Bind ViewModel.PlayCommand}" Visibility="{x:Bind BoolToVisibilityNegation(ViewModel.IsPlaying), Mode=OneWay}" Style="{StaticResource SmallPlayButtonStyle}" ToolTipService.ToolTip="Play">
                             <FontIcon Glyph="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="16" />
                         </Button>
-                        <Button Command="{x:Bind ViewModel.PauseCommand}" Visibility="{x:Bind BoolToVisibility(ViewModel.IsPlaying), Mode=OneWay}" Style="{StaticResource SmallPlayButtonStyle}">
+                        <Button Command="{x:Bind ViewModel.PauseCommand}" Visibility="{x:Bind BoolToVisibility(ViewModel.IsPlaying), Mode=OneWay}" Style="{StaticResource SmallPlayButtonStyle}" ToolTipService.ToolTip="Pause">
                             <FontIcon Glyph="&#xE769;" FontFamily="Segoe MDL2 Assets" FontSize="16" />
                         </Button>
                     </Grid>
 
                     <!-- Next -->
-                    <Button Command="{x:Bind ViewModel.NextCommand}" Style="{StaticResource GhostIconButtonStyle}">
+                    <Button Command="{x:Bind ViewModel.NextCommand}" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Next">
                         <FontIcon Glyph="&#xE893;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="18" />
                     </Button>
 
                     <!-- Repeat -->
-                    <Button Command="{x:Bind ViewModel.CycleRepeatCommand}" Style="{StaticResource GhostIconButtonStyle}">
+                    <Button Command="{x:Bind ViewModel.CycleRepeatCommand}" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Repeat">
                         <FontIcon Glyph="{x:Bind GetRepeatGlyph(ViewModel.RepeatMode), Mode=OneWay}" FontFamily="Segoe MDL2 Assets" Foreground="{x:Bind GetRepeatColor(ViewModel.RepeatMode), Mode=OneWay}" FontSize="16" />
                     </Button>
                 </StackPanel>
@@ -647,15 +706,55 @@
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="{x:Bind FormatSeconds(ViewModel.PositionSeconds), Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Width="40" TextAlignment="Right" Margin="0,0,8,0"/>
                     <Grid Grid.Column="1" VerticalAlignment="Center">
-                        <controls:SpectrumVisualizerControl x:Name="ProgressBarVisualizer" Visibility="{x:Bind BoolToVisibility(ViewModel.IsVisualizerEnabled), Mode=OneWay}" Margin="8,0,8,8" VerticalAlignment="Center" Height="25" />
-                        <Slider x:Name="PlaybackSlider" Minimum="0" Maximum="{x:Bind ViewModel.DurationSeconds, Mode=OneWay}" Value="{x:Bind ViewModel.PositionSeconds, Mode=OneWay}" IsThumbToolTipEnabled="False" VerticalAlignment="Center" Margin="0,-8,0,-8" ValueChanged="PlaybackSlider_ValueChanged" PointerPressed="PlaybackSlider_PointerPressed" PointerReleased="PlaybackSlider_PointerReleased" PointerCaptureLost="PlaybackSlider_PointerCaptureLost" PointerCanceled="PlaybackSlider_PointerCanceled" ManipulationStarted="PlaybackSlider_ManipulationStarted" ManipulationCompleted="PlaybackSlider_ManipulationCompleted"/>
+                        <controls:SpectrumVisualizerControl x:Name="ProgressBarVisualizer" Visibility="{x:Bind BoolToVisibility(ViewModel.IsVisualizerEnabled), Mode=OneWay}" IsHitTestVisible="False" Margin="8,0,8,10" VerticalAlignment="Center" Height="25" />
+                        <Slider x:Name="PlaybackSlider" Minimum="0"
+                                Maximum="{x:Bind ViewModel.SliderMaximum, Mode=OneWay}"
+                                Value="{x:Bind ViewModel.PositionSeconds, Mode=OneWay}"
+                                IsEnabled="{x:Bind ViewModel.IsTimelineEnabled, Mode=OneWay}"
+                                StepFrequency="0.1" IsThumbToolTipEnabled="False" VerticalAlignment="Center" Margin="0,-8,0,-8"
+                                ValueChanged="PlaybackSlider_ValueChanged" PointerWheelChanged="PlaybackSlider_PointerWheelChanged" KeyDown="PlaybackSlider_KeyDown" />
                     </Grid>
                     <TextBlock Grid.Column="2" Text="{x:Bind FormatSeconds(ViewModel.DurationSeconds), Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Width="40" TextAlignment="Left" Margin="8,0,0,0"/>
                 </Grid>
+
+
             </Grid>
 
-            <!-- Column 2: Utilities (Now Playing, Queue, Lyrics, Mute, Volume) -->
+            <!-- Column 2: Utilities (Sleep Timer, Lyrics, Queue, Mini Player, Mute, Volume) -->
             <StackPanel Grid.Column="2" x:Name="ExtraControlsPanel" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Spacing="8">
+                <!-- Ambient Background Library Ingesting Indicator -->
+                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" Margin="0,0,4,0"
+                            Visibility="{x:Bind BoolToVisibility(ViewModel.IsBackgroundScanning), Mode=OneWay}">
+                    <ToolTipService.ToolTip>
+                        <ToolTip Content="{x:Bind ViewModel.BackgroundScanStatus, Mode=OneWay}" />
+                    </ToolTipService.ToolTip>
+                    <ProgressRing IsActive="{x:Bind ViewModel.IsBackgroundScanning, Mode=OneWay}" Width="14" Height="14" />
+                    <TextBlock Text="Syncing..." FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
+                </StackPanel>
+
+                <!-- Sleep Timer Quick Button & Flyout -->
+                <Button x:Name="BottomSleepTimerBtn" Style="{StaticResource GhostIconButtonStyle}">
+                    <ToolTipService.ToolTip>
+                        <ToolTip Content="{x:Bind ViewModel.SleepTimerStatus, Mode=OneWay}" />
+                    </ToolTipService.ToolTip>
+                    <FontIcon Glyph="&#xEC46;" FontFamily="Segoe MDL2 Assets"
+                              Foreground="{x:Bind GetActiveColor(ViewModel.IsSleepTimerActive), Mode=OneWay}" FontSize="16" />
+                    <Button.Flyout>
+                        <MenuFlyout Placement="Top">
+                            <MenuFlyoutItem Text="Off" Command="{x:Bind ViewModel.CancelSleepTimerCommand}" />
+                            <MenuFlyoutSeparator />
+                            <MenuFlyoutItem Text="End of current track" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="EndOfTrack" />
+                            <MenuFlyoutItem Text="5 minutes" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="5" />
+                            <MenuFlyoutItem Text="10 minutes" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="10" />
+                            <MenuFlyoutItem Text="15 minutes" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="15" />
+                            <MenuFlyoutItem Text="30 minutes" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="30" />
+                            <MenuFlyoutItem Text="45 minutes" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="45" />
+                            <MenuFlyoutItem Text="1 hour" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="60" />
+                            <MenuFlyoutItem Text="2 hours" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="120" />
+                        </MenuFlyout>
+                    </Button.Flyout>
+                </Button>
+
                 <!-- Lyrics Toggle Button -->
                 <Button x:Name="BottomLyricsBtn" Click="LyricsButton_Click" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Lyrics">
                     <FontIcon Glyph="&#xEC4F;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="16" />
@@ -672,12 +771,12 @@
                 </Button>
 
                 <!-- Mute -->
-                <Button Command="{x:Bind ViewModel.ToggleMuteCommand}" Style="{StaticResource GhostIconButtonStyle}">
+                <Button Command="{x:Bind ViewModel.ToggleMuteCommand}" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Mute">
                     <FontIcon Glyph="{x:Bind GetMuteGlyph(ViewModel.IsMuted, ViewModel.Volume), Mode=OneWay}" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="16" />
                 </Button>
 
                 <!-- Volume Slider -->
-                <Slider Minimum="0" Maximum="100" Value="{x:Bind ViewModel.Volume, Mode=TwoWay}" Width="100" VerticalAlignment="Center" Margin="0,0,16,0" PointerWheelChanged="VolumeSlider_PointerWheelChanged"/>
+                <Slider Minimum="0" Maximum="100" Value="{x:Bind ViewModel.Volume, Mode=TwoWay}" Width="100" VerticalAlignment="Center" Margin="0,0,16,0" ToolTipService.ToolTip="Volume" PointerWheelChanged="VolumeSlider_PointerWheelChanged"/>
             </StackPanel>
 
             <!-- Overflow menu for narrow windows -->

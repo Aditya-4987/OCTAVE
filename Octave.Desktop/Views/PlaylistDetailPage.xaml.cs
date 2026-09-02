@@ -7,6 +7,7 @@ using Octave_Desktop.ViewModels;
 using Octave.Core.Models;
 using Octave.Core.Interfaces;
 using System;
+using System.Runtime.InteropServices;
 
 namespace Octave_Desktop.Views;
 
@@ -70,7 +71,10 @@ public sealed partial class PlaylistDetailPage : Page
                 }
             });
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[PlaylistDetail] RefreshFavoriteIdsAsync failed: {ex.Message}");
+        }
     }
 
     private void FavoriteButton_Loaded(object sender, RoutedEventArgs e)
@@ -250,11 +254,43 @@ public sealed partial class PlaylistDetailPage : Page
     public ListViewSelectionMode ResolveSelectionMode(bool isSelectionMode) => isSelectionMode ? ListViewSelectionMode.Multiple : ListViewSelectionMode.None;
     public Thickness TrackListMargin(bool isSelectionMode) => isSelectionMode ? new Thickness(0, 52, 0, 0) : new Thickness(0);
 
+    private void ClearSelectionSafely()
+    {
+        if (TrackList.SelectionMode == ListViewSelectionMode.None)
+        {
+            return;
+        }
+
+        try
+        {
+            TrackList.SelectedItems.Clear();
+        }
+        catch (COMException ex) when ((uint)ex.HResult == 0x8000FFFF)
+        {
+        }
+    }
+
+    private void SelectAllSafely()
+    {
+        if (TrackList.SelectionMode == ListViewSelectionMode.None)
+        {
+            return;
+        }
+
+        try
+        {
+            TrackList.SelectAll();
+        }
+        catch (COMException ex) when ((uint)ex.HResult == 0x8000FFFF)
+        {
+        }
+    }
+
     private void ToggleSelectMode_Click(object sender, RoutedEventArgs e)
     {
         if (ViewModel.IsSelectionMode)
         {
-            try { TrackList.SelectedItems?.Clear(); } catch { }
+            ClearSelectionSafely();
             ViewModel.IsSelectionMode = false;
         }
         else
@@ -265,7 +301,7 @@ public sealed partial class PlaylistDetailPage : Page
 
     private void ExitSelectMode_Click(object sender, RoutedEventArgs e)
     {
-        try { TrackList.SelectedItems?.Clear(); } catch { }
+        ClearSelectionSafely();
         ViewModel.IsSelectionMode = false;
     }
 
@@ -274,11 +310,11 @@ public sealed partial class PlaylistDetailPage : Page
         if (TrackList.SelectionMode == ListViewSelectionMode.None) return;
         if (TrackList.SelectedItems.Count >= ViewModel.Tracks.Count && ViewModel.Tracks.Count > 0)
         {
-            try { TrackList.SelectedItems.Clear(); } catch { }
+            ClearSelectionSafely();
         }
         else
         {
-            try { TrackList.SelectAll(); } catch { }
+            SelectAllSafely();
         }
     }
 
@@ -300,7 +336,7 @@ public sealed partial class PlaylistDetailPage : Page
         if (tracks.Count > 0)
         {
             ViewModel.PlaySelectedTracks(tracks);
-            try { TrackList.SelectedItems?.Clear(); } catch { }
+            ClearSelectionSafely();
             ViewModel.IsSelectionMode = false;
         }
     }
@@ -311,7 +347,7 @@ public sealed partial class PlaylistDetailPage : Page
         if (tracks.Count > 0)
         {
             ViewModel.AddSelectedTracksToQueue(tracks);
-            try { TrackList.SelectedItems?.Clear(); } catch { }
+            ClearSelectionSafely();
             ViewModel.IsSelectionMode = false;
         }
     }
@@ -321,7 +357,7 @@ public sealed partial class PlaylistDetailPage : Page
         var tracks = TrackList.SelectedItems.OfType<Track>().ToList();
         if (tracks.Count > 0)
         {
-            try { TrackList.SelectedItems?.Clear(); } catch { }
+            ClearSelectionSafely();
             ViewModel.IsSelectionMode = false;
             await ViewModel.RemoveSelectedTracksAsync(tracks);
         }

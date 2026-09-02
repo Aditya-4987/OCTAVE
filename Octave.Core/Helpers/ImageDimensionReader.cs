@@ -84,6 +84,10 @@ public static class ImageDimensionReader
                 return null;
             }
             int segmentLength = (marker[2] << 8) | marker[3];
+            if (segmentLength < 2)
+            {
+                return null;
+            }
 
             // SOF0-SOF15 except DHT(C4)/DAC(CC)/RST/RST-end are frame headers.
             if (markerType >= 0xC0 && markerType <= 0xCF &&

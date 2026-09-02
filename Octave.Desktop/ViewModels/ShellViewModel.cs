@@ -61,6 +61,133 @@ public partial class ShellViewModel : ObservableObject
 
     [ObservableProperty]
     public partial Octave.Core.Models.AudioQualityDetails? AudioQualityInfo { get; set; }
+
+    public ObservableCollection<AudioOutputDeviceInfo> AvailableOutputDevices { get; } = new();
+
+    [ObservableProperty]
+    public partial AudioOutputDeviceInfo? SelectedOutputDevice { get; set; }
+
+    [ObservableProperty]
+    public partial string QualityBadgeText { get; set; } = "";
+
+    [ObservableProperty]
+    public partial string QualityBadgeColor { get; set; } = "#888888";
+
+    [ObservableProperty]
+    public partial bool IsBitMatched { get; set; } = false;
+
+    private bool _isRefreshingOutputDevices;
+
+    partial void OnSelectedOutputDeviceChanged(AudioOutputDeviceInfo? value)
+    {
+        if (_isRefreshingOutputDevices || value == null) return;
+        string currentId = _audioPlayer.CurrentOutputDeviceId ?? "__default__";
+        string newId = value.Id ?? "__default__";
+        if (!string.Equals(currentId, newId, StringComparison.OrdinalIgnoreCase))
+        {
+            _audioPlayer.SetOutputDevice(newId);
+            _ = _dbContext.SetSettingAsync("AudioOutputDeviceId", newId);
+            _ = _dbContext.SetSettingAsync("AudioOutputDeviceIndex", value.Index.ToString());
+            RefreshAudioQuality();
+        }
+    }
+
+    [RelayCommand]
+    public void RefreshOutputDevices()
+    {
+        Octave.Core.Helpers.WindowsAudioDeviceHelper.ClearCache();
+        var devices = _audioPlayer.GetAvailableOutputDevices();
+        _dispatcher.TryEnqueue(() =>
+        {
+            _isRefreshingOutputDevices = true;
+            try
+            {
+                var curSelectedId = _audioPlayer.CurrentOutputDeviceId ?? "__default__";
+
+                // Check if device list changed before mutating collection
+                bool listMatches = AvailableOutputDevices.Count == devices.Count;
+                if (listMatches)
+                {
+                    for (int i = 0; i < devices.Count; i++)
+                    {
+                        if (AvailableOutputDevices[i].Index != devices[i].Index ||
+                            !string.Equals(AvailableOutputDevices[i].Id, devices[i].Id, StringComparison.OrdinalIgnoreCase) ||
+                            !string.Equals(AvailableOutputDevices[i].Name, devices[i].Name, StringComparison.Ordinal))
+                        {
+                            listMatches = false;
+                            break;
+                        }
+                    }
+                }
+
+                if (!listMatches)
+                {
+                    AvailableOutputDevices.Clear();
+                    foreach (var d in devices)
+                    {
+                        AvailableOutputDevices.Add(d);
+                    }
+                }
+
+                AudioOutputDeviceInfo? matching = null;
+                if (!string.IsNullOrWhiteSpace(curSelectedId))
+                {
+                    matching = AvailableOutputDevices.FirstOrDefault(d => string.Equals(d.Id, curSelectedId, StringComparison.OrdinalIgnoreCase));
+                }
+
+                var target = matching
+                    ?? AvailableOutputDevices.FirstOrDefault(d => d.Index == -1)
+                    ?? AvailableOutputDevices.FirstOrDefault();
+
+                if (!ReferenceEquals(SelectedOutputDevice, target) &&
+                    (SelectedOutputDevice == null || !string.Equals(SelectedOutputDevice.Id, target?.Id, StringComparison.OrdinalIgnoreCase)))
+                {
+                    SelectedOutputDevice = target;
+                }
+            }
+            finally
+            {
+                _isRefreshingOutputDevices = false;
+            }
+
+            RefreshAudioQuality();
+        });
+    }
+
+    public void RefreshAudioQuality()
+    {
+        StreamingQuality = _audioPlayer.StreamingQuality;
+        OutputDeviceQuality = _audioPlayer.OutputDeviceQuality;
+        OutputDeviceName = _audioPlayer.OutputDeviceName;
+        var q = _audioPlayer.QualityDetails;
+        AudioQualityInfo = q;
+
+        if (q != null)
+        {
+            IsBitMatched = q.IsBitMatched;
+            QualityBadgeText = q.QualityBadgeType switch
+            {
+                "HiRes" => "HI-RES",
+                "CDQuality" => "LOSSLESS",
+                "Compressed" => q.CodecFormat.Contains("AAC") ? "AAC" : (q.CodecFormat.Contains("MP3") ? "MP3" : "COMPRESSED"),
+                _ => "AUDIO"
+            };
+
+            QualityBadgeColor = q.QualityBadgeType switch
+            {
+                "HiRes" => "#FFD54F",      // Audiophile Amber / Gold
+                "CDQuality" => "#00E676",  // Studio Lossless Green
+                "Compressed" => "#90CAF9", // Clean Cyan
+                _ => "#A0A0A0"
+            };
+        }
+        else
+        {
+            IsBitMatched = false;
+            QualityBadgeText = "";
+            QualityBadgeColor = "#A0A0A0";
+        }
+    }
     
     [ObservableProperty]
     public partial string InfoBitrate { get; set; } = "";
@@ -138,14 +265,21 @@ public partial class ShellViewModel : ObservableObject
 
             if (Math.Abs(_durationSeconds - safe) > 0.0001)
             {
-                SetProperty(ref _durationSeconds, safe);
                 if (safe <= 0 || _positionSeconds > safe)
                 {
-                    PositionSeconds = (safe <= 0) ? 0.0 : safe;
+                    _positionSeconds = 0.0;
+                    OnPropertyChanged(nameof(PositionSeconds));
                 }
+
+                SetProperty(ref _durationSeconds, safe);
+                OnPropertyChanged(nameof(SliderMaximum));
+                OnPropertyChanged(nameof(IsTimelineEnabled));
             }
         }
     }
+
+    public double SliderMaximum => DurationSeconds > 0 ? DurationSeconds : 100.0;
+    public bool IsTimelineEnabled => DurationSeconds > 0;
 
     public double Volume
     {
@@ -176,6 +310,17 @@ public partial class ShellViewModel : ObservableObject
     [ObservableProperty]
     public partial bool IsDragging { get; set; }
 
+    [ObservableProperty]
+    public partial bool IsBackgroundScanning { get; set; }
+
+    [ObservableProperty]
+    public partial string BackgroundScanStatus { get; set; } = "";
+
+    [ObservableProperty]
+    public partial double BackgroundScanProgress { get; set; } = 0.0;
+
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _scanActivityTimer;
+
     public ShellViewModel(
         ILibraryService libraryService,
         IQueueService queueService,
@@ -196,6 +341,20 @@ public partial class ShellViewModel : ObservableObject
         _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
 
         _ = LoadSettingsAsync();
+
+        _audioPlayer.OutputDeviceChanged += (s, e) =>
+        {
+            _dispatcher.TryEnqueue(RefreshAudioQuality);
+        };
+
+        Octave.Core.Helpers.WindowsAudioDeviceHelper.AudioEndpointsChanged += () =>
+        {
+            _dispatcher.TryEnqueue(() =>
+            {
+                RefreshOutputDevices();
+                RefreshAudioQuality();
+            });
+        };
 
         _queueService.PlaybackStateChanged += (s, state) =>
         {
@@ -225,6 +384,36 @@ public partial class ShellViewModel : ObservableObject
             _dispatcher.TryEnqueue(() =>
             {
                 AppendConsole($"[Ingesting] {args.FilesProcessed} files... -> {Path.GetFileName(args.CurrentProcessingFile)}");
+
+                if (args.CurrentProcessingFile == "Scan Completed" ||
+                    (args.TotalFilesFound > 0 && args.FilesProcessed >= args.TotalFilesFound))
+                {
+                    IsBackgroundScanning = false;
+                    BackgroundScanStatus = "";
+                    BackgroundScanProgress = 100.0;
+                    _scanActivityTimer?.Stop();
+                }
+                else
+                {
+                    IsBackgroundScanning = true;
+                    if (args.TotalFilesFound > 0)
+                    {
+                        BackgroundScanStatus = $"Indexing ({args.FilesProcessed}/{args.TotalFilesFound})...";
+                        BackgroundScanProgress = Math.Clamp((double)args.FilesProcessed / args.TotalFilesFound * 100.0, 0.0, 100.0);
+                    }
+                    else
+                    {
+                        BackgroundScanStatus = $"Scanning: {Path.GetFileName(args.CurrentProcessingFile)}";
+                        BackgroundScanProgress = 0.0;
+                    }
+
+                    _scanActivityTimer ??= _dispatcher.CreateTimer();
+                    _scanActivityTimer.Interval = TimeSpan.FromSeconds(2.5);
+                    _scanActivityTimer.Tick -= OnScanActivityTimeout;
+                    _scanActivityTimer.Tick += OnScanActivityTimeout;
+                    _scanActivityTimer.Stop();
+                    _scanActivityTimer.Start();
+                }
             });
         };
 
@@ -258,6 +447,13 @@ public partial class ShellViewModel : ObservableObject
 
         // Seed the queue mirror with anything already loaded (e.g. after resume).
         RefreshQueue();
+    }
+
+    private void OnScanActivityTimeout(object? sender, object e)
+    {
+        _scanActivityTimer?.Stop();
+        IsBackgroundScanning = false;
+        BackgroundScanStatus = "";
     }
 
     private void OnQueueItemsChanged(object? sender, NotifyCollectionChangedEventArgs e)
@@ -316,19 +512,23 @@ public partial class ShellViewModel : ObservableObject
     private async Task HydrateQueueArtworkAsync(List<(QueueItem Item, string AlbumId)> pending)
     {
         var albumIds = pending.Select(p => p.AlbumId).Distinct().ToList();
-        var albumMap = new Dictionary<string, string?>();
+        var albumMap = new Dictionary<string, string?>(StringComparer.Ordinal);
 
-        foreach (var albumId in albumIds)
+        try
         {
-            try
+            var albums = albumIds.Count > 0
+                ? await _libraryService.GetAlbumsByIdsAsync(albumIds)
+                : new List<Album>();
+
+            foreach (var album in albums)
             {
-                var album = await _libraryService.GetAlbumByIdAsync(albumId);
-                albumMap[albumId] = album?.ArtworkUrl;
+                albumMap[album.Id] = album.ArtworkUrl;
             }
-            catch
-            {
-                albumMap[albumId] = null;
-            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[ShellViewModel] HydrateQueueArtworkAsync failed: {ex.Message}");
+            return;
         }
 
         _dispatcher.TryEnqueue(() =>
@@ -548,43 +748,169 @@ public partial class ShellViewModel : ObservableObject
 
     // ---- Sleep timer ------------------------------------------------------
 
-    private Timer? _sleepTimer;
+    // ---- Sleep timer ------------------------------------------------------
+
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _sleepCountdownTimer;
+    private int _sleepRemainingSeconds;
+    private bool _isSleepEndOfTrack;
+    private string? _sleepTargetTrackId;
+    private float? _originalVolumeBeforeFade;
 
     [ObservableProperty]
     public partial string SleepTimerStatus { get; set; } = "Off";
 
-    [RelayCommand]
-    private void SetSleepTimer(string? minutesText)
-    {
-        _sleepTimer?.Dispose();
-        _sleepTimer = null;
+    [ObservableProperty]
+    public partial bool IsSleepTimerActive { get; set; }
 
-        if (!int.TryParse(minutesText, out int minutes) || minutes <= 0)
+    [ObservableProperty]
+    public partial string SleepTimerRemainingText { get; set; } = "";
+
+    [RelayCommand]
+    public void SetSleepTimer(string? mode)
+    {
+        CancelSleepTimer();
+
+        if (string.IsNullOrWhiteSpace(mode) || mode.Equals("Off", StringComparison.OrdinalIgnoreCase) || mode == "0")
         {
-            SleepTimerStatus = "Off";
             return;
         }
 
-        SleepTimerStatus = $"Pausing in {minutes} min";
-
-        // SHELL-01: capture the instance this callback belongs to. A stale
-        // timer's already-queued callback used to run against the FIELD - it
-        // paused playback and then disposed the user's freshly-set replacement
-        // timer. Only the still-current instance may act.
-        Timer? self = null;
-        self = new Timer(_ =>
+        if (mode.Equals("EndOfTrack", StringComparison.OrdinalIgnoreCase))
         {
-            _dispatcher.TryEnqueue(() =>
+            var track = _queueService.CurrentState.CurrentTrack;
+            if (track == null)
             {
-                if (!ReferenceEquals(self, _sleepTimer)) return;
-
-                _queueService.Pause();
                 SleepTimerStatus = "Off";
-                _sleepTimer?.Dispose();
-                _sleepTimer = null;
-            });
-        }, null, TimeSpan.FromMinutes(minutes), Timeout.InfiniteTimeSpan);
-        _sleepTimer = self;
+                return;
+            }
+
+            _isSleepEndOfTrack = true;
+            _sleepTargetTrackId = track.Id;
+            IsSleepTimerActive = true;
+
+            double remaining = Math.Max(0.0, DurationSeconds - PositionSeconds);
+            string remStr = Octave.Core.Helpers.DurationFormatter.FormatSeconds(remaining);
+            SleepTimerStatus = $"Pausing at end of track ({remStr} left)";
+            SleepTimerRemainingText = $"{remStr} left";
+
+            StartSleepCountdownTimer();
+            return;
+        }
+
+        if (int.TryParse(mode, out int minutes) && minutes > 0)
+        {
+            _isSleepEndOfTrack = false;
+            _sleepRemainingSeconds = minutes * 60;
+            IsSleepTimerActive = true;
+
+            string initialText = minutes >= 60 ? $"{minutes / 60}h {minutes % 60}m" : $"{minutes} min";
+            SleepTimerStatus = $"Pausing in {initialText}";
+            SleepTimerRemainingText = initialText;
+
+            StartSleepCountdownTimer();
+        }
+    }
+
+    private void StartSleepCountdownTimer()
+    {
+        _sleepCountdownTimer?.Stop();
+        _sleepCountdownTimer = _dispatcher.CreateTimer();
+        _sleepCountdownTimer.Interval = TimeSpan.FromSeconds(1);
+        _sleepCountdownTimer.Tick += SleepCountdownTimer_Tick;
+        _sleepCountdownTimer.Start();
+    }
+
+    private void SleepCountdownTimer_Tick(object? sender, object e)
+    {
+        if (!IsSleepTimerActive)
+        {
+            _sleepCountdownTimer?.Stop();
+            _sleepCountdownTimer = null;
+            return;
+        }
+
+        if (_isSleepEndOfTrack)
+        {
+            var currentTrack = _queueService.CurrentState.CurrentTrack;
+            if (currentTrack == null || currentTrack.Id != _sleepTargetTrackId || !IsPlaying)
+            {
+                TriggerSleepPause();
+                return;
+            }
+
+            double remaining = Math.Max(0.0, DurationSeconds - PositionSeconds);
+            if (remaining <= 4.0 && remaining > 0.0 && IsPlaying)
+            {
+                _originalVolumeBeforeFade ??= _queueService.CurrentState.Volume;
+                float fadeFactor = Math.Clamp((float)(remaining / 4.0), 0.0f, 1.0f);
+                _queueService.SetVolume(_originalVolumeBeforeFade.Value * fadeFactor);
+            }
+
+            if (remaining <= 0.8)
+            {
+                TriggerSleepPause();
+                return;
+            }
+
+            string remStr = Octave.Core.Helpers.DurationFormatter.FormatSeconds(remaining);
+            SleepTimerStatus = $"Pausing at end of track ({remStr} left)";
+            SleepTimerRemainingText = $"{remStr} left";
+        }
+        else
+        {
+            _sleepRemainingSeconds--;
+
+            if (_sleepRemainingSeconds <= 0)
+            {
+                TriggerSleepPause();
+                return;
+            }
+
+            if (_sleepRemainingSeconds <= 4 && IsPlaying)
+            {
+                _originalVolumeBeforeFade ??= _queueService.CurrentState.Volume;
+                float fadeFactor = Math.Clamp((float)_sleepRemainingSeconds / 4.0f, 0.0f, 1.0f);
+                _queueService.SetVolume(_originalVolumeBeforeFade.Value * fadeFactor);
+                SleepTimerStatus = $"Pausing in {_sleepRemainingSeconds}s";
+                SleepTimerRemainingText = $"{_sleepRemainingSeconds}s";
+            }
+            else
+            {
+                int mins = _sleepRemainingSeconds / 60;
+                int secs = _sleepRemainingSeconds % 60;
+                string timeStr = mins >= 60
+                    ? $"{mins / 60}h {(mins % 60):D2}m"
+                    : (mins > 0 ? $"{mins}m {secs:D2}s" : $"{secs}s");
+
+                SleepTimerStatus = $"Pausing in {timeStr}";
+                SleepTimerRemainingText = timeStr;
+            }
+        }
+    }
+
+    private void TriggerSleepPause()
+    {
+        _queueService.Pause();
+        CancelSleepTimer();
+    }
+
+    [RelayCommand]
+    public void CancelSleepTimer()
+    {
+        _sleepCountdownTimer?.Stop();
+        _sleepCountdownTimer = null;
+        _isSleepEndOfTrack = false;
+        _sleepTargetTrackId = null;
+
+        if (_originalVolumeBeforeFade.HasValue)
+        {
+            _queueService.SetVolume(_originalVolumeBeforeFade.Value);
+            _originalVolumeBeforeFade = null;
+        }
+
+        IsSleepTimerActive = false;
+        SleepTimerStatus = "Off";
+        SleepTimerRemainingText = "";
     }
 
     // ---- Playback Resume Settings ------------------------------------------
@@ -618,9 +944,55 @@ public partial class ShellViewModel : ObservableObject
         }
     }
 
-    // ---- Appearance / Background Blur Settings ----------------------------
+    // ---- Appearance / Background & Ambient Layer Settings ------------------
 
-    private double _backgroundTintOpacity = 0.85;
+    private double _backgroundArtworkOpacity = 0.80;
+    public double BackgroundArtworkOpacity
+    {
+        get => _backgroundArtworkOpacity;
+        set
+        {
+            double safe = Math.Clamp(value, 0.0, 1.0);
+            if (Math.Abs(_backgroundArtworkOpacity - safe) > 0.001)
+            {
+                _backgroundArtworkOpacity = safe;
+                _ = _dbContext.SetSettingAsync("BackgroundArtworkOpacity", safe.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture));
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(BackgroundArtworkOpacityPercent));
+            }
+        }
+    }
+
+    public double BackgroundArtworkOpacityPercent
+    {
+        get => Math.Round(_backgroundArtworkOpacity * 100.0);
+        set => BackgroundArtworkOpacity = value / 100.0;
+    }
+
+    private double _backgroundBlurOpacity = 0.60;
+    public double BackgroundBlurOpacity
+    {
+        get => _backgroundBlurOpacity;
+        set
+        {
+            double safe = Math.Clamp(value, 0.0, 1.0);
+            if (Math.Abs(_backgroundBlurOpacity - safe) > 0.001)
+            {
+                _backgroundBlurOpacity = safe;
+                _ = _dbContext.SetSettingAsync("BackgroundBlurOpacity", safe.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture));
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(BackgroundBlurPercent));
+            }
+        }
+    }
+
+    public double BackgroundBlurPercent
+    {
+        get => Math.Round(_backgroundBlurOpacity * 100.0);
+        set => BackgroundBlurOpacity = value / 100.0;
+    }
+
+    private double _backgroundTintOpacity = 0.50;
     public double BackgroundTintOpacity
     {
         get => _backgroundTintOpacity;
@@ -632,18 +1004,64 @@ public partial class ShellViewModel : ObservableObject
                 _backgroundTintOpacity = safe;
                 _ = _dbContext.SetSettingAsync("BackgroundTintOpacity", safe.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture));
                 OnPropertyChanged();
-                OnPropertyChanged(nameof(BackgroundBlurPercent));
+                OnPropertyChanged(nameof(BackgroundTintPercent));
             }
         }
     }
 
-    public double BackgroundBlurPercent
+    public double BackgroundTintPercent
     {
         get => Math.Round(_backgroundTintOpacity * 100.0);
+        set => BackgroundTintOpacity = value / 100.0;
+    }
+
+    private double _backgroundVignetteOpacity = 0.40;
+    public double BackgroundVignetteOpacity
+    {
+        get => _backgroundVignetteOpacity;
         set
         {
-            BackgroundTintOpacity = value / 100.0;
+            double safe = Math.Clamp(value, 0.0, 1.0);
+            if (Math.Abs(_backgroundVignetteOpacity - safe) > 0.001)
+            {
+                _backgroundVignetteOpacity = safe;
+                _ = _dbContext.SetSettingAsync("BackgroundVignetteOpacity", safe.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture));
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(BackgroundVignettePercent));
+            }
         }
+    }
+
+    public double BackgroundVignettePercent
+    {
+        get => Math.Round(_backgroundVignetteOpacity * 100.0);
+        set => BackgroundVignetteOpacity = value / 100.0;
+    }
+
+    private int _backdropMaterialIndex = 0;
+    public int BackdropMaterialIndex
+    {
+        get => _backdropMaterialIndex;
+        set
+        {
+            int safe = Math.Clamp(value, 0, 3);
+            if (_backdropMaterialIndex != safe)
+            {
+                _backdropMaterialIndex = safe;
+                _ = _dbContext.SetSettingAsync("BackdropMaterialIndex", safe.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    [RelayCommand]
+    private void ResetBackgroundSettings()
+    {
+        BackdropMaterialIndex = 0;
+        BackgroundArtworkOpacity = 0.80;
+        BackgroundBlurOpacity = 0.60;
+        BackgroundTintOpacity = 0.50;
+        BackgroundVignetteOpacity = 0.40;
     }
 
     // ---- Crossfade Settings ------------------------------------------------
@@ -687,6 +1105,11 @@ public partial class ShellViewModel : ObservableObject
         ["Flat"]        = new double[] { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
         ["BassBoost"]   = new double[] { 6, 5, 4, 2, 0, 0, 0, 0, 0, 0 },
         ["TrebleBoost"] = new double[] { 0, 0, 0, 0, 0, 0, 2, 4, 5, 6 },
+        ["Rock"]        = new double[] { 4.5, 3.5, 2.0, -1.0, -1.5, 0.0, 2.0, 3.5, 4.5, 5.0 },
+        ["Pop"]         = new double[] { -1.5, 1.0, 3.0, 4.0, 3.5, 1.0, -1.0, -1.5, 1.0, 2.0 },
+        ["Jazz"]        = new double[] { 3.0, 2.0, 1.0, 2.0, -1.0, -1.0, 0.0, 1.5, 2.5, 3.0 },
+        ["Classical"]   = new double[] { 4.0, 3.0, 2.5, 2.0, -1.5, -1.5, 0.0, 2.0, 3.0, 3.5 },
+        ["HipHop"]      = new double[] { 5.5, 4.5, 3.0, 1.0, -0.5, 1.5, 2.0, -1.0, 2.5, 3.5 },
         ["Vocal"]       = new double[] { -2, -1, 0, 2, 4, 4, 3, 1, 0, -1 },
         ["Electronic"]  = new double[] { 4, 3, 0, -2, -3, -3, -1, 2, 4, 5 },
         ["Acoustic"]    = new double[] { 3, 4, 3, 1, 1, 1, 2, 2, 1, 0 },
@@ -727,6 +1150,12 @@ public partial class ShellViewModel : ObservableObject
         }
     }
 
+    [RelayCommand]
+    private void ResetEqToFlat()
+    {
+        EqPreset("Flat");
+    }
+
     private void UpdateActivePresetName()
     {
         if (EqBands.Count == 0) return;
@@ -754,13 +1183,18 @@ public partial class ShellViewModel : ObservableObject
             var gainsStr = string.Join(",", EqBands.Select(b => b.Gain.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)));
             _ = _dbContext.SetSettingAsync("EqGains", gainsStr);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[ShellViewModel] SaveEqGains failed: {ex.Message}");
+        }
     }
 
     private async Task LoadSettingsAsync()
     {
         try
         {
+            await LoadFoldersAsync();
+
             // Visualizer
             var visVal = await _dbContext.GetSettingAsync("IsVisualizerEnabled");
             if (bool.TryParse(visVal, out var visBool))
@@ -772,7 +1206,29 @@ public partial class ShellViewModel : ObservableObject
                 });
             }
 
-            // Background Artwork Blur & Tint
+            // Background & Ambient Appearance Settings
+            var artOpVal = await _dbContext.GetSettingAsync("BackgroundArtworkOpacity");
+            if (double.TryParse(artOpVal, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var artOpDouble))
+            {
+                _dispatcher.TryEnqueue(() =>
+                {
+                    _backgroundArtworkOpacity = Math.Clamp(artOpDouble, 0.0, 1.0);
+                    OnPropertyChanged(nameof(BackgroundArtworkOpacity));
+                    OnPropertyChanged(nameof(BackgroundArtworkOpacityPercent));
+                });
+            }
+
+            var blurOpVal = await _dbContext.GetSettingAsync("BackgroundBlurOpacity");
+            if (double.TryParse(blurOpVal, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var blurOpDouble))
+            {
+                _dispatcher.TryEnqueue(() =>
+                {
+                    _backgroundBlurOpacity = Math.Clamp(blurOpDouble, 0.0, 1.0);
+                    OnPropertyChanged(nameof(BackgroundBlurOpacity));
+                    OnPropertyChanged(nameof(BackgroundBlurPercent));
+                });
+            }
+
             var tintVal = await _dbContext.GetSettingAsync("BackgroundTintOpacity");
             if (double.TryParse(tintVal, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var tintDouble))
             {
@@ -780,7 +1236,28 @@ public partial class ShellViewModel : ObservableObject
                 {
                     _backgroundTintOpacity = Math.Clamp(tintDouble, 0.0, 1.0);
                     OnPropertyChanged(nameof(BackgroundTintOpacity));
-                    OnPropertyChanged(nameof(BackgroundBlurPercent));
+                    OnPropertyChanged(nameof(BackgroundTintPercent));
+                });
+            }
+
+            var vigVal = await _dbContext.GetSettingAsync("BackgroundVignetteOpacity");
+            if (double.TryParse(vigVal, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var vigDouble))
+            {
+                _dispatcher.TryEnqueue(() =>
+                {
+                    _backgroundVignetteOpacity = Math.Clamp(vigDouble, 0.0, 1.0);
+                    OnPropertyChanged(nameof(BackgroundVignetteOpacity));
+                    OnPropertyChanged(nameof(BackgroundVignettePercent));
+                });
+            }
+
+            var backdropVal = await _dbContext.GetSettingAsync("BackdropMaterialIndex");
+            if (int.TryParse(backdropVal, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var backdropInt))
+            {
+                _dispatcher.TryEnqueue(() =>
+                {
+                    _backdropMaterialIndex = Math.Clamp(backdropInt, 0, 3);
+                    OnPropertyChanged(nameof(BackdropMaterialIndex));
                 });
             }
 
@@ -844,8 +1321,19 @@ public partial class ShellViewModel : ObservableObject
                     UpdateActivePresetName();
                 });
             }
+
+            // Audio Output Device
+            var savedDevId = await _dbContext.GetSettingAsync("AudioOutputDeviceId");
+            if (!string.IsNullOrWhiteSpace(savedDevId) && savedDevId != "__default__")
+            {
+                _audioPlayer.SetOutputDevice(savedDevId);
+            }
+            RefreshOutputDevices();
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[ShellViewModel] LoadSettingsAsync failed: {ex.Message}");
+        }
     }
 
     // ---- Duplicate detection ----------------------------------------------
@@ -956,6 +1444,7 @@ public partial class ShellViewModel : ObservableObject
             OutputDeviceQuality = _audioPlayer.OutputDeviceQuality;
             OutputDeviceName = _audioPlayer.OutputDeviceName;
             AudioQualityInfo = _audioPlayer.QualityDetails;
+            RefreshAudioQuality();
             
             var uri = state.CurrentTrack.SourceUri;
             InfoLocation = uri;
@@ -985,6 +1474,9 @@ public partial class ShellViewModel : ObservableObject
             OutputDeviceQuality = "";
             OutputDeviceName = "";
             AudioQualityInfo = null;
+            QualityBadgeText = "";
+            QualityBadgeColor = "#888888";
+            IsBitMatched = false;
             InfoLocation = "";
             InfoFormat = "";
             InfoFileSize = "";
@@ -1061,7 +1553,10 @@ public partial class ShellViewModel : ObservableObject
                         sr = $"{tfile.Properties.AudioSampleRate} Hz";
                     }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[ShellViewModel] Read track metadata failed for '{uri}': {ex.Message}");
+                }
 
                 return (size, br, sr);
             });
@@ -1115,11 +1610,29 @@ public partial class ShellViewModel : ObservableObject
     [RelayCommand]
     private void SeekPlayback(double targetedSeconds)
     {
-        double clamped = Math.Clamp(targetedSeconds, 0, DurationSeconds);
+        if (DurationSeconds <= 0)
+        {
+            return;
+        }
+
+        double safe = double.IsNaN(targetedSeconds) || double.IsInfinity(targetedSeconds) ? 0.0 : targetedSeconds;
+        double clamped = Math.Clamp(safe, 0.0, DurationSeconds);
         var newState = _queueService.Seek(clamped);
         _lastSeekSequenceToken = newState.SequenceToken;
         UpdatePropertiesFromState(newState);
         IsDragging = false;
+    }
+
+    [RelayCommand]
+    private void SeekPlaybackByDelta(double deltaSeconds)
+    {
+        if (DurationSeconds <= 0)
+        {
+            return;
+        }
+
+        double safeDelta = double.IsNaN(deltaSeconds) || double.IsInfinity(deltaSeconds) ? 0.0 : deltaSeconds;
+        SeekPlayback(PositionSeconds + safeDelta);
     }
 
     [RelayCommand]
