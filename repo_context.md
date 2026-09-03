@@ -188,13 +188,31 @@ OCTAVE/
   - `_streamLock` guards stream handle mutations (never held across slow I/O or event dispatches).
   - All public events (`TrackStarted`, `TrackEnded`, `PositionChanged`) are dispatched outside `_streamLock`.
 
-### 4.3 Hardware DAC Detection & Session-Only Audio Output Selector (`WindowsAudioDeviceHelper.cs`, `ManagedBassAudioService.cs`)
+### 4.3 Production-Ready Hardware DAC Detection & Universal Output Device Management (`WindowsAudioDeviceHelper.cs`, `ManagedBassAudioService.cs`)
 - **Native CoreAudio COM & Hardware Notification Client**: Connects to Windows `IMMDeviceEnumerator` (`BCDE0395-E52F-467C-8E3D-C4579291692E`) and `IPropertyStore` (`886d8eeb-8cf2-4446-8d02-cdba1dbdcf99`) to read real hardware device formats (`PKEY_AudioEngine_DeviceFormat`) and endpoint form-factors (`PKEY_AudioEndpoint_FormFactor`).
 - **Reactive Hotplug Callback Pipeline (`IMMNotificationClient`)**: Implements `IMMNotificationClient` (`7991EEC9-7E89-4D85-8390-6C703CEC60C0`) listening to `OnDefaultDeviceChanged`, `OnDeviceAdded`, `OnDeviceRemoved`, `OnDeviceStateChanged`, and `OnPropertyValueChanged`. Immediately clears cached device details and fires `AudioEndpointsChanged` / `OutputDeviceChanged` across the application.
+- **Enhanced Device Classification System (9 Categories)**:
+  - **AVReceiver_Amplifier**: AV receivers, amplifiers, AVR, eARC soundbars (highest priority for home theater setups).
+  - **TypeC_USBAudio**: USB-C, Thunderbolt, Type-C adapters, USB DACs, external audio interfaces.
+  - **Bluetooth**: All Bluetooth A2DP headphones, earbuds, speakers, car kits.
+  - **HDMI_DisplayAudio**: HDMI/DisplayPort monitors, TV audio, GPU audio outputs.
+  - **Headphones**: Standard 3.5mm headphones, gaming headsets, wired earbuds.
+  - **ExternalSpeakers**: USB speakers, external desktop speaker systems, powered monitors.
+  - **DesktopSpeakers**: Desktop PC line-out speakers, rear panel outputs (manufacturer-based detection).
+  - **LaptopSpeakers**: Built-in laptop/converter speakers, internal audio endpoints.
+  - **Unknown**: Fallback category for unrecognized devices.
+- **Universal Connection Scenario Coverage**:
+  - **Bluetooth**: Pairing, reconnection, battery drain disconnection, multi-device switching, codec changes (SBC/AAC/aptX).
+  - **USB-C / Thunderbolt**: Dongles, hubs, Type-C to 3.5mm adapters, USB-C headphones, Thunderbolt docks with audio.
+  - **AUX / 3.5mm Jack**: Front panel headphone jack, rear panel line-out, combo jacks with detect/unplug events.
+  - **HDMI / DisplayPort**: Monitor hotplug, TV ARC/eARC, multi-monitor audio switching, GPU driver updates.
+  - **External DAC / Amplifier**: USB DACs, optical/SPDIF converters, standalone amplifiers, Hi-Fi receivers.
+  - **Desktop vs Laptop**: Automatic classification based on manufacturer keywords (Dell OptiPlex, HP EliteDesk = Desktop; Dell XPS, HP Spectre = Laptop).
+  - **Multiple Simultaneous Changes**: 500ms debounce timer handles USB hubs with multiple audio interfaces connecting/disconnecting together.
 - **Session-Only Scope & Default Startup Behavior**:
   - Custom audio device selection is strictly session-scoped in-memory (`_selectedCustomDeviceId` in `ManagedBassAudioService`).
   - Device selections are **never** persisted to SQLite `AppSettings` or disk across application restarts.
-  - On application startup, OCTAVE always routes output to the system default device (Windows Default, `Index: -1`, `Id: "__default__"`).
+  - On application startup, OCTAVE always routes output to the system default device (Windows Default, `Index: -1`, `Id: \"__default__\"`).
   - System isolation: Selecting an explicit output device never overwrites or corrupts the application's fallback pointer to the system default output device.
 - **Device Switching Flow & Dynamic Stream Migration**:
   - When the user selects a custom output device or switches between devices, playback immediately pauses (`Bass.ChannelPause`).
@@ -203,14 +221,20 @@ OCTAVE/
   - Active stream hardware state is tracked continuously via `_currentStreamBassDevice` and `_currentStreamEndpointId`.
 - **Bidirectional Dynamic Stream Migration (Windows Default Mode)**:
   - **Virtual Default Device 1 Target**: In Windows Default mode (`_selectedCustomDeviceId == null`), the engine strictly targets BASS virtual device 1 (`Configuration.IncludeDefaultDevice = true`), which natively and dynamically tracks the OS default endpoint without getting tied to physical hardware device handles that can be invalidated on disconnect.
-  - **Reconnecting Personal Audio (Speakers $\to$ Headphones / Bluetooth / DAC)**: When personal audio devices are plugged in or reconnected, the engine detects default endpoint migration, pauses the old stream on speakers, recreates the stream on Device 1 (now routing to the new personal device) at the exact millisecond byte position, and automatically resumes playback seamlessly.
-  - **Disconnecting Personal Audio (Headphones / Bluetooth $\to$ Speakers)**: When removable listening devices are unplugged or disconnected, the engine immediately pauses playback (`Bass.ChannelPause`) to prevent room blasting, fires `PlaybackInterrupted` (transport bar displays Paused), and recreates the stream on Device 1 (now laptop speakers) in a paused state.
+  - **Reconnecting Personal Audio (Speakers $\to$ Headphones / Bluetooth / DAC / Type-C)**: When personal audio devices are plugged in or reconnected, the engine detects default endpoint migration, pauses the old stream on speakers, recreates the stream on Device 1 (now routing to the new personal device) at the exact millisecond byte position, and automatically resumes playback seamlessly.
+  - **Disconnecting Personal Audio (Headphones / Bluetooth / Type-C / USB DAC $\to$ Speakers)**: When removable listening devices are unplugged or disconnected, the engine immediately pauses playback (`Bass.ChannelPause`) to prevent room blasting, fires `PlaybackInterrupted` (transport bar displays Paused), and recreates the stream on Device 1 (now laptop/desktop speakers) in a paused state.
   - **Paused State Preservation & Zero Audio Leakage**: Explicit `_isPlayingIntent`, `_isPaused`, and `_isStopped` state variables track playback intention independent of WASAPI buffer starvation. Recreating streams in a paused state leaves the channel paused without spurious `ChannelPlay` calls, preventing room blast and race conditions.
 - **Disconnection & Fallback Handling (`OnDeviceRemoved`)**:
   - If an active custom device or default playback device becomes offline, disconnected, or physically detached during playback, playback stops immediately (`Bass.ChannelPause`).
   - `PlaybackInterrupted` is fired, allowing `QueueService` to update all queue items to `IsPlaying = false` and broadcast `Status = Paused`.
   - The custom device selection is automatically cleared (`_selectedCustomDeviceId = null`) and the UI ComboBox reverts to Windows Default.
   - The stream is cleanly staged on the fallback default output device in a paused state, ready to resume on a single Play click.
+- **Production Edge Case Hardening**:
+  - **Multiple Rapid Device Changes**: 500ms debounce prevents thrashing during USB hub enumeration or docking station connections.
+  - **Windows Default Forced Change**: Handles Windows auto-switching default device (e.g., Bluetooth headset becomes default on call) with seamless stream migration.
+  - **Device State Modification**: Detects disabled/enabled devices and replug scenarios where the same device gets a new endpoint ID.
+  - **Graceful Error Recovery**: All COM callbacks wrapped in structured exception handling returning `S_OK (0)` to prevent RPC crashes.
+  - **Deadlock Prevention**: Events dispatched outside `_streamLock` and `_deviceSwitchLock` to eliminate lock-inversion with `QueueService._queueLock`.
 - **Audiophile Quality Badging & Bit-Matched Direct Detection**: Analyzes source stream resolution vs hardware output DAC format, detecting 1:1 bit-perfect output when sample rates match and DSP/EQ/ReplayGain scaling is flat. Emits `[HI-RES]` (Gold), `[LOSSLESS]` (Emerald), `[AAC]` / `[MP3]` (Cyan) badges across transport bar and Now Playing views.
 
 ---

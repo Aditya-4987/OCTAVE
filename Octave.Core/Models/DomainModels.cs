@@ -200,10 +200,14 @@ public record DuplicateGroup(string Title, string ArtistName, System.Collections
 public enum AudioDeviceCategory
 {
     LaptopSpeakers,
+    DesktopSpeakers,
     MonitorSpeakers,
     ExternalSpeakers,
     Headphones,
     Bluetooth,
+    TypeC_USBAudio,
+    AVReceiver_Amplifier,
+    HDMI_DisplayAudio,
     Unknown
 }
 

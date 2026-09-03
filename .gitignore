@@ -1,4 +1,34 @@
-# Local ideation / reference material
+
+# Build artifacts
+bin/
+obj/
+out/
+
+# Dependencies
+packages/
+
+# Logs
+*.log
+
+# User-specific files
+.vs/
+*.userprefs
+*.suo
+*.user
+*.aps
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Configuration specific to local environments
+appsettings.Development.json
+appsettings.Production.json
+
+# Test results
+TestResults/
+
+
 /PROJECT_ideation/
 /INSPIRATIONS/
 /BASS_ADDONS/

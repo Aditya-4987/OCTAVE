@@ -267,7 +267,7 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
                         if (!string.IsNullOrWhiteSpace(_currentStreamEndpointId))
                         {
                             var oldInfo = WindowsAudioDeviceHelper.GetOutputDeviceInfo(_currentStreamEndpointId);
-                            oldWasRemovable = oldInfo.Category is AudioDeviceCategory.Headphones or AudioDeviceCategory.Bluetooth or AudioDeviceCategory.ExternalSpeakers or AudioDeviceCategory.MonitorSpeakers;
+                            oldWasRemovable = oldInfo.Category is AudioDeviceCategory.Headphones or AudioDeviceCategory.Bluetooth or AudioDeviceCategory.ExternalSpeakers or AudioDeviceCategory.MonitorSpeakers or AudioDeviceCategory.HDMI_DisplayAudio or AudioDeviceCategory.TypeC_USBAudio or AudioDeviceCategory.AVReceiver_Amplifier;
                         }
 
                         var available = GetAvailableOutputDevices();
@@ -275,7 +275,7 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
                             available.Any(d => d.Index > 0 && string.Equals(d.Id, _currentStreamEndpointId, StringComparison.OrdinalIgnoreCase));
 
                         var newCategory = WindowsAudioDeviceHelper.GetDeviceCategory(currentDefault);
-                        bool isUnplugToSpeakers = oldWasRemovable && (!oldStillAvailable || newCategory is AudioDeviceCategory.LaptopSpeakers or AudioDeviceCategory.Unknown);
+                        bool isUnplugToSpeakers = oldWasRemovable && (!oldStillAvailable || newCategory is AudioDeviceCategory.LaptopSpeakers or AudioDeviceCategory.DesktopSpeakers or AudioDeviceCategory.Unknown);
 
                         if (isUnplugToSpeakers)
                         {

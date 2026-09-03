@@ -57,6 +57,8 @@ public static class WindowsAudioDeviceHelper
         lock (_debounceLock)
         {
             _debounceTimer?.Dispose();
+            // Increased from 250ms to 450ms to handle USB hubs with multiple audio interfaces
+            // and scenarios where multiple devices connect/disconnect simultaneously
             _debounceTimer = new System.Threading.Timer(_ =>
             {
                 try
@@ -67,7 +69,7 @@ public static class WindowsAudioDeviceHelper
                 {
                     System.Diagnostics.Debug.WriteLine($"[WindowsAudioDeviceHelper] AudioEndpointsChanged handler failed: {ex.Message}");
                 }
-            }, null, 250, System.Threading.Timeout.Infinite);
+            }, null, 450, System.Threading.Timeout.Infinite);
         }
     }
 
@@ -360,38 +362,55 @@ public static class WindowsAudioDeviceHelper
                 return "External DAC / Audio Interface";
         }
 
-        // 2. USB audio interface
+        // 2. AV Receiver / Amplifier detection
+        string[] avKeywords = { "Receiver", "Amplifier", "AVR", "eARC", "Denon", "Yamaha", "Onkyo", "Pioneer", "Marantz", "Harman", "JBL", "Sony STR", "NAD", "Rotel" };
+        foreach (var kw in avKeywords)
+        {
+            if (deviceName.Contains(kw, StringComparison.OrdinalIgnoreCase))
+                return "AV Receiver / Amplifier";
+        }
+
+        // 3. Type-C / Thunderbolt / USB-C audio devices
+        if (deviceName.Contains("Type-C", StringComparison.OrdinalIgnoreCase) ||
+            deviceName.Contains("USB-C", StringComparison.OrdinalIgnoreCase) ||
+            deviceName.Contains("Thunderbolt", StringComparison.OrdinalIgnoreCase) ||
+            (deviceName.Contains("USB", StringComparison.OrdinalIgnoreCase) && deviceName.Contains("Audio", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "Type-C / USB Audio Device";
+        }
+
+        // 4. USB audio interface (generic)
         if (deviceName.Contains("USB", StringComparison.OrdinalIgnoreCase))
         {
             return "USB DAC / Audio Device";
         }
 
-        // 3. Bluetooth audio
+        // 5. Bluetooth audio
         if (deviceName.Contains("Bluetooth", StringComparison.OrdinalIgnoreCase))
         {
             return "Bluetooth Audio";
         }
 
-        // 4. FormFactor detection (Windows EndpointFormFactor enum)
+        // 6. FormFactor detection (Windows EndpointFormFactor enum)
         // 3 = Headphones, 5 = Headset
         if (formFactor == 3 || formFactor == 5 || deviceName.Contains("Headphone", StringComparison.OrdinalIgnoreCase) || deviceName.Contains("Headset", StringComparison.OrdinalIgnoreCase) || deviceName.Contains("IEM", StringComparison.OrdinalIgnoreCase))
         {
             return "Headphones";
         }
 
-        // 2 = LineLevel, 8 = SPDIF (Line Out / Digital Optical / Coaxial DAC)
+        // 7. Line Level / SPDIF (Line Out / Digital Optical / Coaxial DAC)
         if (formFactor == 2 || formFactor == 8)
         {
             return "External DAC / Line Out";
         }
 
-        // 9 = DigitalAudioDisplayDevice / HDMI
+        // 8. DigitalAudioDisplayDevice / HDMI
         if (formFactor == 9 || deviceName.Contains("HDMI", StringComparison.OrdinalIgnoreCase) || deviceName.Contains("Display", StringComparison.OrdinalIgnoreCase) || deviceName.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase))
         {
             return "Digital HDMI / Display Audio";
         }
 
-        // 1 = Speakers
+        // 9. Speakers
         if (formFactor == 1 || deviceName.Contains("Speaker", StringComparison.OrdinalIgnoreCase))
         {
             return "Speakers";
@@ -404,14 +423,30 @@ public static class WindowsAudioDeviceHelper
     {
         if (string.IsNullOrWhiteSpace(deviceName)) return AudioDeviceCategory.Unknown;
 
-        // 1. Bluetooth audio
+        // 1. AV Receiver / Amplifier (highest priority for home theater equipment)
+        string[] avKeywords = { "Receiver", "Amplifier", "AVR", "eARC", "Denon", "Yamaha", "Onkyo", "Pioneer", "Marantz", "Harman", "JBL", "Sony STR", "NAD", "Rotel" };
+        if (avKeywords.Any(kw => deviceName.Contains(kw, StringComparison.OrdinalIgnoreCase)))
+        {
+            return AudioDeviceCategory.AVReceiver_Amplifier;
+        }
+
+        // 2. Type-C / Thunderbolt / USB-C audio devices (before generic USB)
+        if (deviceName.Contains("Type-C", StringComparison.OrdinalIgnoreCase) ||
+            deviceName.Contains("USB-C", StringComparison.OrdinalIgnoreCase) ||
+            deviceName.Contains("Thunderbolt", StringComparison.OrdinalIgnoreCase) ||
+            (!string.IsNullOrEmpty(driverOrId) && driverOrId.Contains("USB", StringComparison.OrdinalIgnoreCase) && deviceName.Contains("Audio", StringComparison.OrdinalIgnoreCase)))
+        {
+            return AudioDeviceCategory.TypeC_USBAudio;
+        }
+
+        // 3. Bluetooth audio
         if (deviceName.Contains("Bluetooth", StringComparison.OrdinalIgnoreCase) ||
             (!string.IsNullOrEmpty(driverOrId) && driverOrId.Contains("BTH", StringComparison.OrdinalIgnoreCase)))
         {
             return AudioDeviceCategory.Bluetooth;
         }
 
-        // 2. Monitor speakers (HDMI, DisplayPort, TV, Monitor, Intel Display Audio, NVIDIA, AMD)
+        // 4. HDMI / DisplayPort / Monitor speakers / TV
         if (formFactor == 9 /* DigitalAudioDisplayDevice */ ||
             deviceName.Contains("HDMI", StringComparison.OrdinalIgnoreCase) ||
             deviceName.Contains("DisplayPort", StringComparison.OrdinalIgnoreCase) ||
@@ -422,10 +457,10 @@ public static class WindowsAudioDeviceHelper
             deviceName.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase) ||
             deviceName.Contains("AMD High Definition", StringComparison.OrdinalIgnoreCase))
         {
-            return AudioDeviceCategory.MonitorSpeakers;
+            return AudioDeviceCategory.HDMI_DisplayAudio;
         }
 
-        // 3. Headphones (aux / 3.5mm jack / IEM / Headset)
+        // 5. Headphones (aux / 3.5mm jack / IEM / Headset)
         if (formFactor == 3 /* Headphones */ ||
             formFactor == 5 /* Headset */ ||
             deviceName.Contains("Headphone", StringComparison.OrdinalIgnoreCase) ||
@@ -436,7 +471,7 @@ public static class WindowsAudioDeviceHelper
             return AudioDeviceCategory.Headphones;
         }
 
-        // 4. External speakers (aux / Line Out / SPDIF / external DAC / USB speakers)
+        // 6. External speakers (aux / Line Out / SPDIF / external DAC / USB speakers)
         string[] dacKeywords = { "DAC", "FiiO", "Topping", "iFi", "Schiit", "Audioengine", "DragonFly", "Chord", "Zen", "Moondrop", "AudioQuest", "Cambridge" };
         bool isDacOrInterface = dacKeywords.Any(kw => deviceName.Contains(kw, StringComparison.OrdinalIgnoreCase));
         if (formFactor == 2 /* LineLevel */ ||
@@ -451,36 +486,72 @@ public static class WindowsAudioDeviceHelper
             return AudioDeviceCategory.ExternalSpeakers;
         }
 
-        // 5. Laptop speakers (formFactor == 1 Speakers / internal laptop speakers / Realtek / Conexant)
-        if (formFactor == 1 /* Speakers */ ||
-            deviceName.Contains("Speaker", StringComparison.OrdinalIgnoreCase) ||
-            deviceName.Contains("Realtek", StringComparison.OrdinalIgnoreCase) ||
-            deviceName.Contains("Internal", StringComparison.OrdinalIgnoreCase) ||
-            deviceName.Contains("Built-in", StringComparison.OrdinalIgnoreCase))
+        // 7. Desktop speakers detection - look for desktop manufacturer patterns or non-laptop speaker indicators
+        // Desktop manufacturers: Dell, HP, Lenovo (ThinkCentre), ASUS, Acer, MSI desktop lines
+        // Also check for "Desktop", "Tower", "Workstation" keywords
+        bool isDesktopSpeaker = deviceName.Contains("Desktop", StringComparison.OrdinalIgnoreCase) ||
+                                deviceName.Contains("Tower", StringComparison.OrdinalIgnoreCase) ||
+                                deviceName.Contains("Workstation", StringComparison.OrdinalIgnoreCase) ||
+                                (deviceName.Contains("Dell", StringComparison.OrdinalIgnoreCase) && deviceName.Contains("Speaker", StringComparison.OrdinalIgnoreCase)) ||
+                                (deviceName.Contains("HP", StringComparison.OrdinalIgnoreCase) && deviceName.Contains("Speaker", StringComparison.OrdinalIgnoreCase)) ||
+                                (deviceName.Contains("Lenovo", StringComparison.OrdinalIgnoreCase) && !deviceName.Contains("ThinkPad", StringComparison.OrdinalIgnoreCase));
+
+        // 8. Laptop speakers (formFactor == 1 Speakers / internal laptop speakers / Realtek / Conexant / laptop brands)
+        bool isLaptopSpeaker = formFactor == 1 /* Speakers */ ||
+                               deviceName.Contains("Speaker", StringComparison.OrdinalIgnoreCase) ||
+                               deviceName.Contains("Realtek", StringComparison.OrdinalIgnoreCase) ||
+                               deviceName.Contains("Conexant", StringComparison.OrdinalIgnoreCase) ||
+                               deviceName.Contains("Internal", StringComparison.OrdinalIgnoreCase) ||
+                               deviceName.Contains("Built-in", StringComparison.OrdinalIgnoreCase) ||
+                               deviceName.Contains("ThinkPad", StringComparison.OrdinalIgnoreCase) ||
+                               deviceName.Contains("MacBook", StringComparison.OrdinalIgnoreCase) ||
+                               deviceName.Contains("Latitude", StringComparison.OrdinalIgnoreCase) ||
+                               deviceName.Contains("EliteBook", StringComparison.OrdinalIgnoreCase);
+
+        if (isDesktopSpeaker)
+        {
+            return AudioDeviceCategory.DesktopSpeakers;
+        }
+
+        if (isLaptopSpeaker)
         {
             return AudioDeviceCategory.LaptopSpeakers;
         }
 
-        return AudioDeviceCategory.LaptopSpeakers;
+        // Default fallback for any remaining speaker-type devices
+        if (formFactor == 1)
+        {
+            return AudioDeviceCategory.LaptopSpeakers;
+        }
+
+        return AudioDeviceCategory.Unknown;
     }
 
     public static string GetCategoryGlyph(AudioDeviceCategory category) => category switch
     {
         AudioDeviceCategory.LaptopSpeakers => "\uE7F8",
+        AudioDeviceCategory.DesktopSpeakers => "\uE7F4",
         AudioDeviceCategory.MonitorSpeakers => "\uE7F4",
         AudioDeviceCategory.ExternalSpeakers => "\uE7F5",
         AudioDeviceCategory.Headphones => "\uE7F6",
         AudioDeviceCategory.Bluetooth => "\uE702",
+        AudioDeviceCategory.TypeC_USBAudio => "\uE889",
+        AudioDeviceCategory.AVReceiver_Amplifier => "\uE7F5",
+        AudioDeviceCategory.HDMI_DisplayAudio => "\uE7F4",
         _ => "\uE7F5"
     };
 
     public static string GetCategoryDisplayName(AudioDeviceCategory category) => category switch
     {
         AudioDeviceCategory.LaptopSpeakers => "Laptop Speakers",
+        AudioDeviceCategory.DesktopSpeakers => "Desktop Speakers",
         AudioDeviceCategory.MonitorSpeakers => "Monitor Speakers",
         AudioDeviceCategory.ExternalSpeakers => "External Speakers",
         AudioDeviceCategory.Headphones => "Headphones",
         AudioDeviceCategory.Bluetooth => "Bluetooth Audio",
+        AudioDeviceCategory.TypeC_USBAudio => "Type-C / USB Audio",
+        AudioDeviceCategory.AVReceiver_Amplifier => "AV Receiver / Amplifier",
+        AudioDeviceCategory.HDMI_DisplayAudio => "HDMI / Display Audio",
         _ => "Audio Output"
     };
 

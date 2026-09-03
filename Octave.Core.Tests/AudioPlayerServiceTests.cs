@@ -37,32 +37,55 @@ public class AudioPlayerServiceTests : IDisposable
     }
 
     [Fact]
-    public void DeviceClassification_Maps5CategoriesAndGlyphsCorrectly()
+    public void DeviceClassification_MapsAllCategoriesAndGlyphsCorrectly()
     {
         // 1. Bluetooth
         var btCat = WindowsAudioDeviceHelper.ClassifyDeviceCategory("Sony WH-1000XM5 (Bluetooth)", 0, "BTHENUM\\{...}");
         Assert.Equal(AudioDeviceCategory.Bluetooth, btCat);
         Assert.Equal("\uE702", WindowsAudioDeviceHelper.GetCategoryGlyph(btCat));
+        Assert.Equal("Bluetooth Audio", WindowsAudioDeviceHelper.GetCategoryDisplayName(btCat));
 
-        // 2. Monitor speakers (HDMI / DisplayPort)
-        var monCat = WindowsAudioDeviceHelper.ClassifyDeviceCategory("LG UltraFine Display Audio (NVIDIA High Definition Audio)", 3, null);
-        Assert.Equal(AudioDeviceCategory.MonitorSpeakers, monCat);
-        Assert.Equal("\uE7F4", WindowsAudioDeviceHelper.GetCategoryGlyph(monCat));
+        // 2. HDMI / Display Audio (Monitor speakers)
+        var hdmiCat = WindowsAudioDeviceHelper.ClassifyDeviceCategory("LG UltraFine Display Audio (NVIDIA High Definition Audio)", 9, null);
+        Assert.Equal(AudioDeviceCategory.HDMI_DisplayAudio, hdmiCat);
+        Assert.Equal("\uE7F4", WindowsAudioDeviceHelper.GetCategoryGlyph(hdmiCat));
+        Assert.Equal("HDMI / Display Audio", WindowsAudioDeviceHelper.GetCategoryDisplayName(hdmiCat));
 
-        // 3. External speakers (Aux / Line Out / DAC)
+        // 3. Type-C / USB-C Audio
+        var typeCCat = WindowsAudioDeviceHelper.ClassifyDeviceCategory("USB-C Audio Adapter", 0, "USB\\VID_XXXX&PID_YYYY");
+        Assert.Equal(AudioDeviceCategory.TypeC_USBAudio, typeCCat);
+        Assert.Equal("\uE889", WindowsAudioDeviceHelper.GetCategoryGlyph(typeCCat));
+        Assert.Equal("Type-C / USB Audio", WindowsAudioDeviceHelper.GetCategoryDisplayName(typeCCat));
+
+        // 4. AV Receiver / Amplifier
+        var avrCat = WindowsAudioDeviceHelper.ClassifyDeviceCategory("Denon AVR-X3700H", 0, null);
+        Assert.Equal(AudioDeviceCategory.AVReceiver_Amplifier, avrCat);
+        Assert.Equal("\uE7F5", WindowsAudioDeviceHelper.GetCategoryGlyph(avrCat));
+        Assert.Equal("AV Receiver / Amplifier", WindowsAudioDeviceHelper.GetCategoryDisplayName(avrCat));
+
+        // 5. External speakers (Aux / Line Out / DAC)
         var extCat = WindowsAudioDeviceHelper.ClassifyDeviceCategory("Realtek HD Audio 2nd output (Line Out)", 2, null);
         Assert.Equal(AudioDeviceCategory.ExternalSpeakers, extCat);
         Assert.Equal("\uE7F5", WindowsAudioDeviceHelper.GetCategoryGlyph(extCat));
+        Assert.Equal("External Speakers", WindowsAudioDeviceHelper.GetCategoryDisplayName(extCat));
 
-        // 4. Headphones (Aux / 3.5mm)
-        var hpCat = WindowsAudioDeviceHelper.ClassifyDeviceCategory("Headphones (Realtek(R) Audio)", 1, null);
+        // 6. Headphones (Aux / 3.5mm)
+        var hpCat = WindowsAudioDeviceHelper.ClassifyDeviceCategory("Headphones (Realtek(R) Audio)", 3, null);
         Assert.Equal(AudioDeviceCategory.Headphones, hpCat);
         Assert.Equal("\uE7F6", WindowsAudioDeviceHelper.GetCategoryGlyph(hpCat));
+        Assert.Equal("Headphones", WindowsAudioDeviceHelper.GetCategoryDisplayName(hpCat));
 
-        // 5. Laptop speakers (Internal)
-        var lapCat = WindowsAudioDeviceHelper.ClassifyDeviceCategory("Speakers (Realtek(R) Audio)", 0, null);
+        // 7. Laptop speakers (Internal)
+        var lapCat = WindowsAudioDeviceHelper.ClassifyDeviceCategory("Speakers (Realtek(R) Audio)", 1, null);
         Assert.Equal(AudioDeviceCategory.LaptopSpeakers, lapCat);
         Assert.Equal("\uE7F8", WindowsAudioDeviceHelper.GetCategoryGlyph(lapCat));
+        Assert.Equal("Laptop Speakers", WindowsAudioDeviceHelper.GetCategoryDisplayName(lapCat));
+
+        // 8. Desktop speakers
+        var deskCat = WindowsAudioDeviceHelper.ClassifyDeviceCategory("Dell Desktop Speakers", 1, null);
+        Assert.Equal(AudioDeviceCategory.DesktopSpeakers, deskCat);
+        Assert.Equal("\uE7F4", WindowsAudioDeviceHelper.GetCategoryGlyph(deskCat));
+        Assert.Equal("Desktop Speakers", WindowsAudioDeviceHelper.GetCategoryDisplayName(deskCat));
     }
 
     [Fact]
