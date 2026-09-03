@@ -931,4 +931,50 @@ public class QueueServiceTests : IDisposable
         dispatcherMock.Verify(d => d.ExecuteOnUIThread(It.IsAny<Action>()), Times.AtLeastOnce);
         Assert.True(stateChangedCount >= 1);
     }
+
+    [Fact]
+    public void PlaybackInterrupted_SetsCurrentQueueItemIsPlayingToFalse_AndEmitsPausedState()
+    {
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+        var track1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", 1, 2024, DateTime.UtcNow);
+        queueService.Enqueue(track1);
+
+        _audioPlayerMock.Setup(a => a.Status).Returns(PlaybackStatus.Playing);
+        queueService.PlayIndex(0);
+        Assert.True(queueService.GetCurrentQueue()[0].IsPlaying);
+
+        // Simulate engine pausing and raising PlaybackInterrupted (e.g. headphone unplug)
+        _audioPlayerMock.Setup(a => a.Status).Returns(PlaybackStatus.Paused);
+        PlaybackState? capturedState = null;
+        queueService.PlaybackStateChanged += (_, state) => capturedState = state;
+
+        _audioPlayerMock.Raise(a => a.PlaybackInterrupted += null, EventArgs.Empty);
+
+        Assert.False(queueService.GetCurrentQueue()[0].IsPlaying);
+        Assert.NotNull(capturedState);
+        Assert.Equal(PlaybackStatus.Paused, capturedState.Status);
+    }
+
+    [Fact]
+    public void Pause_WhenPlayerAlreadyPausedOrStopped_StillSetsIsPlayingFalse_AndEmitsState()
+    {
+        var queueService = new QueueService(_audioPlayerMock.Object, _dbContext, _scannerMock.Object);
+        var track1 = new Track("t1", "Track 1", "ar1", "Artist", "al1", "Album", 180, "http://test/1.mp3", 1, 2024, DateTime.UtcNow);
+        queueService.Enqueue(track1);
+
+        // Force active queue item to IsPlaying = true
+        queueService.GetCurrentQueue()[0].IsPlaying = true;
+
+        // Player is already reported as Paused by audio service
+        _audioPlayerMock.Setup(a => a.Status).Returns(PlaybackStatus.Paused);
+
+        PlaybackState? capturedState = null;
+        queueService.PlaybackStateChanged += (_, state) => capturedState = state;
+
+        queueService.Pause();
+
+        Assert.False(queueService.GetCurrentQueue()[0].IsPlaying);
+        Assert.NotNull(capturedState);
+        Assert.Equal(PlaybackStatus.Paused, capturedState.Status);
+    }
 }

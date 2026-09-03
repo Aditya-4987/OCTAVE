@@ -63,9 +63,14 @@ public interface IAudioPlayerService
 
     // Output Device Management
     event EventHandler? OutputDeviceChanged;
+    string? LastActiveDeviceEndpointId { get; }
+    AudioDeviceCategory CurrentDeviceCategory { get; }
+    string CurrentDeviceGlyph { get; }
+
     System.Collections.Generic.IReadOnlyList<AudioOutputDeviceInfo> GetAvailableOutputDevices();
-    int CurrentOutputDeviceIndex { get; }
-    string? CurrentOutputDeviceId { get; }
-    void SetOutputDevice(int deviceIndex);
     void SetOutputDevice(string? deviceId);
+    string? SelectedCustomDeviceId { get; }
+    bool IsCustomDeviceSelected { get; }
+    int CurrentStreamBassDevice { get; }
+    string? CurrentStreamEndpointId { get; }
 }

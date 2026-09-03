@@ -1,5 +1,7 @@
 using System;
+using System.Linq;
 using System.Runtime.InteropServices;
+using Octave.Core.Models;
 
 namespace Octave.Core.Helpers;
 
@@ -46,53 +48,145 @@ public static class WindowsAudioDeviceHelper
         int OnPropertyValueChanged([MarshalAs(UnmanagedType.LPWStr)] string pwstrDeviceId, PROPERTYKEY key);
     }
 
+    private static System.Threading.Timer? _debounceTimer;
+    private static readonly object _debounceLock = new();
+
+    private static void TriggerDebouncedEndpointsChanged()
+    {
+        ClearCache();
+        lock (_debounceLock)
+        {
+            _debounceTimer?.Dispose();
+            _debounceTimer = new System.Threading.Timer(_ =>
+            {
+                try
+                {
+                    _audioEndpointsChanged?.Invoke();
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[WindowsAudioDeviceHelper] AudioEndpointsChanged handler failed: {ex.Message}");
+                }
+            }, null, 250, System.Threading.Timeout.Infinite);
+        }
+    }
+
     private class NotificationClientImpl : IMMNotificationClient
     {
         public int OnDeviceStateChanged(string pwstrDeviceId, int dwNewState)
         {
-            ClearCache();
-            AudioEndpointsChanged?.Invoke();
+            try
+            {
+                TriggerDebouncedEndpointsChanged();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[WindowsAudioDeviceHelper] OnDeviceStateChanged failed: {ex.Message}");
+            }
             return 0;
         }
 
         public int OnDeviceAdded(string pwstrDeviceId)
         {
-            ClearCache();
-            AudioEndpointsChanged?.Invoke();
+            try
+            {
+                TriggerDebouncedEndpointsChanged();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[WindowsAudioDeviceHelper] OnDeviceAdded failed: {ex.Message}");
+            }
             return 0;
         }
 
         public int OnDeviceRemoved(string pwstrDeviceId)
         {
-            ClearCache();
-            DeviceRemoved?.Invoke(pwstrDeviceId);
-            AudioEndpointsChanged?.Invoke();
+            try
+            {
+                _deviceRemoved?.Invoke(pwstrDeviceId);
+                TriggerDebouncedEndpointsChanged();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[WindowsAudioDeviceHelper] OnDeviceRemoved failed: {ex.Message}");
+            }
             return 0;
         }
 
         public int OnDefaultDeviceChanged(int flow, int role, string pwstrDefaultDeviceId)
         {
-            // flow: eRender = 0. role: eConsole = 0, eMultimedia = 1
-            if (flow == 0)
+            try
             {
-                ClearCache();
-                DefaultAudioEndpointChanged?.Invoke(pwstrDefaultDeviceId);
-                AudioEndpointsChanged?.Invoke();
+                // flow: eRender = 0. role: eConsole = 0, eMultimedia = 1
+                if (flow == 0 && (role == 0 || role == 1))
+                {
+                    TriggerDebouncedEndpointsChanged();
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[WindowsAudioDeviceHelper] OnDefaultDeviceChanged failed: {ex.Message}");
             }
             return 0;
         }
 
         public int OnPropertyValueChanged(string pwstrDeviceId, PROPERTYKEY key)
         {
-            ClearCache();
-            AudioEndpointsChanged?.Invoke();
+            try
+            {
+                // Only care about device friendly name or hardware format changes.
+                // Ignore volume, peak meters, timestamps, and audio session properties.
+                if (key.fmtid == PKEY_Device_FriendlyName.fmtid || key.fmtid == PKEY_AudioEngine_DeviceFormat.fmtid)
+                {
+                    TriggerDebouncedEndpointsChanged();
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[WindowsAudioDeviceHelper] OnPropertyValueChanged failed: {ex.Message}");
+            }
             return 0;
         }
     }
 
-    public static event Action? AudioEndpointsChanged;
-    public static event Action<string?>? DefaultAudioEndpointChanged;
-    public static event Action<string>? DeviceRemoved;
+    private static Action? _audioEndpointsChanged;
+    public static event Action? AudioEndpointsChanged
+    {
+        add
+        {
+            _audioEndpointsChanged += value;
+            StartMonitoring();
+        }
+        remove
+        {
+            _audioEndpointsChanged -= value;
+        }
+    }
+
+    private static Action<string>? _deviceRemoved;
+    public static event Action<string>? DeviceRemoved
+    {
+        add
+        {
+            _deviceRemoved += value;
+            StartMonitoring();
+        }
+        remove
+        {
+            _deviceRemoved -= value;
+        }
+    }
+
+    internal static void TriggerDeviceRemovedForTesting(string deviceId)
+    {
+        _deviceRemoved?.Invoke(deviceId);
+    }
+
+    internal static void TriggerEndpointsChangedForTesting()
+    {
+        ClearCache();
+        _audioEndpointsChanged?.Invoke();
+    }
 
     private static IMMDeviceEnumerator? _notificationEnumerator;
     private static NotificationClientImpl? _notificationClient;
@@ -112,11 +206,23 @@ public static class WindowsAudioDeviceHelper
                 if (hr != 0)
                 {
                     System.Diagnostics.Debug.WriteLine($"[WindowsAudioDeviceHelper] RegisterEndpointNotificationCallback returned 0x{hr:X8}");
+                    _notificationClient = null;
+                    if (_notificationEnumerator != null)
+                    {
+                        try { Marshal.ReleaseComObject(_notificationEnumerator); } catch { }
+                        _notificationEnumerator = null;
+                    }
                 }
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[WindowsAudioDeviceHelper] Failed to register notification client: {ex.Message}");
+                _notificationClient = null;
+                if (_notificationEnumerator != null)
+                {
+                    try { Marshal.ReleaseComObject(_notificationEnumerator); } catch { }
+                    _notificationEnumerator = null;
+                }
             }
         }
     }
@@ -134,6 +240,7 @@ public static class WindowsAudioDeviceHelper
                 }
                 catch { }
                 _notificationClient = null;
+                try { Marshal.ReleaseComObject(_notificationEnumerator); } catch { }
                 _notificationEnumerator = null;
             }
         }
@@ -223,7 +330,7 @@ public static class WindowsAudioDeviceHelper
         pid = 0
     };
 
-    private static readonly System.Collections.Generic.Dictionary<string, (string Name, string Format, double SampleRateKhz, ushort BitDepth, string DeviceType)> _cachedDeviceDetailsMap = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly System.Collections.Generic.Dictionary<string, (string Name, string Format, double SampleRateKhz, ushort BitDepth, string DeviceType, AudioDeviceCategory Category, string Glyph)> _cachedDeviceDetailsMap = new(StringComparer.OrdinalIgnoreCase);
     private static DateTime _lastCacheTime = DateTime.MinValue;
     private static bool _lastQueryFailed = false;
     private static readonly object _cacheLock = new();
@@ -293,6 +400,90 @@ public static class WindowsAudioDeviceHelper
         return "Audio Endpoint";
     }
 
+    public static AudioDeviceCategory ClassifyDeviceCategory(string deviceName, uint formFactor = 10, string? driverOrId = null)
+    {
+        if (string.IsNullOrWhiteSpace(deviceName)) return AudioDeviceCategory.Unknown;
+
+        // 1. Bluetooth audio
+        if (deviceName.Contains("Bluetooth", StringComparison.OrdinalIgnoreCase) ||
+            (!string.IsNullOrEmpty(driverOrId) && driverOrId.Contains("BTH", StringComparison.OrdinalIgnoreCase)))
+        {
+            return AudioDeviceCategory.Bluetooth;
+        }
+
+        // 2. Monitor speakers (HDMI, DisplayPort, TV, Monitor, Intel Display Audio, NVIDIA, AMD)
+        if (formFactor == 9 /* DigitalAudioDisplayDevice */ ||
+            deviceName.Contains("HDMI", StringComparison.OrdinalIgnoreCase) ||
+            deviceName.Contains("DisplayPort", StringComparison.OrdinalIgnoreCase) ||
+            deviceName.Contains("Display Audio", StringComparison.OrdinalIgnoreCase) ||
+            deviceName.Contains("Display", StringComparison.OrdinalIgnoreCase) ||
+            deviceName.Contains("Monitor", StringComparison.OrdinalIgnoreCase) ||
+            deviceName.Contains("TV", StringComparison.OrdinalIgnoreCase) ||
+            deviceName.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase) ||
+            deviceName.Contains("AMD High Definition", StringComparison.OrdinalIgnoreCase))
+        {
+            return AudioDeviceCategory.MonitorSpeakers;
+        }
+
+        // 3. Headphones (aux / 3.5mm jack / IEM / Headset)
+        if (formFactor == 3 /* Headphones */ ||
+            formFactor == 5 /* Headset */ ||
+            deviceName.Contains("Headphone", StringComparison.OrdinalIgnoreCase) ||
+            deviceName.Contains("Headset", StringComparison.OrdinalIgnoreCase) ||
+            deviceName.Contains("Earphone", StringComparison.OrdinalIgnoreCase) ||
+            deviceName.Contains("IEM", StringComparison.OrdinalIgnoreCase))
+        {
+            return AudioDeviceCategory.Headphones;
+        }
+
+        // 4. External speakers (aux / Line Out / SPDIF / external DAC / USB speakers)
+        string[] dacKeywords = { "DAC", "FiiO", "Topping", "iFi", "Schiit", "Audioengine", "DragonFly", "Chord", "Zen", "Moondrop", "AudioQuest", "Cambridge" };
+        bool isDacOrInterface = dacKeywords.Any(kw => deviceName.Contains(kw, StringComparison.OrdinalIgnoreCase));
+        if (formFactor == 2 /* LineLevel */ ||
+            formFactor == 8 /* SPDIF */ ||
+            isDacOrInterface ||
+            deviceName.Contains("Line Out", StringComparison.OrdinalIgnoreCase) ||
+            deviceName.Contains("Aux", StringComparison.OrdinalIgnoreCase) ||
+            deviceName.Contains("Optical", StringComparison.OrdinalIgnoreCase) ||
+            deviceName.Contains("SPDIF", StringComparison.OrdinalIgnoreCase) ||
+            (deviceName.Contains("USB", StringComparison.OrdinalIgnoreCase) && !deviceName.Contains("Head", StringComparison.OrdinalIgnoreCase)))
+        {
+            return AudioDeviceCategory.ExternalSpeakers;
+        }
+
+        // 5. Laptop speakers (formFactor == 1 Speakers / internal laptop speakers / Realtek / Conexant)
+        if (formFactor == 1 /* Speakers */ ||
+            deviceName.Contains("Speaker", StringComparison.OrdinalIgnoreCase) ||
+            deviceName.Contains("Realtek", StringComparison.OrdinalIgnoreCase) ||
+            deviceName.Contains("Internal", StringComparison.OrdinalIgnoreCase) ||
+            deviceName.Contains("Built-in", StringComparison.OrdinalIgnoreCase))
+        {
+            return AudioDeviceCategory.LaptopSpeakers;
+        }
+
+        return AudioDeviceCategory.LaptopSpeakers;
+    }
+
+    public static string GetCategoryGlyph(AudioDeviceCategory category) => category switch
+    {
+        AudioDeviceCategory.LaptopSpeakers => "\uE7F8",
+        AudioDeviceCategory.MonitorSpeakers => "\uE7F4",
+        AudioDeviceCategory.ExternalSpeakers => "\uE7F5",
+        AudioDeviceCategory.Headphones => "\uE7F6",
+        AudioDeviceCategory.Bluetooth => "\uE702",
+        _ => "\uE7F5"
+    };
+
+    public static string GetCategoryDisplayName(AudioDeviceCategory category) => category switch
+    {
+        AudioDeviceCategory.LaptopSpeakers => "Laptop Speakers",
+        AudioDeviceCategory.MonitorSpeakers => "Monitor Speakers",
+        AudioDeviceCategory.ExternalSpeakers => "External Speakers",
+        AudioDeviceCategory.Headphones => "Headphones",
+        AudioDeviceCategory.Bluetooth => "Bluetooth Audio",
+        _ => "Audio Output"
+    };
+
     // TEST-07: pure parse of the PKEY_AudioEngine_DeviceFormat blob (a
     // WAVEFORMATEX or WAVEFORMATEXTENSIBLE) into the user-facing format string,
     // sample rate in kHz and effective bit depth. Extracted from the COM call so
@@ -346,11 +537,11 @@ public static class WindowsAudioDeviceHelper
         }
     }
 
-    public static (string Name, string Format, double SampleRateKhz, ushort BitDepth, string DeviceType) GetOutputDeviceInfo(string? deviceEndpointId = null, bool forceRefresh = false)
+    public static (string Name, string Format, double SampleRateKhz, ushort BitDepth, string DeviceType, AudioDeviceCategory Category, string Glyph) GetOutputDeviceInfo(string? deviceEndpointId = null, bool forceRefresh = false)
     {
         if (!OperatingSystem.IsWindows())
         {
-            return ("Default Audio Device", "Unknown", 44.1, 16, "Audio Endpoint");
+            return ("Default Audio Device", "Unknown", 44.1, 16, "Audio Endpoint", AudioDeviceCategory.Unknown, "\uE7F5");
         }
 
         string cacheKey = string.IsNullOrWhiteSpace(deviceEndpointId) ? "__default__" : deviceEndpointId;
@@ -425,7 +616,9 @@ public static class WindowsAudioDeviceHelper
                 }
 
                 string devType = ClassifyDeviceType(devName, formFactor);
-                var result = (devName, devFormat, devKhz, devBits, devType);
+                AudioDeviceCategory devCat = ClassifyDeviceCategory(devName, formFactor, deviceEndpointId);
+                string devGlyph = GetCategoryGlyph(devCat);
+                var result = (devName, devFormat, devKhz, devBits, devType, devCat, devGlyph);
                 lock (_cacheLock)
                 {
                     _cachedDeviceDetailsMap[cacheKey] = result;
@@ -467,9 +660,12 @@ public static class WindowsAudioDeviceHelper
 
     public static (string Name, string Format, double SampleRateKhz, ushort BitDepth) GetDefaultOutputDeviceDetails(bool forceRefresh = false)
     {
-        var (name, format, khz, bits, _) = GetOutputDeviceInfo(null, forceRefresh);
+        var (name, format, khz, bits, _, _, _) = GetOutputDeviceInfo(null, forceRefresh);
         return (name, format, khz, bits);
     }
+
+    public static AudioDeviceCategory GetDeviceCategory(string? deviceEndpointId = null) => GetOutputDeviceInfo(deviceEndpointId).Category;
+    public static string GetDeviceGlyph(string? deviceEndpointId = null) => GetOutputDeviceInfo(deviceEndpointId).Glyph;
 
     public static string? GetDefaultOutputEndpointId()
     {
@@ -481,15 +677,30 @@ public static class WindowsAudioDeviceHelper
         try
         {
             enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
-            if (enumerator.GetDefaultAudioEndpoint(0, 0, out device) == 0 && device != null)
+            // Try eMultimedia (1) first, fallback to eConsole (0)
+            int hr = enumerator.GetDefaultAudioEndpoint(0, 1, out device);
+            if (hr != 0 || device == null)
             {
-                if (device.GetId(out string id) == 0)
+                if (device != null)
+                {
+                    try { Marshal.ReleaseComObject(device); } catch { }
+                    device = null;
+                }
+                hr = enumerator.GetDefaultAudioEndpoint(0, 0, out device);
+            }
+
+            if (hr == 0 && device != null)
+            {
+                if (device.GetId(out string id) == 0 && !string.IsNullOrWhiteSpace(id))
                 {
                     return id;
                 }
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[WindowsAudioDeviceHelper] GetDefaultOutputEndpointId failed: {ex.Message}");
+        }
         finally
         {
             if (device != null) Marshal.ReleaseComObject(device);
@@ -500,22 +711,31 @@ public static class WindowsAudioDeviceHelper
         return null;
     }
 
-    private static (string Name, string Format, double SampleRateKhz, ushort BitDepth, string DeviceType) GetBassDeviceFallback(string? deviceEndpointId = null)
+    private static (string Name, string Format, double SampleRateKhz, ushort BitDepth, string DeviceType, AudioDeviceCategory Category, string Glyph) GetBassDeviceFallback(string? deviceEndpointId = null)
     {
         try
         {
+            if (string.IsNullOrWhiteSpace(deviceEndpointId) || deviceEndpointId == "__default__")
+            {
+                deviceEndpointId = null;
+            }
+
             for (int i = 1; ManagedBass.Bass.GetDeviceInfo(i, out var info); i++)
             {
-                if ((!string.IsNullOrWhiteSpace(deviceEndpointId) && info.Driver == deviceEndpointId) ||
+                if ((!string.IsNullOrWhiteSpace(deviceEndpointId) &&
+                     (string.Equals(info.Driver, deviceEndpointId, StringComparison.OrdinalIgnoreCase) ||
+                      (!string.IsNullOrEmpty(info.Driver) && info.Driver.Contains(deviceEndpointId, StringComparison.OrdinalIgnoreCase)))) ||
                     (string.IsNullOrWhiteSpace(deviceEndpointId) && info.IsDefault && info.IsEnabled))
                 {
                     string name = info.Name ?? "Default Audio Device";
                     string type = ClassifyDeviceType(name, 10);
-                    return (name, "Standard (44.1 kHz / 16-bit)", 44.1, 16, type);
+                    AudioDeviceCategory cat = ClassifyDeviceCategory(name, 10, info.Driver);
+                    string glyph = GetCategoryGlyph(cat);
+                    return (name, "Standard (44.1 kHz / 16-bit)", 44.1, 16, type, cat, glyph);
                 }
             }
         }
         catch { }
-        return ("Default Audio Device", "Standard (44.1 kHz / 16-bit)", 44.1, 16, "Audio Endpoint");
+        return ("Default Audio Device", "Standard (44.1 kHz / 16-bit)", 44.1, 16, "Audio Endpoint", AudioDeviceCategory.Unknown, "\uE7F5");
     }
 }

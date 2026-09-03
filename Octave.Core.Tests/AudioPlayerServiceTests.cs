@@ -37,116 +37,32 @@ public class AudioPlayerServiceTests : IDisposable
     }
 
     [Fact]
-    public void GetAvailableOutputDevices_ContainsDefaultAndHardwareDevices()
+    public void DeviceClassification_Maps5CategoriesAndGlyphsCorrectly()
     {
-        _player.Init();
-        var devices = _player.GetAvailableOutputDevices();
-        Assert.NotNull(devices);
-        Assert.NotEmpty(devices);
+        // 1. Bluetooth
+        var btCat = WindowsAudioDeviceHelper.ClassifyDeviceCategory("Sony WH-1000XM5 (Bluetooth)", 0, "BTHENUM\\{...}");
+        Assert.Equal(AudioDeviceCategory.Bluetooth, btCat);
+        Assert.Equal("\uE702", WindowsAudioDeviceHelper.GetCategoryGlyph(btCat));
 
-        // First device must be system default (-1)
-        var defaultDev = devices[0];
-        Assert.Equal(-1, defaultDev.Index);
-        Assert.True(defaultDev.IsDefault);
-        Assert.Contains("Default", defaultDev.Name);
+        // 2. Monitor speakers (HDMI / DisplayPort)
+        var monCat = WindowsAudioDeviceHelper.ClassifyDeviceCategory("LG UltraFine Display Audio (NVIDIA High Definition Audio)", 3, null);
+        Assert.Equal(AudioDeviceCategory.MonitorSpeakers, monCat);
+        Assert.Equal("\uE7F4", WindowsAudioDeviceHelper.GetCategoryGlyph(monCat));
 
-        _output.WriteLine($"Found {devices.Count} available output devices:");
-        foreach (var dev in devices)
-        {
-            var (n, fmt, khz, bits, t) = WindowsAudioDeviceHelper.GetOutputDeviceInfo(dev.Driver, forceRefresh: true);
-            _output.WriteLine($" -> [{dev.Index}] {dev.Name} (Driver: '{dev.Driver}') => Real Name: '{n}', Fmt: '{fmt}', {bits}-bit {khz}kHz, Type: '{t}'");
-        }
-    }
+        // 3. External speakers (Aux / Line Out / DAC)
+        var extCat = WindowsAudioDeviceHelper.ClassifyDeviceCategory("Realtek HD Audio 2nd output (Line Out)", 2, null);
+        Assert.Equal(AudioDeviceCategory.ExternalSpeakers, extCat);
+        Assert.Equal("\uE7F5", WindowsAudioDeviceHelper.GetCategoryGlyph(extCat));
 
-    [Fact]
-    public void SetOutputDevice_UpdatesCurrentDeviceIndex_AndRaisesEvent()
-    {
-        _player.Init();
-        bool eventFired = false;
-        _player.OutputDeviceChanged += (_, _) => eventFired = true;
+        // 4. Headphones (Aux / 3.5mm)
+        var hpCat = WindowsAudioDeviceHelper.ClassifyDeviceCategory("Headphones (Realtek(R) Audio)", 1, null);
+        Assert.Equal(AudioDeviceCategory.Headphones, hpCat);
+        Assert.Equal("\uE7F6", WindowsAudioDeviceHelper.GetCategoryGlyph(hpCat));
 
-        _player.SetOutputDevice(1);
-        Assert.Equal(1, _player.CurrentOutputDeviceIndex);
-        Assert.True(eventFired);
-
-        eventFired = false;
-        _player.SetOutputDevice(-1);
-        Assert.Equal(-1, _player.CurrentOutputDeviceIndex);
-        Assert.True(eventFired);
-    }
-
-    [Fact]
-    public void SetOutputDevice_ById_UpdatesCurrentDeviceEndpointId_AndRaisesEvent()
-    {
-        _player.Init();
-        var devices = _player.GetAvailableOutputDevices();
-        var realHardware = devices.FirstOrDefault(d => d.Index > 1 && !string.IsNullOrEmpty(d.Driver));
-
-        bool eventFired = false;
-        _player.OutputDeviceChanged += (_, _) => eventFired = true;
-
-        if (realHardware != null)
-        {
-            _player.SetOutputDevice(realHardware.Id);
-            Assert.Equal(realHardware.Id, _player.CurrentOutputDeviceId);
-            Assert.Equal(realHardware.Index, _player.CurrentOutputDeviceIndex);
-            Assert.True(eventFired);
-        }
-
-        eventFired = false;
-        _player.SetOutputDevice("__default__");
-        Assert.Null(_player.CurrentOutputDeviceId);
-        Assert.Equal(-1, _player.CurrentOutputDeviceIndex);
-        Assert.True(eventFired);
-    }
-
-    [Fact]
-    public void SetOutputDevice_WhilePlaying_SeamlesslyRecreatesOrMovesStream()
-    {
-        _player.Init();
-        string tempWav = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"stream_switch_{Guid.NewGuid():N}.wav");
-        WriteTestWav(tempWav, 3.0);
-        try
-        {
-            long session = _player.Play(tempWav);
-            Assert.True(session > 0);
-            Assert.Equal(PlaybackStatus.Playing, _player.Status);
-
-            // Switching to default while playing
-            _player.SetOutputDevice("__default__");
-            Assert.Equal(PlaybackStatus.Playing, _player.Status);
-
-            var defaultDev = _player.GetAvailableOutputDevices().FirstOrDefault(d => d.Index > 1 && d.IsDefault);
-            if (defaultDev != null)
-            {
-                _player.SetOutputDevice(defaultDev.Id);
-                Assert.Equal(PlaybackStatus.Playing, _player.Status);
-
-                _player.SetOutputDevice("__default__");
-                Assert.Equal(PlaybackStatus.Playing, _player.Status);
-            }
-        }
-        finally
-        {
-            _player.Stop();
-            try { System.IO.File.Delete(tempWav); } catch { }
-        }
-    }
-
-    [Fact]
-    public void SetOutputDevice_InvalidOrMissingId_FallsBackToDefault()
-    {
-        _player.Init();
-        _player.SetOutputDevice(1);
-
-        bool eventFired = false;
-        _player.OutputDeviceChanged += (_, _) => eventFired = true;
-
-        // Passing an unknown or unplugged ID must safely resolve to default
-        _player.SetOutputDevice("non-existent-device-guid");
-        Assert.Null(_player.CurrentOutputDeviceId);
-        Assert.Equal(-1, _player.CurrentOutputDeviceIndex);
-        Assert.True(eventFired);
+        // 5. Laptop speakers (Internal)
+        var lapCat = WindowsAudioDeviceHelper.ClassifyDeviceCategory("Speakers (Realtek(R) Audio)", 0, null);
+        Assert.Equal(AudioDeviceCategory.LaptopSpeakers, lapCat);
+        Assert.Equal("\uE7F8", WindowsAudioDeviceHelper.GetCategoryGlyph(lapCat));
     }
 
     [Fact]
@@ -242,120 +158,14 @@ public class AudioPlayerServiceTests : IDisposable
     [Fact]
     public void EnumerateCoreAudioEndpoints()
     {
-        var devices = _player.GetAvailableOutputDevices();
-        _output.WriteLine($"Audio Player Service found {devices.Count} endpoints:");
-        foreach (var d in devices)
-        {
-            var info = WindowsAudioDeviceHelper.GetOutputDeviceInfo(d.Driver, forceRefresh: true);
-            _output.WriteLine($"Endpoint: Name='{info.Name}', Driver='{d.Driver}', Type='{info.DeviceType}', Format='{info.Format}'");
-        }
+        var info = WindowsAudioDeviceHelper.GetOutputDeviceInfo(null, forceRefresh: true);
+        _output.WriteLine($"Default Output Endpoint: Name='{info.Name}', Type='{info.DeviceType}', Format='{info.Format}', Category='{info.Category}'");
+        Assert.False(string.IsNullOrWhiteSpace(info.Name));
 
         string? defId = WindowsAudioDeviceHelper.GetDefaultOutputEndpointId();
         _output.WriteLine($"Default Output Endpoint ID from CoreAudio: '{defId}'");
         Assert.NotNull(defId);
     }
-
-    [Fact]
-    public void TestActualPlaybackViaServiceOnEachDevice()
-    {
-        _player.Init();
-        string tempWav = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"srv_diag_{Guid.NewGuid():N}.wav");
-        WriteTestWav(tempWav, 2.0);
-        try
-        {
-            var devices = _player.GetAvailableOutputDevices();
-            _output.WriteLine($"Testing _player.Play() with {devices.Count} devices:");
-            foreach (var dev in devices)
-            {
-                _output.WriteLine($"--- Selecting [{dev.Index}] '{dev.Name}' (Id='{dev.Id}', Driver='{dev.Driver}') ---");
-                _player.SetOutputDevice(dev.Id);
-                long session = _player.Play(tempWav);
-                var status = _player.Status;
-                int bassDev = _player.CurrentOutputDeviceIndex;
-                string? devId = _player.CurrentOutputDeviceId;
-                _output.WriteLine($"    Play() result: Session={session}, Status={status}, CurrentOutputDeviceIndex={bassDev}, CurrentOutputDeviceId={devId}");
-
-                int activeDev = Bass.CurrentDevice;
-                _output.WriteLine($"    Bass.CurrentDevice={activeDev}, OutputDeviceQuality='{_player.OutputDeviceQuality}'");
-
-                _player.Stop();
-            }
-        }
-        finally
-        {
-            try { System.IO.File.Delete(tempWav); } catch { }
-        }
-    }
-
-    [Fact]
-    public void TestDevicePositionAdvancement()
-    {
-        _player.Init();
-        string tempWav = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"pos_adv_{Guid.NewGuid():N}.wav");
-        WriteTestWav(tempWav, 5.0);
-        try
-        {
-            var devices = _player.GetAvailableOutputDevices();
-            foreach (var dev in devices)
-            {
-                _player.SetOutputDevice(dev.Id);
-                long session = _player.Play(tempWav);
-                long startPos = Bass.ChannelGetPosition(_player.CurrentOutputDeviceIndex <= 0 ? 1 : _player.CurrentOutputDeviceIndex, PositionFlags.Bytes);
-                System.Threading.Thread.Sleep(200);
-                double currentSec = _player.GetPositionSeconds();
-                _output.WriteLine($"Device [{dev.Index}] '{dev.Name}': Played at {currentSec:0.00}s, Status={_player.Status}");
-                Assert.True(currentSec > 0.05, $"Position did not advance on device {dev.Name}!");
-            }
-        }
-        finally
-        {
-            try { System.IO.File.Delete(tempWav); } catch { }
-        }
-    }
-
-    [Fact]
-    public void TestLiveSwitchingWhilePlaying()
-    {
-        _player.Init();
-        string tempWav = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"switch_live_{Guid.NewGuid():N}.wav");
-        WriteTestWav(tempWav, 5.0);
-        try
-        {
-            var devices = _player.GetAvailableOutputDevices();
-            // Start playing on Headphones or first device
-            var firstDev = devices.FirstOrDefault(d => d.Index > 1) ?? devices.First();
-            _output.WriteLine($"Starting playback on [{firstDev.Index}] '{firstDev.Name}'...");
-            _player.SetOutputDevice(firstDev.Id);
-            long session = _player.Play(tempWav);
-            _output.WriteLine($"Playback started: Status={_player.Status}, Bass.CurrentDevice={Bass.CurrentDevice}");
-
-            // Now switch to Windows Default WHILE PLAYING!
-            _output.WriteLine($"--- Live switching to Windows Default (__default__) while playing ---");
-            _player.SetOutputDevice("__default__");
-            _output.WriteLine($"After switch to default: Status={_player.Status}, Bass.CurrentDevice={Bass.CurrentDevice}");
-
-            // Now switch to Speakers WHILE PLAYING!
-            var speakers = devices.FirstOrDefault(d => d.Name.Contains("Speakers"));
-            if (speakers != null)
-            {
-                _output.WriteLine($"--- Live switching to Speakers ({speakers.Id}) while playing ---");
-                _player.SetOutputDevice(speakers.Id);
-                _output.WriteLine($"After switch to speakers: Status={_player.Status}, Bass.CurrentDevice={Bass.CurrentDevice}");
-            }
-
-            // Now switch back to Windows Default WHILE PLAYING!
-            _output.WriteLine($"--- Live switching back to Windows Default while playing ---");
-            _player.SetOutputDevice("__default__");
-            _output.WriteLine($"After switch to default: Status={_player.Status}, Bass.CurrentDevice={Bass.CurrentDevice}");
-        }
-        finally
-        {
-            _player.Stop();
-            try { System.IO.File.Delete(tempWav); } catch { }
-        }
-    }
-
-
 
     private static void WriteTestWav(string path, double seconds, int sampleRate = 44100)
     {
@@ -642,4 +452,279 @@ public class AudioPlayerServiceTests : IDisposable
             }
         }
     }
+
+    [Fact]
+    public void GetDefaultOutputEndpointId_OnWindows_ReturnsValidGuid()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        string? defaultId = WindowsAudioDeviceHelper.GetDefaultOutputEndpointId();
+        Assert.NotNull(defaultId);
+        Assert.StartsWith("{", defaultId);
+    }
+
+    [Fact]
+    public void QualityDetails_LosslessWavPlayback_ReportsWavCodecFormat()
+    {
+        _player.Init();
+        string tempWav = Path.Combine(Path.GetTempPath(), $"wav_quality_{Guid.NewGuid():N}.wav");
+        WriteTestWav(tempWav, 2.0);
+        try
+        {
+            long session = _player.Play(tempWav);
+            Assert.True(session > 0);
+
+            var details = _player.QualityDetails;
+            Assert.NotNull(details);
+            Assert.Equal("WAV Uncompressed PCM", details.CodecFormat);
+            Assert.Contains("Direct Passthrough", details.DspStatus);
+            Assert.False(string.IsNullOrWhiteSpace(details.OutputDeviceName));
+        }
+        finally
+        {
+            _player.Stop();
+            try { File.Delete(tempWav); } catch { }
+        }
+    }
+
+    [Fact]
+    public void GetOutputDeviceInfo_FallbackHandlesDefaultSafely()
+    {
+        var infoDefault = WindowsAudioDeviceHelper.GetOutputDeviceInfo("__default__");
+        var infoNull = WindowsAudioDeviceHelper.GetOutputDeviceInfo(null);
+
+        Assert.False(string.IsNullOrWhiteSpace(infoDefault.Name));
+        Assert.False(string.IsNullOrWhiteSpace(infoNull.Name));
+        Assert.False(string.IsNullOrWhiteSpace(infoDefault.Glyph));
+        Assert.False(string.IsNullOrWhiteSpace(infoNull.Glyph));
+        Assert.True(infoDefault.SampleRateKhz > 0);
+        Assert.True(infoNull.SampleRateKhz > 0);
+    }
+
+    [Fact]
+    public void GetAvailableOutputDevices_ReturnsWindowsDefaultAsFirstItem()
+    {
+        _player.Init();
+        var devices = _player.GetAvailableOutputDevices();
+        Assert.NotEmpty(devices);
+
+        var first = devices[0];
+        Assert.Equal(-1, first.Index);
+        Assert.Equal("__default__", first.Id);
+        Assert.True(first.IsDefault);
+        Assert.True(first.IsEnabled);
+        Assert.StartsWith("Windows Default", first.Name);
+        Assert.False(string.IsNullOrWhiteSpace(first.Glyph));
+    }
+
+    [Fact]
+    public void SetOutputDevice_SessionOnly_TogglesCustomDeviceAndDefaultsOnStartup()
+    {
+        _player.Init();
+        // Default launch behavior: strictly system default on startup
+        Assert.Null(_player.SelectedCustomDeviceId);
+        Assert.False(_player.IsCustomDeviceSelected);
+
+        var devices = _player.GetAvailableOutputDevices();
+        var customDevice = devices.FirstOrDefault(d => d.Index > 0 && !string.IsNullOrEmpty(d.Driver));
+
+        if (customDevice != null)
+        {
+            _player.SetOutputDevice(customDevice.Id);
+            Assert.Equal(customDevice.Id, _player.SelectedCustomDeviceId);
+            Assert.True(_player.IsCustomDeviceSelected);
+
+            // Reverting to Windows Default
+            _player.SetOutputDevice("__default__");
+            Assert.Null(_player.SelectedCustomDeviceId);
+            Assert.False(_player.IsCustomDeviceSelected);
+        }
+    }
+
+    [Fact]
+    public void SetOutputDevice_WhilePlaying_PausesSwitchesAndResumes()
+    {
+        _player.Init();
+        string tempWav = Path.Combine(Path.GetTempPath(), $"switch_resume_{Guid.NewGuid():N}.wav");
+        WriteTestWav(tempWav, 3.0);
+        try
+        {
+            long session = _player.Play(tempWav);
+            Assert.True(session > 0);
+            Assert.Equal(PlaybackStatus.Playing, _player.Status);
+
+            var devices = _player.GetAvailableOutputDevices();
+            var targetDev = devices.FirstOrDefault(d => d.Index > 0 && !string.IsNullOrEmpty(d.Driver)) ?? devices[0];
+
+            _player.SetOutputDevice(targetDev.Id);
+
+            // Playback must automatically resume
+            Assert.Equal(PlaybackStatus.Playing, _player.Status);
+        }
+        finally
+        {
+            _player.Stop();
+            try { File.Delete(tempWav); } catch { }
+        }
+    }
+
+    [Fact]
+    public void SetOutputDevice_WhilePaused_PreservesPausedState()
+    {
+        _player.Init();
+        string tempWav = Path.Combine(Path.GetTempPath(), $"switch_paused_{Guid.NewGuid():N}.wav");
+        WriteTestWav(tempWav, 3.0);
+        try
+        {
+            long session = _player.Play(tempWav);
+            Assert.True(session > 0);
+
+            _player.Pause();
+            Assert.Equal(PlaybackStatus.Paused, _player.Status);
+
+            var devices = _player.GetAvailableOutputDevices();
+            var targetDev = devices.FirstOrDefault(d => d.Index > 0 && !string.IsNullOrEmpty(d.Driver)) ?? devices[0];
+
+            _player.SetOutputDevice(targetDev.Id);
+
+            // Playback must remain paused
+            Assert.Equal(PlaybackStatus.Paused, _player.Status);
+        }
+        finally
+        {
+            _player.Stop();
+            try { File.Delete(tempWav); } catch { }
+        }
+    }
+
+    [Fact]
+    public void DeviceDisconnection_WhileCustomActive_StopsPlaybackAndFallsBackToDefault()
+    {
+        _player.Init();
+        string tempWav = Path.Combine(Path.GetTempPath(), $"disconnect_fallback_{Guid.NewGuid():N}.wav");
+        WriteTestWav(tempWav, 3.0);
+        try
+        {
+            var devices = _player.GetAvailableOutputDevices();
+            var customDev = devices.FirstOrDefault(d => d.Index > 0 && !string.IsNullOrEmpty(d.Driver));
+
+            if (customDev != null)
+            {
+                _player.SetOutputDevice(customDev.Id);
+                Assert.Equal(customDev.Id, _player.SelectedCustomDeviceId);
+
+                long session = _player.Play(tempWav);
+                Assert.True(session > 0);
+                Assert.Equal(PlaybackStatus.Playing, _player.Status);
+
+                bool interrupted = false;
+                _player.PlaybackInterrupted += (_, _) => interrupted = true;
+
+                // Simulate physical removal of custom device
+                WindowsAudioDeviceHelper.TriggerDeviceRemovedForTesting(customDev.Id);
+
+                // Playback must stop immediately
+                Assert.True(interrupted);
+                Assert.Equal(PlaybackStatus.Paused, _player.Status);
+                // Custom device must be deselected, falling back to default
+                Assert.Null(_player.SelectedCustomDeviceId);
+                Assert.False(_player.IsCustomDeviceSelected);
+            }
+        }
+        finally
+        {
+            _player.Stop();
+            try { File.Delete(tempWav); } catch { }
+        }
+    }
+
+    [Fact]
+    public void EndpointsChanged_WhilePlayingOnWindowsDefault_RecreatesStreamAndAutoResumes()
+    {
+        _player.Init();
+        string tempWav = Path.Combine(Path.GetTempPath(), $"endpoint_reconnect_play_{Guid.NewGuid():N}.wav");
+        WriteTestWav(tempWav, 3.0);
+        try
+        {
+            long session = _player.Play(tempWav);
+            Assert.True(session > 0);
+            Assert.Equal(PlaybackStatus.Playing, _player.Status);
+            Assert.True(_player.CurrentStreamBassDevice > 0);
+
+            // Simulate Windows audio endpoint event (e.g. headphones reconnected or default changed)
+            WindowsAudioDeviceHelper.TriggerEndpointsChangedForTesting();
+
+            // Playback must remain playing seamlessly without getting stuck or stopped
+            Assert.Equal(PlaybackStatus.Playing, _player.Status);
+            Assert.True(_player.CurrentStreamBassDevice > 0);
+        }
+        finally
+        {
+            _player.Stop();
+            try { File.Delete(tempWav); } catch { }
+        }
+    }
+
+    [Fact]
+    public void EndpointsChanged_WhilePausedOnWindowsDefault_PreservesPausedState()
+    {
+        _player.Init();
+        string tempWav = Path.Combine(Path.GetTempPath(), $"endpoint_reconnect_pause_{Guid.NewGuid():N}.wav");
+        WriteTestWav(tempWav, 3.0);
+        try
+        {
+            long session = _player.Play(tempWav);
+            Assert.True(session > 0);
+            _player.Pause();
+            Assert.Equal(PlaybackStatus.Paused, _player.Status);
+
+            // Simulate Windows audio endpoint event while paused
+            WindowsAudioDeviceHelper.TriggerEndpointsChangedForTesting();
+
+            // Must preserve paused state and remain paused
+            Assert.Equal(PlaybackStatus.Paused, _player.Status);
+
+            // Resuming must work smoothly on the target device
+            _player.Resume();
+            Assert.Equal(PlaybackStatus.Playing, _player.Status);
+        }
+        finally
+        {
+            _player.Stop();
+            try { File.Delete(tempWav); } catch { }
+        }
+    }
+
+    [Fact]
+    public void DeviceRemoved_ActiveDefaultDevice_PausesAndFallsBack()
+    {
+        _player.Init();
+        string tempWav = Path.Combine(Path.GetTempPath(), $"endpoint_removed_default_{Guid.NewGuid():N}.wav");
+        WriteTestWav(tempWav, 3.0);
+        try
+        {
+            long session = _player.Play(tempWav);
+            Assert.True(session > 0);
+            Assert.Equal(PlaybackStatus.Playing, _player.Status);
+
+            string? currentEndpoint = _player.CurrentStreamEndpointId;
+            if (!string.IsNullOrEmpty(currentEndpoint))
+            {
+                bool interrupted = false;
+                _player.PlaybackInterrupted += (_, _) => interrupted = true;
+
+                // Simulate device removal of active default device
+                WindowsAudioDeviceHelper.TriggerDeviceRemovedForTesting(currentEndpoint);
+
+                // Playback must pause to prevent speaker blast
+                Assert.True(interrupted);
+                Assert.Equal(PlaybackStatus.Paused, _player.Status);
+            }
+        }
+        finally
+        {
+            _player.Stop();
+            try { File.Delete(tempWav); } catch { }
+        }
+    }
 }
+

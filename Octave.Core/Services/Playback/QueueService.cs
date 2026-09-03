@@ -132,6 +132,10 @@ public class QueueService : IQueueService, IDisposable
             PlaybackState? state = null;
             lock (_queueLock)
             {
+                for (int i = 0; i < _activeQueue.Count; i++)
+                {
+                    _activeQueue[i].IsPlaying = false;
+                }
                 state = CaptureStateUnlocked();
             }
             if (state != null) RaisePlaybackEvents(state);
@@ -769,33 +773,29 @@ public class QueueService : IQueueService, IDisposable
         PlaybackState? state = null;
         lock (_queueLock)
         {
-            if (_audioPlayer.Status == PlaybackStatus.Playing)
+            _audioPlayer.Pause();
+            for (int i = 0; i < _activeQueue.Count; i++)
             {
-                _audioPlayer.Pause();
-                state = CaptureStateUnlocked();
+                _activeQueue[i].IsPlaying = false;
             }
+            state = CaptureStateUnlocked();
         }
         if (state != null) RaisePlaybackEvents(state);
     }
 
     public void Resume()
     {
-        PlaybackState? state;
+        PlaybackState? state = null;
         lock (_queueLock)
         {
-            if (_audioPlayer.Status == PlaybackStatus.Paused)
+            _audioPlayer.Resume();
+            if (_audioPlayer.Status == PlaybackStatus.Playing)
             {
-                _audioPlayer.Resume();
-                // If resume failed because the device was disconnected, re-play the current track
-                if (_audioPlayer.Status != PlaybackStatus.Playing && _activeQueue.Count > 0)
+                if (_currentIndex >= 0 && _currentIndex < _activeQueue.Count)
                 {
-                    int indexToPlay = _currentIndex >= 0 ? _currentIndex : 0;
-                    state = PlayIndexInternal(indexToPlay);
+                    _activeQueue[_currentIndex].IsPlaying = true;
                 }
-                else
-                {
-                    state = CaptureStateUnlocked();
-                }
+                state = CaptureStateUnlocked();
             }
             else if (_activeQueue.Count > 0)
             {
@@ -805,7 +805,7 @@ public class QueueService : IQueueService, IDisposable
             }
             else
             {
-                state = null;
+                state = CaptureStateUnlocked();
             }
         }
         if (state != null) RaisePlaybackEvents(state);

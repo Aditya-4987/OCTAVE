@@ -197,6 +197,16 @@ public record SearchSuggestion(string Title, EntityType Type, string Id);
 // A cluster of tracks that appear to be the same composition across formats.
 public record DuplicateGroup(string Title, string ArtistName, System.Collections.Generic.List<Track> Tracks);
 
+public enum AudioDeviceCategory
+{
+    LaptopSpeakers,
+    MonitorSpeakers,
+    ExternalSpeakers,
+    Headphones,
+    Bluetooth,
+    Unknown
+}
+
 public record AudioOutputDeviceInfo(
     int Index,
     string Id,
@@ -204,7 +214,9 @@ public record AudioOutputDeviceInfo(
     string Driver,
     string DeviceType,
     bool IsDefault,
-    bool IsEnabled
+    bool IsEnabled,
+    AudioDeviceCategory Category = AudioDeviceCategory.Unknown,
+    string Glyph = "\uE7F5"
 );
 
 public record AudioQualityDetails(
@@ -221,5 +233,7 @@ public record AudioQualityDetails(
     string DspStatus,
     string OutputDeviceType = "Audio Endpoint",
     bool IsBitMatched = false,
-    int? BitrateKbps = null
+    int? BitrateKbps = null,
+    AudioDeviceCategory OutputDeviceCategory = AudioDeviceCategory.Unknown,
+    string OutputDeviceGlyph = "\uE7F5"
 );

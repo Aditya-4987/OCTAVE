@@ -188,18 +188,29 @@ OCTAVE/
   - `_streamLock` guards stream handle mutations (never held across slow I/O or event dispatches).
   - All public events (`TrackStarted`, `TrackEnded`, `PositionChanged`) are dispatched outside `_streamLock`.
 
-### 4.3 Hardware DAC Detection & Reactive Output Device Management (`WindowsAudioDeviceHelper.cs`, `ManagedBassAudioService.cs`)
+### 4.3 Hardware DAC Detection & Session-Only Audio Output Selector (`WindowsAudioDeviceHelper.cs`, `ManagedBassAudioService.cs`)
 - **Native CoreAudio COM & Hardware Notification Client**: Connects to Windows `IMMDeviceEnumerator` (`BCDE0395-E52F-467C-8E3D-C4579291692E`) and `IPropertyStore` (`886d8eeb-8cf2-4446-8d02-cdba1dbdcf99`) to read real hardware device formats (`PKEY_AudioEngine_DeviceFormat`) and endpoint form-factors (`PKEY_AudioEndpoint_FormFactor`).
-- **Reactive Hotplug Callback Pipeline (`IMMNotificationClient`)**: Implements `IMMNotificationClient` (`7991EEC9-7E89-4D85-8390-6C703CEC60C0`) listening to `OnDefaultDeviceChanged`, `OnDeviceAdded`, `OnDeviceRemoved`, `OnDeviceStateChanged`, and `OnPropertyValueChanged`. Immediately clears cached device details and fires `AudioEndpointsChanged` / `DefaultAudioEndpointChanged` across the application.
-- **Auto-Pause on Unplug & Safe Stream Migration**:
-  - When headphones or an external USB DAC are unplugged during playback, OCTAVE immediately pauses playback (`Bass.ChannelPause`) so laptop speakers do not suddenly blast audio into the room.
-  - Safely migrates the stream to device 1 (Windows Default) at the exact playback position (`autoResume: false`), preserving EQ and volume in a paused state, ready to resume on a single Play click.
-  - Fires `IAudioPlayerService.PlaybackInterrupted`, allowing `QueueService` to instantly capture `Status = Paused` and update the transport bar Play/Pause button and position ticker in lockstep.
-- **Dynamic Endpoint Routing & Resilient Hotplug Fallback**:
-  - `GetAvailableOutputDevices()` enumerates active BASS sound cards while filtering duplicate loopback devices.
-  - Windows default device dynamic tracking: BASS device 1 with `BASS_CONFIG_DEV_DEFAULT` automatically follows system default switches.
-  - Stable Windows Endpoint GUID persistence: Devices are identified and saved by permanent driver GUID (`AudioOutputDeviceId`). If an explicitly selected DAC is detached, OCTAVE automatically resets selection to Windows Default without freezing or crashing.
-  - Settings Page Auto-Update: Removed manual "Refresh Devices" button. The device selector ComboBox and DAC specs auto-update whenever Settings is opened and reactively refresh when any device connects or disconnects.
+- **Reactive Hotplug Callback Pipeline (`IMMNotificationClient`)**: Implements `IMMNotificationClient` (`7991EEC9-7E89-4D85-8390-6C703CEC60C0`) listening to `OnDefaultDeviceChanged`, `OnDeviceAdded`, `OnDeviceRemoved`, `OnDeviceStateChanged`, and `OnPropertyValueChanged`. Immediately clears cached device details and fires `AudioEndpointsChanged` / `OutputDeviceChanged` across the application.
+- **Session-Only Scope & Default Startup Behavior**:
+  - Custom audio device selection is strictly session-scoped in-memory (`_selectedCustomDeviceId` in `ManagedBassAudioService`).
+  - Device selections are **never** persisted to SQLite `AppSettings` or disk across application restarts.
+  - On application startup, OCTAVE always routes output to the system default device (Windows Default, `Index: -1`, `Id: "__default__"`).
+  - System isolation: Selecting an explicit output device never overwrites or corrupts the application's fallback pointer to the system default output device.
+- **Device Switching Flow & Dynamic Stream Migration**:
+  - When the user selects a custom output device or switches between devices, playback immediately pauses (`Bass.ChannelPause`).
+  - The stream is cleanly recreated on the target physical BASS device (`RecreateStreamOnDeviceUnlocked`) at the exact current position with EQ, volume, and ReplayGain restored.
+  - Playback automatically resumes (`Bass.ChannelPlay`) if it was playing when the switch occurred; if it was paused, it stays paused ready for resume.
+  - Active stream hardware state is tracked continuously via `_currentStreamBassDevice` and `_currentStreamEndpointId`.
+- **Bidirectional Dynamic Stream Migration (Windows Default Mode)**:
+  - **Virtual Default Device 1 Target**: In Windows Default mode (`_selectedCustomDeviceId == null`), the engine strictly targets BASS virtual device 1 (`Configuration.IncludeDefaultDevice = true`), which natively and dynamically tracks the OS default endpoint without getting tied to physical hardware device handles that can be invalidated on disconnect.
+  - **Reconnecting Personal Audio (Speakers $\to$ Headphones / Bluetooth / DAC)**: When personal audio devices are plugged in or reconnected, the engine detects default endpoint migration, pauses the old stream on speakers, recreates the stream on Device 1 (now routing to the new personal device) at the exact millisecond byte position, and automatically resumes playback seamlessly.
+  - **Disconnecting Personal Audio (Headphones / Bluetooth $\to$ Speakers)**: When removable listening devices are unplugged or disconnected, the engine immediately pauses playback (`Bass.ChannelPause`) to prevent room blasting, fires `PlaybackInterrupted` (transport bar displays Paused), and recreates the stream on Device 1 (now laptop speakers) in a paused state.
+  - **Paused State Preservation & Zero Audio Leakage**: Explicit `_isPlayingIntent`, `_isPaused`, and `_isStopped` state variables track playback intention independent of WASAPI buffer starvation. Recreating streams in a paused state leaves the channel paused without spurious `ChannelPlay` calls, preventing room blast and race conditions.
+- **Disconnection & Fallback Handling (`OnDeviceRemoved`)**:
+  - If an active custom device or default playback device becomes offline, disconnected, or physically detached during playback, playback stops immediately (`Bass.ChannelPause`).
+  - `PlaybackInterrupted` is fired, allowing `QueueService` to update all queue items to `IsPlaying = false` and broadcast `Status = Paused`.
+  - The custom device selection is automatically cleared (`_selectedCustomDeviceId = null`) and the UI ComboBox reverts to Windows Default.
+  - The stream is cleanly staged on the fallback default output device in a paused state, ready to resume on a single Play click.
 - **Audiophile Quality Badging & Bit-Matched Direct Detection**: Analyzes source stream resolution vs hardware output DAC format, detecting 1:1 bit-perfect output when sample rates match and DSP/EQ/ReplayGain scaling is flat. Emits `[HI-RES]` (Gold), `[LOSSLESS]` (Emerald), `[AAC]` / `[MP3]` (Cyan) badges across transport bar and Now Playing views.
 
 ---
@@ -208,6 +219,10 @@ OCTAVE/
 
 ### 5.1 `QueueService`
 - **Active & Unshuffled Queues**: Maintains an active playback queue (`ObservableCollection<QueueItem>`) and an unshuffled backup to preserve the original album/playlist order when toggling Shuffle off.
+- **Resilient Transport Controls & State Synchronization**:
+  - `Pause()` unconditionally sets `IsPlaying = false` on all active queue items, pauses the audio engine, captures state, and broadcasts playback state even if the underlying audio driver already stopped or paused. This guarantees the Play/Pause transport button never becomes stuck or unresponsive.
+  - `Resume()` handles paused, stopped, and invalidated stream states with automatic re-play fallback (`PlayIndexInternal`) if the driver requires a fresh stream.
+  - `PlaybackInterrupted` clears `IsPlaying` across the queue and notifies subscribers on the UI thread.
 - **Shuffle**: Implements Fisher-Yates shuffle with the currently playing track pinned at index 0. Injectable `Random` instance allows deterministic testing.
 - **Repeat Modes**: `None` (stops at end of queue), `Queue` (loops queue), `Track` (repeats current track).
 - **Auto-Advance & Resilient Error Handling**:

@@ -40,6 +40,7 @@ public sealed partial class SettingsPage : Page
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        ViewModel.RefreshAudioQuality();
         ViewModel.RefreshOutputDevices();
         await ViewModel.LoadFoldersAsync();
     }

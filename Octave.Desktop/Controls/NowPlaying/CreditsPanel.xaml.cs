@@ -120,25 +120,76 @@ public sealed partial class CreditsPanel : UserControl
     }
 
     public string FormatText(AudioQualityDetails? details) => details?.StreamQuality ?? "Lossless Stream";
-    public string OutputDeviceNameText(AudioQualityDetails? details)
+    public string ChannelsText(AudioQualityDetails? details) => !string.IsNullOrWhiteSpace(details?.ChannelsText) ? details.ChannelsText : "Stereo (2.0)";
+    public string CodecFormatText(AudioQualityDetails? details) => !string.IsNullOrWhiteSpace(details?.CodecFormat) ? details.CodecFormat : "Audio Stream";
+    public string DecoderEngineText(AudioQualityDetails? details) => !string.IsNullOrWhiteSpace(details?.DecoderEngine) ? details.DecoderEngine : "ManagedBASS x64 Engine";
+    
+    public string OutputDeviceNameText(AudioQualityDetails? details) =>
+        !string.IsNullOrWhiteSpace(details?.OutputDeviceName) ? details.OutputDeviceName : "Default Audio Device";
+
+    public string OutputDeviceCategoryText(AudioQualityDetails? details) =>
+        !string.IsNullOrWhiteSpace(details?.OutputDeviceType) ? details.OutputDeviceType : "Audio Endpoint";
+
+    public string OutputDeviceQualityText(AudioQualityDetails? details) =>
+        !string.IsNullOrWhiteSpace(details?.OutputDeviceQuality) ? details.OutputDeviceQuality : "Shared Mode";
+
+    public string ResamplingStatusText(AudioQualityDetails? details) =>
+        !string.IsNullOrWhiteSpace(details?.ResamplingStatus) ? details.ResamplingStatus : "Bit-Perfect (Direct Passthrough)";
+
+    public string DspStatusText(AudioQualityDetails? details) =>
+        !string.IsNullOrWhiteSpace(details?.DspStatus) ? details.DspStatus : "OCTAVE Pure Sound DSP Bypass (Bit-Perfect)";
+
+    public string OutputDeviceGlyph(AudioQualityDetails? details) =>
+        !string.IsNullOrWhiteSpace(details?.OutputDeviceGlyph) ? details.OutputDeviceGlyph : "\uE7F5";
+
+    public bool IsBitMatched(AudioQualityDetails? details) => details?.IsBitMatched ?? false;
+
+    public string QualityBadgeText(AudioQualityDetails? details)
     {
-        if (details == null) return "Default Playback Device";
-        if (!string.IsNullOrWhiteSpace(details.OutputDeviceType) && details.OutputDeviceType != "Audio Endpoint")
+        if (details == null) return "";
+        return details.QualityBadgeType switch
         {
-            return $"{details.OutputDeviceName} ({details.OutputDeviceType})";
-        }
-        return details.OutputDeviceName;
+            "HiRes" => "HI-RES",
+            "CDQuality" => "LOSSLESS",
+            "Compressed" => details.CodecFormat.Contains("AAC", StringComparison.OrdinalIgnoreCase) ? "AAC" :
+                           (details.CodecFormat.Contains("MP3", StringComparison.OrdinalIgnoreCase) ? "MP3" : "COMPRESSED"),
+            _ => "AUDIO"
+        };
     }
-    public string DecoderEngineText(AudioQualityDetails? details) => details?.DecoderEngine ?? "ManagedBASS Engine";
-    public string OutputDeviceQualityText(AudioQualityDetails? details)
+
+    public Microsoft.UI.Xaml.Media.Brush QualityBadgeBrush(AudioQualityDetails? details)
     {
-        if (details == null) return "DirectSound / WASAPI";
-        if (details.IsBitMatched)
+        string colorHex = details?.QualityBadgeType switch
         {
-            return $"{details.OutputDeviceQuality} [Bit-Matched]";
-        }
-        return details.OutputDeviceQuality;
+            "HiRes" => "#FFD54F",      // Amber / Gold
+            "CDQuality" => "#00E676",  // Studio Green
+            "Compressed" => "#90CAF9", // Clean Cyan
+            _ => "#888888"
+        };
+        return new Microsoft.UI.Xaml.Media.SolidColorBrush(ParseColor(colorHex));
     }
+
+    private static Windows.UI.Color ParseColor(string hex)
+    {
+        hex = hex.TrimStart('#');
+        if (hex.Length == 6)
+        {
+            byte r = Convert.ToByte(hex.Substring(0, 2), 16);
+            byte g = Convert.ToByte(hex.Substring(2, 2), 16);
+            byte b = Convert.ToByte(hex.Substring(4, 2), 16);
+            return Windows.UI.Color.FromArgb(255, r, g, b);
+        }
+        return Windows.UI.Color.FromArgb(255, 136, 136, 136);
+    }
+
+    public Visibility QualityBadgeVisibility(AudioQualityDetails? details) =>
+        !string.IsNullOrWhiteSpace(QualityBadgeText(details)) ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility BitMatchedVisibility(AudioQualityDetails? details) =>
+        (details?.IsBitMatched ?? false) ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility BoolToVisibility(bool val) => val ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility NotEmptyToVisibility(string? text) => !string.IsNullOrWhiteSpace(text) ? Visibility.Visible : Visibility.Collapsed;
 
     public string TrackAndDiscText(int trackNum, int discNum)
     {
@@ -154,7 +205,9 @@ public sealed partial class CreditsPanel : UserControl
         if (gain is float f && Math.Abs(f) > 0.001f) return $"{f:+0.00;-0.00} dB";
         return "-";
     }
+
     public string GenreDisplay(string genre) => !string.IsNullOrWhiteSpace(genre) ? genre : "Unknown Genre";
+
     public string BitDepthAndChannelsText(AudioQualityDetails? details)
     {
         if (details == null) return "Stereo (2.0)";

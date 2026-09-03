@@ -83,36 +83,112 @@
             </Button>
         </Border>
 
-        <!-- Tile 3: Audio Info -->
+        <!-- Tile 3: Audiophile Signal Path & Audio Info -->
         <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                 BorderThickness="1"
                 CornerRadius="8"
                 Padding="16,14">
-            <StackPanel Spacing="14">
-                <TextBlock Text="AUDIO INFO" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" CharacterSpacing="80"/>
+            <StackPanel Spacing="12">
+                <!-- Header: Title & Badges -->
+                <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock Text="AUDIOPHILE SIGNAL PATH" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" CharacterSpacing="80" VerticalAlignment="Center"/>
 
-                <Grid ColumnDefinitions="*,*">
-                    <StackPanel Grid.Column="0" Spacing="4">
-                        <TextBlock Text="STREAM FORMAT" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                        <TextBlock Text="{x:Bind FormatText(QualityDetails), Mode=OneWay}" FontSize="14" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
-                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                        <!-- Quality Tier Badge (HI-RES / LOSSLESS / AAC / MP3) -->
+                        <Border Background="#20FFFFFF"
+                                BorderBrush="{x:Bind QualityBadgeBrush(QualityDetails), Mode=OneWay}"
+                                BorderThickness="1" CornerRadius="3" Padding="5,1" VerticalAlignment="Center"
+                                Visibility="{x:Bind QualityBadgeVisibility(QualityDetails), Mode=OneWay}">
+                            <TextBlock Text="{x:Bind QualityBadgeText(QualityDetails), Mode=OneWay}"
+                                       FontSize="10" FontWeight="Bold" Foreground="{x:Bind QualityBadgeBrush(QualityDetails), Mode=OneWay}" VerticalAlignment="Center" />
+                        </Border>
 
-                    <StackPanel Grid.Column="1" Spacing="4">
-                        <TextBlock Text="OUTPUT DEVICE" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                        <TextBlock Text="{x:Bind OutputDeviceNameText(QualityDetails), Mode=OneWay}" FontSize="14" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis"/>
+                        <!-- Bit-Matched Direct Badge -->
+                        <Border Background="#26FFD54F" BorderBrush="#80FFD54F" BorderThickness="1" CornerRadius="3" Padding="5,1" VerticalAlignment="Center"
+                                Visibility="{x:Bind BitMatchedVisibility(QualityDetails), Mode=OneWay}">
+                            <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                <FontIcon Glyph="&#xE735;" FontFamily="Segoe MDL2 Assets" FontSize="9" Foreground="#FFD54F" />
+                                <TextBlock Text="BIT-MATCHED DIRECT" FontSize="9" FontWeight="Bold" Foreground="#FFD54F" />
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </Grid>
 
-                <Grid ColumnDefinitions="*,*">
-                    <StackPanel Grid.Column="0" Spacing="4">
-                        <TextBlock Text="DECODER ENGINE" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                        <TextBlock Text="{x:Bind DecoderEngineText(QualityDetails), Mode=OneWay}" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                <MenuFlyoutSeparator Margin="0,0,0,2" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+                <!-- Stream Source Section -->
+                <Grid ColumnDefinitions="*,*" RowSpacing="10" ColumnSpacing="16">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Stream (Source) Format -->
+                    <StackPanel Grid.Row="0" Grid.Column="0" Spacing="2">
+                        <TextBlock Text="STREAM (SOURCE)" FontSize="10" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                        <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                            <TextBlock Text="{x:Bind FormatText(QualityDetails), Mode=OneWay}" FontSize="13" FontWeight="SemiBold" Foreground="#00E676" VerticalAlignment="Center" />
+                            <TextBlock Text="{x:Bind ChannelsText(QualityDetails), Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                        </StackPanel>
                     </StackPanel>
 
-                    <StackPanel Grid.Column="1" Spacing="4">
-                        <TextBlock Text="DAC OUTPUT FORMAT" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                        <TextBlock Text="{x:Bind OutputDeviceQualityText(QualityDetails), Mode=OneWay}" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    <!-- Codec / Container -->
+                    <StackPanel Grid.Row="0" Grid.Column="1" Spacing="2">
+                        <TextBlock Text="CODEC / FORMAT" FontSize="10" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                        <TextBlock Text="{x:Bind CodecFormatText(QualityDetails), Mode=OneWay}" FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+
+                    <!-- Decoder Engine -->
+                    <StackPanel Grid.Row="1" Grid.Column="0" Spacing="2">
+                        <TextBlock Text="DECODER ENGINE" FontSize="10" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                        <TextBlock Text="{x:Bind DecoderEngineText(QualityDetails), Mode=OneWay}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+
+                    <!-- Resampling State -->
+                    <StackPanel Grid.Row="1" Grid.Column="1" Spacing="2">
+                        <TextBlock Text="RESAMPLING STATE" FontSize="10" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                        <TextBlock Text="{x:Bind ResamplingStatusText(QualityDetails), Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="#FFD54F" TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+                </Grid>
+
+                <MenuFlyoutSeparator Margin="0,2,0,2" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+                <!-- Hardware Output Section -->
+                <Grid ColumnDefinitions="*,*" RowSpacing="10" ColumnSpacing="16">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Active Output Device -->
+                    <StackPanel Grid.Row="0" Grid.Column="0" Spacing="2">
+                        <TextBlock Text="ACTIVE OUTPUT" FontSize="10" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                        <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                            <FontIcon Glyph="{x:Bind OutputDeviceGlyph(QualityDetails), Mode=OneWay}" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" VerticalAlignment="Center" />
+                            <TextBlock Text="{x:Bind OutputDeviceNameText(QualityDetails), Mode=OneWay}" FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- Device Category / DAC Type -->
+                    <StackPanel Grid.Row="0" Grid.Column="1" Spacing="2">
+                        <TextBlock Text="DEVICE CATEGORY / DAC" FontSize="10" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                        <TextBlock Text="{x:Bind OutputDeviceCategoryText(QualityDetails), Mode=OneWay}" FontSize="13" FontWeight="SemiBold" Foreground="#00E676" TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+
+                    <!-- Hardware Output Format -->
+                    <StackPanel Grid.Row="1" Grid.Column="0" Spacing="2">
+                        <TextBlock Text="HARDWARE OUTPUT FORMAT" FontSize="10" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                        <TextBlock Text="{x:Bind OutputDeviceQualityText(QualityDetails), Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+
+                    <!-- DSP / Processing Status -->
+                    <StackPanel Grid.Row="1" Grid.Column="1" Spacing="2">
+                        <TextBlock Text="DSP / PROCESSING" FontSize="10" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                        <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                            <FontIcon Glyph="&#xE9D9;" FontFamily="Segoe MDL2 Assets" FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
+                            <TextBlock Text="{x:Bind DspStatusText(QualityDetails), Mode=OneWay}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                        </StackPanel>
                     </StackPanel>
                 </Grid>
             </StackPanel>

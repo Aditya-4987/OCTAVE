@@ -265,6 +265,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
+
     private int _selectedSidebarTabIndex = 0;
 
     private void SetSidebarTab(int index)

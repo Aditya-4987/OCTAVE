@@ -85,13 +85,6 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
     public event EventHandler<TrackEndedEventArgs>? TrackEnded;
     public event EventHandler<double>? PositionChanged;
 
-    public ManagedBassAudioService()
-    {
-        _endSyncCallback = OnTrackEndedCallback;
-        WindowsAudioDeviceHelper.AudioEndpointsChanged += OnAudioEndpointsChanged;
-        WindowsAudioDeviceHelper.DefaultAudioEndpointChanged += OnDefaultAudioEndpointChanged;
-    }
-
     // Decoder add-ons that extend the core bass.dll (which only handles
     // MP3/MP2/MP1/OGG/WAV/AIFF). Drop the matching un4seen binaries next to
     // bass.dll and these formats start playing - missing ones are skipped.
@@ -108,160 +101,237 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         "basswv.dll"     // WavPack (.wv)
     };
 
+    private readonly object _deviceSwitchLock = new();
     private readonly List<int> _loadedPluginHandles = new();
     private float _currentReplayGainScale = 1.0f;
     private float _preampGainDb = 0.0f;
-    private int _currentDeviceIndex = -1;
-    private string? _currentDeviceEndpointId = null;
     private string? _currentTrackUri = null;
+    private string? _lastActiveDeviceEndpointId = null;
+    private string? _lastPlayingEndpointId = null;
+    private string? _selectedCustomDeviceId = null; // Session-only: never persisted across application restarts
+    private int _currentStreamBassDevice = 1;
+    private string? _currentStreamEndpointId = null;
+    private bool _isPlayingIntent = false;
+    private bool _isPaused = false;
+    private bool _isStopped = true;
 
     public event EventHandler? OutputDeviceChanged;
     public event EventHandler? PlaybackInterrupted;
 
-    private void OnDefaultAudioEndpointChanged(string? newDefaultDeviceId)
+    public string? LastActiveDeviceEndpointId => _lastActiveDeviceEndpointId;
+    public string? SelectedCustomDeviceId => _selectedCustomDeviceId;
+    public bool IsCustomDeviceSelected => !string.IsNullOrEmpty(_selectedCustomDeviceId);
+    public int CurrentStreamBassDevice => _currentStreamBassDevice;
+    public string? CurrentStreamEndpointId => _currentStreamEndpointId;
+    public AudioDeviceCategory CurrentDeviceCategory => WindowsAudioDeviceHelper.GetDeviceCategory(_selectedCustomDeviceId);
+    public string CurrentDeviceGlyph => WindowsAudioDeviceHelper.GetDeviceGlyph(_selectedCustomDeviceId);
+
+    public ManagedBassAudioService()
     {
-        if (_currentDeviceIndex <= 0 && string.IsNullOrWhiteSpace(_currentDeviceEndpointId))
-        {
-            lock (_streamLock)
-            {
-                if (_currentStream != 0)
-                {
-                    bool wasPlaying = Bass.ChannelIsActive(_currentStream) == ManagedBass.PlaybackState.Playing;
-                    if (wasPlaying)
-                    {
-                        Debug.WriteLine($"[OCTAVE ENGINE] Default audio endpoint changed during playback (new default: {newDefaultDeviceId}). Pausing playback...");
-                        Bass.ChannelPause(_currentStream);
-                        RecreateStreamOnDeviceUnlocked(1, autoResume: false);
-                        PlaybackInterrupted?.Invoke(this, EventArgs.Empty);
-                    }
-                    else
-                    {
-                        RecreateStreamOnDeviceUnlocked(1, autoResume: false);
-                    }
-                }
-            }
-            WindowsAudioDeviceHelper.ClearCache();
-            OutputDeviceChanged?.Invoke(this, EventArgs.Empty);
-        }
+        _endSyncCallback = OnTrackEndedCallback;
+        WindowsAudioDeviceHelper.StartMonitoring();
+        WindowsAudioDeviceHelper.DeviceRemoved += OnDeviceRemoved;
+        WindowsAudioDeviceHelper.AudioEndpointsChanged += OnAudioEndpointsChanged;
     }
 
-    private int ResolveBassDevice(int deviceIndex, string? driverGuid)
+    private void OnDeviceRemoved(string removedDeviceId)
     {
-        if (IsSilentFallback) return 0;
+        bool raiseInterrupted = false;
+        bool shouldNotifyChange = false;
 
-        // 1. If an explicit hardware device was requested, look for matching Driver GUID
-        if (deviceIndex > 0 && !string.IsNullOrWhiteSpace(driverGuid))
+        lock (_deviceSwitchLock)
         {
-            for (int i = 1; Bass.GetDeviceInfo(i, out var bInfo); i++)
+            WindowsAudioDeviceHelper.ClearCache();
+
+            lock (_streamLock)
             {
-                if (bInfo.IsEnabled && string.Equals(bInfo.Driver, driverGuid, StringComparison.OrdinalIgnoreCase))
+                // Case A: A custom output device was actively selected and it was removed/disconnected
+                if (!string.IsNullOrWhiteSpace(_selectedCustomDeviceId) &&
+                    string.Equals(_selectedCustomDeviceId, removedDeviceId, StringComparison.OrdinalIgnoreCase))
                 {
-                    return i;
+                    Debug.WriteLine($"[OCTAVE ENGINE] Active custom output device '{_selectedCustomDeviceId}' was removed. Stopping playback and reverting to Windows Default.");
+                    _isPlayingIntent = false;
+                    _isPaused = true;
+                    _isStopped = false;
+                    if (_currentStream != 0)
+                    {
+                        Bass.ChannelPause(_currentStream);
+                    }
+                    raiseInterrupted = true;
+
+                    double currentPos = GetPositionSeconds();
+                    _lastActiveDeviceEndpointId = removedDeviceId;
+                    _selectedCustomDeviceId = null; // deselect custom device
+
+                    RecreateStreamOnDeviceUnlocked(1, currentPos, autoResume: false);
+                    shouldNotifyChange = true;
+                }
+                // Case B: Windows Default was playing and the physical device behind it was removed
+                else if (string.IsNullOrWhiteSpace(_selectedCustomDeviceId) &&
+                         ((!string.IsNullOrWhiteSpace(_currentStreamEndpointId) && string.Equals(_currentStreamEndpointId, removedDeviceId, StringComparison.OrdinalIgnoreCase)) ||
+                          (!string.IsNullOrWhiteSpace(_lastPlayingEndpointId) && string.Equals(_lastPlayingEndpointId, removedDeviceId, StringComparison.OrdinalIgnoreCase))))
+                {
+                    Debug.WriteLine($"[OCTAVE ENGINE] Active default audio device '{removedDeviceId}' was removed during playback. Pausing immediately.");
+                    _isPlayingIntent = false;
+                    _isPaused = true;
+                    _isStopped = false;
+                    if (_currentStream != 0)
+                    {
+                        Bass.ChannelPause(_currentStream);
+                    }
+                    raiseInterrupted = true;
+
+                    double currentPos = GetPositionSeconds();
+                    _lastActiveDeviceEndpointId = removedDeviceId;
+
+                    RecreateStreamOnDeviceUnlocked(1, currentPos, autoResume: false);
+                    shouldNotifyChange = true;
                 }
             }
         }
 
-        // 2. Windows Default: resolve the real CoreAudio default endpoint ID
-        string? defEndpoint = Octave.Core.Helpers.WindowsAudioDeviceHelper.GetDefaultOutputEndpointId();
-        if (!string.IsNullOrWhiteSpace(defEndpoint))
+        if (raiseInterrupted)
         {
-            for (int i = 1; Bass.GetDeviceInfo(i, out var bInfo); i++)
-            {
-                if (bInfo.IsEnabled && string.Equals(bInfo.Driver, defEndpoint, StringComparison.OrdinalIgnoreCase))
-                {
-                    return i;
-                }
-            }
+            try { PlaybackInterrupted?.Invoke(this, EventArgs.Empty); }
+            catch (Exception ex) { Debug.WriteLine($"[OCTAVE ENGINE] PlaybackInterrupted handler failed: {ex.Message}"); }
         }
 
-        // 3. Fallback: BASS default device with actual hardware driver
-        for (int i = 2; Bass.GetDeviceInfo(i, out var bInfo); i++)
+        if (shouldNotifyChange)
         {
-            if (bInfo.IsEnabled && bInfo.IsDefault)
-            {
-                return i;
-            }
+            try { OutputDeviceChanged?.Invoke(this, EventArgs.Empty); }
+            catch (Exception ex) { Debug.WriteLine($"[OCTAVE ENGINE] OutputDeviceChanged handler failed: {ex.Message}"); }
         }
-
-        // 4. Fallback: first available enabled hardware device
-        for (int i = 2; Bass.GetDeviceInfo(i, out var bInfo); i++)
-        {
-            if (bInfo.IsEnabled) return i;
-        }
-
-        // 5. Ultimate fallback: device 1
-        return 1;
     }
 
     private void OnAudioEndpointsChanged()
     {
-        WindowsAudioDeviceHelper.ClearCache();
+        bool raiseInterrupted = false;
+        bool shouldNotifyChange = false;
 
-        lock (_streamLock)
+        lock (_deviceSwitchLock)
         {
-            // 1. If user had an explicit device selected, check if it was disconnected
-            if (!string.IsNullOrWhiteSpace(_currentDeviceEndpointId))
+            WindowsAudioDeviceHelper.ClearCache();
+
+            lock (_streamLock)
             {
-                var available = GetAvailableOutputDevices();
-                bool stillExists = available.Any(d => d.Index > 1 && string.Equals(d.Driver, _currentDeviceEndpointId, StringComparison.OrdinalIgnoreCase));
-                if (!stillExists)
+                string? currentDefault = WindowsAudioDeviceHelper.GetDefaultOutputEndpointId();
+
+                // =========================================================================
+                // CASE 1: Explicit Custom Output Device was selected by user for this session
+                // =========================================================================
+                if (!string.IsNullOrWhiteSpace(_selectedCustomDeviceId))
                 {
-                    Debug.WriteLine($"[OCTAVE ENGINE] Explicit output device '{_currentDeviceEndpointId}' was disconnected. Falling back to Windows Default...");
-                    bool wasPlaying = _currentStream != 0 && Bass.ChannelIsActive(_currentStream) == ManagedBass.PlaybackState.Playing;
-                    if (wasPlaying)
+                    var available = GetAvailableOutputDevices();
+                    bool stillExists = available.Any(d => d.Index > 0 && string.Equals(d.Id, _selectedCustomDeviceId, StringComparison.OrdinalIgnoreCase));
+                    if (!stillExists)
                     {
-                        Bass.ChannelPause(_currentStream);
-                        PlaybackInterrupted?.Invoke(this, EventArgs.Empty);
-                    }
+                        Debug.WriteLine($"[OCTAVE ENGINE] Active custom output device '{_selectedCustomDeviceId}' is no longer available. Stopping playback and reverting to Windows Default.");
+                        _isPlayingIntent = false;
+                        if (_currentStream != 0)
+                        {
+                            Bass.ChannelPause(_currentStream);
+                        }
+                        raiseInterrupted = true;
 
-                    _currentDeviceIndex = -1;
-                    _currentDeviceEndpointId = null;
-                    int defDev = ResolveBassDevice(-1, null);
-                    if (defDev > 0 && Bass.GetDeviceInfo(defDev, out var dInfo) && !dInfo.IsInitialized)
+                        double currentPos = GetPositionSeconds();
+                        _lastActiveDeviceEndpointId = _selectedCustomDeviceId;
+                        _selectedCustomDeviceId = null; // deselect custom device
+
+                        RecreateStreamOnDeviceUnlocked(1, currentPos, autoResume: false);
+                        shouldNotifyChange = true;
+                    }
+                    else
                     {
-                        Bass.Init(defDev, 44100, DeviceInitFlags.Default, IntPtr.Zero);
+                        // Custom device is still connected; leave playback running on it
+                        shouldNotifyChange = true;
                     }
-                    RecreateStreamOnDeviceUnlocked(defDev, autoResume: false);
-                    OutputDeviceChanged?.Invoke(this, EventArgs.Empty);
-                    return;
                 }
-            }
-
-            // 2. Windows Default: check if active hardware endpoint changed
-            int targetBassDev = ResolveBassDevice(_currentDeviceIndex, _currentDeviceEndpointId);
-            int currentStreamDev = _currentStream != 0 ? Bass.ChannelGetDevice(_currentStream) : -1;
-
-            if (_currentStream != 0 && targetBassDev > 0 && currentStreamDev != targetBassDev)
-            {
-                bool wasPlaying = Bass.ChannelIsActive(_currentStream) == ManagedBass.PlaybackState.Playing;
-                
-                // If headphones or external DAC were unplugged while playing: pause to prevent blasting laptop speakers!
-                bool wasHeadphonesOrDac = false;
-                if (currentStreamDev >= 0 && Bass.GetDeviceInfo(currentStreamDev, out var oldDevInfo))
-                {
-                    var details = WindowsAudioDeviceHelper.GetOutputDeviceInfo(oldDevInfo.Driver);
-                    wasHeadphonesOrDac = details.DeviceType == "Headphones" ||
-                                         details.DeviceType.Contains("DAC") ||
-                                         details.DeviceType.Contains("USB") ||
-                                         details.DeviceType.Contains("Bluetooth");
-                }
-
-                if (wasPlaying && wasHeadphonesOrDac)
-                {
-                    Debug.WriteLine("[OCTAVE ENGINE] Headphones / DAC unplugged during playback. Pausing to prevent speaker blast.");
-                    Bass.ChannelPause(_currentStream);
-                    PlaybackInterrupted?.Invoke(this, EventArgs.Empty);
-                    RecreateStreamOnDeviceUnlocked(targetBassDev, autoResume: false);
-                }
+                // =========================================================================
+                // CASE 2: Windows Default Mode (_selectedCustomDeviceId == null)
+                // =========================================================================
                 else
                 {
-                    // Seamless migration (e.g. headphones plugged in)
-                    RecreateStreamOnDeviceUnlocked(targetBassDev, autoResume: wasPlaying);
+                    // Check if the default Windows audio endpoint changed
+                    bool endpointChanged = !string.IsNullOrWhiteSpace(currentDefault) &&
+                        !string.Equals(_currentStreamEndpointId, currentDefault, StringComparison.OrdinalIgnoreCase);
+
+                    if (endpointChanged)
+                    {
+                        Debug.WriteLine($"[OCTAVE ENGINE] Windows default output changed: Old='{_currentStreamEndpointId}' -> New='{currentDefault}'");
+
+                        double currentPos = GetPositionSeconds();
+                        bool wasPlaying = _isPlayingIntent || (_currentStream != 0 && Bass.ChannelIsActive(_currentStream) == ManagedBass.PlaybackState.Playing);
+
+                        // Check if the old endpoint was a removable listening device that was disconnected
+                        bool oldWasRemovable = false;
+                        if (!string.IsNullOrWhiteSpace(_currentStreamEndpointId))
+                        {
+                            var oldInfo = WindowsAudioDeviceHelper.GetOutputDeviceInfo(_currentStreamEndpointId);
+                            oldWasRemovable = oldInfo.Category is AudioDeviceCategory.Headphones or AudioDeviceCategory.Bluetooth or AudioDeviceCategory.ExternalSpeakers or AudioDeviceCategory.MonitorSpeakers;
+                        }
+
+                        var available = GetAvailableOutputDevices();
+                        bool oldStillAvailable = !string.IsNullOrWhiteSpace(_currentStreamEndpointId) &&
+                            available.Any(d => d.Index > 0 && string.Equals(d.Id, _currentStreamEndpointId, StringComparison.OrdinalIgnoreCase));
+
+                        var newCategory = WindowsAudioDeviceHelper.GetDeviceCategory(currentDefault);
+                        bool isUnplugToSpeakers = oldWasRemovable && (!oldStillAvailable || newCategory is AudioDeviceCategory.LaptopSpeakers or AudioDeviceCategory.Unknown);
+
+                        if (isUnplugToSpeakers)
+                        {
+                            // Unplug / disconnect of headphones or bluetooth to speakers:
+                            // ALWAYS PAUSE to prevent room blasting
+                            Debug.WriteLine("[OCTAVE ENGINE] Removable device disconnected. Pausing to prevent speaker blast.");
+                            _isPlayingIntent = false;
+                            _isPaused = true;
+                            _isStopped = false;
+                            if (_currentStream != 0)
+                            {
+                                Bass.ChannelPause(_currentStream);
+                            }
+                            _lastActiveDeviceEndpointId = _currentStreamEndpointId;
+                            raiseInterrupted = true;
+
+                            // Migrate stream to device 1 (now laptop speakers) in paused state
+                            RecreateStreamOnDeviceUnlocked(1, currentPos, autoResume: false);
+                        }
+                        else
+                        {
+                            // Plug in or connect of headphones / Bluetooth / DAC (or user switched default in Windows):
+                            // Migrate stream to device 1 (now newly connected device) and automatically resume if was playing!
+                            Debug.WriteLine($"[OCTAVE ENGINE] New default device connected ({newCategory}). Migrating stream (wasPlaying={wasPlaying}).");
+                            if (_currentStream != 0)
+                            {
+                                Bass.ChannelPause(_currentStream);
+                            }
+
+                            RecreateStreamOnDeviceUnlocked(1, currentPos, autoResume: wasPlaying);
+                        }
+
+                        _currentStreamBassDevice = 1;
+                        _currentStreamEndpointId = currentDefault;
+                        _lastPlayingEndpointId = currentDefault;
+                        shouldNotifyChange = true;
+                    }
+                    else
+                    {
+                        shouldNotifyChange = true;
+                    }
                 }
             }
         }
 
-        OutputDeviceChanged?.Invoke(this, EventArgs.Empty);
+        if (raiseInterrupted)
+        {
+            try { PlaybackInterrupted?.Invoke(this, EventArgs.Empty); }
+            catch (Exception ex) { Debug.WriteLine($"[OCTAVE ENGINE] PlaybackInterrupted handler failed: {ex.Message}"); }
+        }
+
+        if (shouldNotifyChange)
+        {
+            try { OutputDeviceChanged?.Invoke(this, EventArgs.Empty); }
+            catch (Exception ex) { Debug.WriteLine($"[OCTAVE ENGINE] OutputDeviceChanged handler failed: {ex.Message}"); }
+        }
     }
 
     public bool Init()
@@ -285,13 +355,6 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         if (Bass.GetDeviceInfo(1, out var dev1) && !dev1.IsInitialized)
         {
             Bass.Init(1, 44100, DeviceInitFlags.Default, IntPtr.Zero);
-        }
-
-        // Also proactively initialize the real resolved default hardware endpoint
-        int realDefaultDev = ResolveBassDevice(-1, null);
-        if (realDefaultDev > 0 && Bass.GetDeviceInfo(realDefaultDev, out var realDev) && !realDev.IsInitialized)
-        {
-            Bass.Init(realDefaultDev, 44100, DeviceInitFlags.Default, IntPtr.Zero);
         }
 
         if (!_isInitialized)
@@ -436,15 +499,29 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
             // ---- Phase 2: create the new stream WITHOUT holding _streamLock ----
             // For HTTP sources this blocks on a network connect; holding the lock
             // here froze the position timer, FFT reads and Status/Position polls.
-            int targetDev = ResolveBassDevice(_currentDeviceIndex, _currentDeviceEndpointId);
-            if (!IsSilentFallback && targetDev > 0 && Bass.GetDeviceInfo(targetDev, out var dInfo) && !dInfo.IsInitialized)
+            int targetDev = ResolveBassDevice(_selectedCustomDeviceId);
+            if (!IsSilentFallback && targetDev > 1)
             {
-                Bass.Init(targetDev, 44100, DeviceInitFlags.Default, IntPtr.Zero);
+                if (Bass.GetDeviceInfo(targetDev, out var dInfo))
+                {
+                    if (dInfo.IsInitialized)
+                    {
+                        try { Bass.CurrentDevice = targetDev; Bass.Free(); } catch { }
+                    }
+                    Bass.Init(targetDev, 44100, DeviceInitFlags.Default, IntPtr.Zero);
+                }
+            }
+            else if (!IsSilentFallback && targetDev == 1)
+            {
+                if (Bass.GetDeviceInfo(1, out var dev1) && !dev1.IsInitialized)
+                {
+                    Bass.Init(1, 44100, DeviceInitFlags.Default, IntPtr.Zero);
+                }
             }
 
             try
             {
-                Bass.CurrentDevice = targetDev;
+                Bass.CurrentDevice = targetDev > 0 ? targetDev : 1;
             }
             catch { }
 
@@ -457,6 +534,17 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
             else
             {
                 stream = Bass.CreateStream(urlOrPath, 0, 0, BassFlags.Default);
+            }
+
+            // Fallback to default device 1 if custom device stream creation failed
+            if (stream == 0 && targetDev != 1)
+            {
+                Debug.WriteLine($"[OCTAVE ENGINE] Stream creation failed on target device {targetDev} ({Bass.LastError}). Falling back to default device 1...");
+                try { Bass.CurrentDevice = 1; } catch { }
+                stream = urlOrPath.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                         urlOrPath.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                    ? Bass.CreateStream(urlOrPath, 0, BassFlags.Default, null, IntPtr.Zero)
+                    : Bass.CreateStream(urlOrPath, 0, 0, BassFlags.Default);
             }
 
             // ---- Phase 3: install the new stream under _streamLock ----
@@ -475,15 +563,10 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
 
                     _currentTrackUri = urlOrPath;
                     _currentStream = stream;
-
-                    // Route new stream to user's selected hardware device or dynamic default if not already on it
-                    if (targetDev > 0 && Bass.GetDeviceInfo(targetDev, out var devInfo) && devInfo.IsInitialized)
-                    {
-                        if (Bass.ChannelGetDevice(stream) != targetDev)
-                        {
-                            Bass.ChannelSetDevice(stream, targetDev);
-                        }
-                    }
+                    int actualDev = Bass.ChannelGetDevice(stream);
+                    _currentStreamBassDevice = actualDev > 0 ? actualDev : targetDev;
+                    _currentStreamEndpointId = _selectedCustomDeviceId ?? WindowsAudioDeviceHelper.GetDefaultOutputEndpointId();
+                    _lastPlayingEndpointId = _currentStreamEndpointId;
 
                     // AUDIO-07: per-stream End-sync identity (see _endSyncs).
                     RegisterEndSyncUnlocked(stream, sessionId, urlOrPath);
@@ -540,6 +623,9 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
                     }
 
                     started = true;
+                    _isPlayingIntent = true;
+                    _isPaused = false;
+                    _isStopped = false;
                     Debug.WriteLine($"[OCTAVE ENGINE] Playing stream ID: {stream}, Session ID: {sessionId} (Crossfade: {fadeMs}ms)");
                 }
             }
@@ -550,6 +636,10 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
 
             if (started)
             {
+                _isPlayingIntent = true;
+                _isPaused = false;
+                _isStopped = false;
+                _lastPlayingEndpointId = _selectedCustomDeviceId ?? WindowsAudioDeviceHelper.GetDefaultOutputEndpointId();
                 // Start periodic position reporting and notify listeners OUTSIDE
                 // _streamLock (load-bearing invariant - see _streamLock comment).
                 StartPositionTimer();
@@ -566,6 +656,7 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
             }
             else if (stream == 0)
             {
+                _isPlayingIntent = false;
                 // On stream load failure (corrupted file, unsupported format),
                 // auto-advance queue off-thread with THIS call's session identity.
                 var handler = TrackEnded;
@@ -594,6 +685,9 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         StopPositionTimer();
         lock (_streamLock)
         {
+            _isPlayingIntent = false;
+            _isPaused = true;
+            _isStopped = false;
             if (_currentStream != 0)
             {
                 Bass.ChannelPause(_currentStream);
@@ -604,21 +698,35 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
     public void Resume()
     {
         bool resumed = false;
-        lock (_streamLock)
+        lock (_deviceSwitchLock)
         {
-            if (_currentStream != 0)
+            lock (_streamLock)
             {
-                resumed = Bass.ChannelPlay(_currentStream, false);
-                if (!resumed)
+                if (_currentStream != 0)
                 {
-                    Debug.WriteLine($"[OCTAVE ENGINE] ChannelPlay failed on Resume (Error: {Bass.LastError}). Recovering stream on current device...");
-                    int targetDev = _currentDeviceIndex <= 0 ? 1 : _currentDeviceIndex;
-                    RecreateStreamOnDeviceUnlocked(targetDev);
-                    resumed = _currentStream != 0 && Bass.ChannelIsActive(_currentStream) == ManagedBass.PlaybackState.Playing;
+                    int expectedDev = ResolveBassDevice(_selectedCustomDeviceId);
+                    if (expectedDev > 0 && expectedDev != _currentStreamBassDevice && !string.IsNullOrEmpty(_currentTrackUri))
+                    {
+                        double currentPos = GetPositionSeconds();
+                        RecreateStreamOnDeviceUnlocked(expectedDev, currentPos, autoResume: true);
+                        resumed = _currentStream != 0 && Bass.ChannelIsActive(_currentStream) == ManagedBass.PlaybackState.Playing;
+                    }
+                    else
+                    {
+                        resumed = Bass.ChannelPlay(_currentStream, false);
+                    }
                 }
             }
         }
-        if (resumed) StartPositionTimer();
+        if (resumed)
+        {
+            _isPlayingIntent = true;
+            _isPaused = false;
+            _isStopped = false;
+            _lastPlayingEndpointId = _selectedCustomDeviceId ?? WindowsAudioDeviceHelper.GetDefaultOutputEndpointId();
+            _currentStreamEndpointId = _lastPlayingEndpointId;
+            StartPositionTimer();
+        }
     }
 
     // Slides a superseded stream to silence and frees it after the fade. The
@@ -652,6 +760,9 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         StopPositionTimer();
         lock (_streamLock)
         {
+            _isPlayingIntent = false;
+            _isPaused = false;
+            _isStopped = true;
             // Abort any in-flight Play whose stream is still being created
             // outside the lock: it will see the new generation and free quietly.
             _stopGeneration++;
@@ -866,14 +977,21 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         {
             lock (_streamLock)
             {
-                if (_currentStream == 0) return PlaybackStatus.Stopped;
+                if (_isStopped || _currentStream == 0)
+                {
+                    if (_isPaused && !string.IsNullOrEmpty(_currentTrackUri)) return PlaybackStatus.Paused;
+                    return PlaybackStatus.Stopped;
+                }
+
+                if (_isPaused) return PlaybackStatus.Paused;
+
                 var active = Bass.ChannelIsActive(_currentStream);
                 return active switch
                 {
                     ManagedBass.PlaybackState.Playing => PlaybackStatus.Playing,
                     ManagedBass.PlaybackState.Paused => PlaybackStatus.Paused,
                     ManagedBass.PlaybackState.Stalled => PlaybackStatus.Buffering,
-                    _ => PlaybackStatus.Stopped
+                    _ => _isPlayingIntent ? PlaybackStatus.Playing : PlaybackStatus.Stopped
                 };
             }
         }
@@ -885,15 +1003,15 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
     {
         get
         {
-            var (name, _, _, _, _) = Octave.Core.Helpers.WindowsAudioDeviceHelper.GetOutputDeviceInfo(_currentDeviceEndpointId, forceRefresh: true);
-            if (!string.IsNullOrWhiteSpace(name) && name != "Default Audio Device") return name;
+            var info = Octave.Core.Helpers.WindowsAudioDeviceHelper.GetOutputDeviceInfo(_selectedCustomDeviceId);
+            if (!string.IsNullOrWhiteSpace(info.Name) && info.Name != "Default Audio Device") return info.Name;
 
             if (_isInitialized)
             {
-                int currentDev = _currentDeviceIndex >= 0 ? _currentDeviceIndex : Bass.CurrentDevice;
-                if (currentDev >= 0 && Bass.GetDeviceInfo(currentDev, out var info))
+                int currentDev = Bass.CurrentDevice;
+                if (currentDev >= 0 && Bass.GetDeviceInfo(currentDev, out var bDevInfo))
                 {
-                    return string.IsNullOrWhiteSpace(info.Name) ? "Default Audio Device" : info.Name;
+                    return string.IsNullOrWhiteSpace(bDevInfo.Name) ? "Default Audio Device" : bDevInfo.Name;
                 }
             }
             return "Default Audio Device";
@@ -904,12 +1022,12 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
     {
         get
         {
-            var (_, format, _, _, _) = Octave.Core.Helpers.WindowsAudioDeviceHelper.GetOutputDeviceInfo(_currentDeviceEndpointId, forceRefresh: true);
-            if (format != "Unknown") return format;
+            var info = Octave.Core.Helpers.WindowsAudioDeviceHelper.GetOutputDeviceInfo(_selectedCustomDeviceId);
+            if (info.Format != "Unknown") return info.Format;
 
-            if (_isInitialized && Bass.GetInfo(out var info))
+            if (_isInitialized && Bass.GetInfo(out var bInfo))
             {
-                double khz = info.SampleRate / 1000.0;
+                double khz = bInfo.SampleRate / 1000.0;
                 return $"{khz:0.0}kHz (Shared Mode)";
             }
             return "Unknown";
@@ -920,7 +1038,15 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
     {
         get
         {
-            var (devName, devFormat, devKhz, devBits, devType) = Octave.Core.Helpers.WindowsAudioDeviceHelper.GetOutputDeviceInfo(_currentDeviceEndpointId, forceRefresh: true);
+            var devInfo = Octave.Core.Helpers.WindowsAudioDeviceHelper.GetOutputDeviceInfo(_selectedCustomDeviceId);
+            string devName = devInfo.Name;
+            string devFormat = devInfo.Format;
+            double devKhz = devInfo.SampleRateKhz;
+            ushort devBits = devInfo.BitDepth;
+            string devType = devInfo.DeviceType;
+            AudioDeviceCategory devCat = devInfo.Category;
+            string devGlyph = devInfo.Glyph;
+
             if (string.IsNullOrWhiteSpace(devName)) devName = "Default Audio Device";
             if (string.IsNullOrWhiteSpace(devFormat) || devFormat == "Unknown")
             {
@@ -997,7 +1123,8 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
                 _ => $"{channels} Channels"
             };
 
-            bool isBitMatched = Math.Abs(sourceKhz - devKhz) < 0.1 && !_eqEnabled && Math.Abs(_currentReplayGainScale - 1.0f) < 0.01f && Math.Abs(_preampGainDb) < 0.01f;
+            // AUDIOPHILE INVARIANT: Bit-Matched Direct requires lossless source stream matching DAC format without DSP
+            bool isBitMatched = !isLossy && Math.Abs(sourceKhz - devKhz) < 0.1 && !_eqEnabled && Math.Abs(_currentReplayGainScale - 1.0f) < 0.01f && Math.Abs(_preampGainDb) < 0.01f;
 
             string resamplingStatus;
             if (isBitMatched)
@@ -1055,42 +1182,46 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
                 DspStatus: dspStatus,
                 OutputDeviceType: devType,
                 IsBitMatched: isBitMatched,
-                BitrateKbps: bitrateKbps
+                BitrateKbps: bitrateKbps,
+                OutputDeviceCategory: devCat,
+                OutputDeviceGlyph: devGlyph
             );
         }
     }
 
-    public int CurrentOutputDeviceIndex => _currentDeviceIndex;
-    public string? CurrentOutputDeviceId => _currentDeviceEndpointId;
-
     public IReadOnlyList<AudioOutputDeviceInfo> GetAvailableOutputDevices()
     {
-        Octave.Core.Helpers.WindowsAudioDeviceHelper.ClearCache();
+        WindowsAudioDeviceHelper.ClearCache();
         var list = new List<AudioOutputDeviceInfo>();
 
-        // 1. Always include Windows Default (Follow System)
-        var defaultInfo = Octave.Core.Helpers.WindowsAudioDeviceHelper.GetOutputDeviceInfo(null, forceRefresh: true);
+        // 1. Always include Windows Default (System Default) as the first entry
+        var defaultInfo = WindowsAudioDeviceHelper.GetOutputDeviceInfo(null, forceRefresh: true);
+        string defName = !string.IsNullOrWhiteSpace(defaultInfo.Name) ? defaultInfo.Name : "System Default";
         list.Add(new AudioOutputDeviceInfo(
             Index: -1,
             Id: "__default__",
-            Name: $"Windows Default ({defaultInfo.Name})",
+            Name: $"Windows Default ({defName})",
             Driver: "",
             DeviceType: defaultInfo.DeviceType,
             IsDefault: true,
-            IsEnabled: true
+            IsEnabled: true,
+            Category: defaultInfo.Category,
+            Glyph: defaultInfo.Glyph
         ));
 
-        // 2. Hardware devices from BASS
+        // 2. Physical hardware playback devices from BASS
         try
         {
             for (int i = 1; Bass.GetDeviceInfo(i, out var bInfo); i++)
             {
                 if (!bInfo.IsEnabled) continue;
-                // When IncludeDefaultDevice is enabled, device 1 is the duplicate mirror of "Default".
-                // Skip it so users only see the canonical -1 Windows Default and the real named hardware endpoints.
-                if (string.IsNullOrEmpty(bInfo.Driver) && (bInfo.Name == "Default" || bInfo.Name == "Default device")) continue;
 
-                var devInfo = Octave.Core.Helpers.WindowsAudioDeviceHelper.GetOutputDeviceInfo(bInfo.Driver, forceRefresh: true);
+                // When IncludeDefaultDevice is enabled, device 1 is the virtual duplicate entry for "Default".
+                // Skip device 1 here so users only see the canonical -1 Windows Default and real named hardware endpoints.
+                if (string.IsNullOrEmpty(bInfo.Driver) && (bInfo.Name == "Default" || bInfo.Name == "Default device"))
+                    continue;
+
+                var devInfo = WindowsAudioDeviceHelper.GetOutputDeviceInfo(bInfo.Driver, forceRefresh: true);
                 string name = !string.IsNullOrWhiteSpace(bInfo.Name) ? bInfo.Name : devInfo.Name;
                 string type = devInfo.DeviceType;
 
@@ -1101,7 +1232,9 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
                     Driver: bInfo.Driver ?? "",
                     DeviceType: type,
                     IsDefault: bInfo.IsDefault,
-                    IsEnabled: bInfo.IsEnabled
+                    IsEnabled: bInfo.IsEnabled,
+                    Category: devInfo.Category,
+                    Glyph: devInfo.Glyph
                 ));
             }
         }
@@ -1115,98 +1248,88 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
 
     public void SetOutputDevice(string? deviceId)
     {
-        if (string.IsNullOrWhiteSpace(deviceId) || deviceId == "__default__")
+        string? targetGuid = (string.IsNullOrWhiteSpace(deviceId) || deviceId == "__default__") ? null : deviceId;
+
+        lock (_deviceSwitchLock)
         {
-            SetOutputDeviceInternal(-1, null);
-            return;
-        }
-
-        // Search BASS devices for matching Driver GUID
-        for (int i = 1; Bass.GetDeviceInfo(i, out var bInfo); i++)
-        {
-            if (string.Equals(bInfo.Driver, deviceId, StringComparison.OrdinalIgnoreCase))
-            {
-                SetOutputDeviceInternal(i, bInfo.Driver);
-                return;
-            }
-        }
-
-        // If not found (e.g. unplugged), fallback to default
-        SetOutputDeviceInternal(-1, null);
-    }
-
-    public void SetOutputDevice(int deviceIndex)
-    {
-        if (deviceIndex <= 0)
-        {
-            SetOutputDeviceInternal(-1, null);
-        }
-        else if (Bass.GetDeviceInfo(deviceIndex, out var bInfo))
-        {
-            SetOutputDeviceInternal(deviceIndex, bInfo.Driver);
-        }
-        else
-        {
-            SetOutputDeviceInternal(-1, null);
-        }
-    }
-
-    private void SetOutputDeviceInternal(int deviceIndex, string? driverGuid)
-    {
-        int normalizedIndex = deviceIndex <= 0 ? -1 : deviceIndex;
-        string? normalizedGuid = normalizedIndex == -1 ? null : driverGuid;
-
-        lock (_streamLock)
-        {
-            if (_currentDeviceIndex == normalizedIndex && string.Equals(_currentDeviceEndpointId, normalizedGuid, StringComparison.OrdinalIgnoreCase))
-            {
-                // Already targeting this exact device. Do not recreate streams or fire redundant events.
-                return;
-            }
-        }
-
-        try
-        {
-            int targetBassDev = ResolveBassDevice(normalizedIndex, normalizedGuid);
-
-            if (!IsSilentFallback && targetBassDev > 0 && Bass.GetDeviceInfo(targetBassDev, out var dInfo) && !dInfo.IsInitialized)
-            {
-                Bass.Init(targetBassDev, 44100, DeviceInitFlags.Default, IntPtr.Zero);
-            }
-
             lock (_streamLock)
             {
-                _currentDeviceIndex = normalizedIndex;
-                _currentDeviceEndpointId = normalizedGuid;
-
-                if (_currentStream != 0 && targetBassDev > 0)
+                if (string.Equals(_selectedCustomDeviceId, targetGuid, StringComparison.OrdinalIgnoreCase))
                 {
-                    bool wasPlaying = Bass.ChannelIsActive(_currentStream) == ManagedBass.PlaybackState.Playing;
-                    RecreateStreamOnDeviceUnlocked(targetBassDev, autoResume: wasPlaying);
+                    // Already targeting this device
+                    return;
+                }
+
+                bool wasPlaying = _currentStream != 0 && Bass.ChannelIsActive(_currentStream) == ManagedBass.PlaybackState.Playing;
+                double currentPos = GetPositionSeconds();
+
+                // 3. Device Switching Flow: Immediately pause/stop active audio playback.
+                if (wasPlaying)
+                {
+                    Bass.ChannelPause(_currentStream);
+                }
+
+                _selectedCustomDeviceId = targetGuid;
+
+                int targetBassDev = ResolveBassDevice(_selectedCustomDeviceId);
+                if (!IsSilentFallback && targetBassDev > 0 && Bass.GetDeviceInfo(targetBassDev, out var dInfo) && !dInfo.IsInitialized)
+                {
+                    Bass.Init(targetBassDev, 44100, DeviceInitFlags.Default, IntPtr.Zero);
+                }
+
+                if (_currentStream != 0 && !string.IsNullOrEmpty(_currentTrackUri))
+                {
+                    // Switch the active audio stream to the selected target device & automatically resume
+                    RecreateStreamOnDeviceUnlocked(targetBassDev, currentPos, autoResume: wasPlaying);
+                }
+                else
+                {
+                    try { Bass.CurrentDevice = targetBassDev > 0 ? targetBassDev : 1; } catch { }
+                    _currentStreamBassDevice = targetBassDev;
+                    _currentStreamEndpointId = _selectedCustomDeviceId ?? WindowsAudioDeviceHelper.GetDefaultOutputEndpointId();
+                    _lastPlayingEndpointId = _currentStreamEndpointId;
                 }
             }
-
-            if (Bass.GetDeviceInfo(targetBassDev, out var postInfo) && postInfo.IsInitialized)
-            {
-                try { Bass.CurrentDevice = targetBassDev; } catch { }
-            }
-
-            Octave.Core.Helpers.WindowsAudioDeviceHelper.ClearCache();
-            OutputDeviceChanged?.Invoke(this, EventArgs.Empty);
-            Debug.WriteLine($"[OCTAVE ENGINE] Output device changed to index {normalizedIndex} (Resolved BASS: {targetBassDev}, Endpoint: {_currentDeviceEndpointId ?? "Default"})");
         }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"[OCTAVE ENGINE] SetOutputDeviceInternal failed: {ex.Message}");
-        }
+
+        WindowsAudioDeviceHelper.ClearCache();
+        try { OutputDeviceChanged?.Invoke(this, EventArgs.Empty); }
+        catch (Exception ex) { Debug.WriteLine($"[OCTAVE ENGINE] OutputDeviceChanged handler failed: {ex.Message}"); }
+        Debug.WriteLine($"[OCTAVE ENGINE] Output device changed to '{_selectedCustomDeviceId ?? "Windows Default"}'");
     }
 
-    private void RecreateStreamOnDeviceUnlocked(int targetBassDev, bool autoResume = true)
+    private int ResolveBassDevice(string? driverGuid)
+    {
+        if (IsSilentFallback) return 0;
+
+        // 1. If an explicit custom device was requested, look for matching Driver GUID
+        if (!string.IsNullOrWhiteSpace(driverGuid) && driverGuid != "__default__")
+        {
+            if (int.TryParse(driverGuid, out int parsedIdx) && parsedIdx > 0)
+            {
+                if (Bass.GetDeviceInfo(parsedIdx, out var pInfo) && pInfo.IsEnabled)
+                    return parsedIdx;
+            }
+
+            for (int i = 1; Bass.GetDeviceInfo(i, out var bInfo); i++)
+            {
+                if (bInfo.IsEnabled && !string.IsNullOrEmpty(bInfo.Driver) &&
+                    (string.Equals(bInfo.Driver, driverGuid, StringComparison.OrdinalIgnoreCase) ||
+                     bInfo.Driver.Contains(driverGuid, StringComparison.OrdinalIgnoreCase) ||
+                     driverGuid.Contains(bInfo.Driver, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return i;
+                }
+            }
+        }
+
+        // 2. Windows Default: Always route to BASS device 1 (the dynamic default device)
+        return 1;
+    }
+
+    private void RecreateStreamOnDeviceUnlocked(int targetBassDev, double currentPos, bool autoResume = true)
     {
         if (string.IsNullOrEmpty(_currentTrackUri)) return;
-
-        double currentPos = GetPositionSeconds();
-        bool wasPlaying = _currentStream != 0 && Bass.ChannelIsActive(_currentStream) == ManagedBass.PlaybackState.Playing;
 
         if (_currentStream != 0)
         {
@@ -1217,15 +1340,23 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
             _currentStream = 0;
         }
 
-        if (targetBassDev > 0 && (!Bass.GetDeviceInfo(targetBassDev, out var devInit) || !devInit.IsInitialized))
+        if (targetBassDev > 1 && Bass.GetDeviceInfo(targetBassDev, out var devInfo))
         {
+            if (devInfo.IsInitialized)
+            {
+                try { Bass.CurrentDevice = targetBassDev; Bass.Free(); } catch { }
+            }
             Bass.Init(targetBassDev, 44100, DeviceInitFlags.Default, IntPtr.Zero);
         }
-
-        if (targetBassDev > 0 && Bass.GetDeviceInfo(targetBassDev, out var devPost) && devPost.IsInitialized)
+        else if (targetBassDev == 1)
         {
-            try { Bass.CurrentDevice = targetBassDev; } catch { }
+            if (Bass.GetDeviceInfo(1, out var dev1) && !dev1.IsInitialized)
+            {
+                Bass.Init(1, 44100, DeviceInitFlags.Default, IntPtr.Zero);
+            }
         }
+
+        try { Bass.CurrentDevice = targetBassDev > 0 ? targetBassDev : 1; } catch { }
 
         int newStream;
         if (_currentTrackUri.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
@@ -1238,29 +1369,54 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
             newStream = Bass.CreateStream(_currentTrackUri, 0, 0, BassFlags.Default);
         }
 
+        // Fallback to default device 1 if custom device stream creation failed
+        if (newStream == 0 && targetBassDev != 1)
+        {
+            Debug.WriteLine($"[OCTAVE ENGINE] Stream creation failed on target device {targetBassDev} ({Bass.LastError}). Falling back to default device 1...");
+            try { Bass.CurrentDevice = 1; } catch { }
+            newStream = _currentTrackUri.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                        _currentTrackUri.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                ? Bass.CreateStream(_currentTrackUri, 0, BassFlags.Default, null, IntPtr.Zero)
+                : Bass.CreateStream(_currentTrackUri, 0, 0, BassFlags.Default);
+            targetBassDev = 1;
+        }
+
         if (newStream != 0)
         {
             _currentStream = newStream;
-            if (targetBassDev > 0 && Bass.GetDeviceInfo(targetBassDev, out var devChk) && devChk.IsInitialized)
-            {
-                if (Bass.ChannelGetDevice(_currentStream) != targetBassDev)
-                {
-                    Bass.ChannelSetDevice(_currentStream, targetBassDev);
-                }
-            }
+            int actualDev = Bass.ChannelGetDevice(newStream);
+            _currentStreamBassDevice = actualDev > 0 ? actualDev : targetBassDev;
+            _currentStreamEndpointId = _selectedCustomDeviceId ?? WindowsAudioDeviceHelper.GetDefaultOutputEndpointId();
+            _lastPlayingEndpointId = _currentStreamEndpointId;
+
             RegisterEndSyncUnlocked(_currentStream, _sessionIdCounter, _currentTrackUri);
             UpdateStreamVolumeUnlocked();
             if (_eqEnabled) SetupEqUnlocked();
+
             if (currentPos > 0)
             {
                 long bytePos = Bass.ChannelSeconds2Bytes(_currentStream, currentPos);
                 Bass.ChannelSetPosition(_currentStream, bytePos);
             }
-            if (wasPlaying && autoResume)
+
+            if (autoResume)
             {
+                _isPlayingIntent = true;
+                _isPaused = false;
+                _isStopped = false;
                 Bass.ChannelPlay(_currentStream, false);
+                StartPositionTimer();
             }
-            Debug.WriteLine($"[OCTAVE ENGINE] Stream successfully recreated on device {targetBassDev} at position {currentPos:0.0}s (autoResume={autoResume})");
+            else
+            {
+                _isPlayingIntent = false;
+                _isPaused = true;
+                _isStopped = false;
+                Bass.ChannelPause(_currentStream);
+                StopPositionTimer();
+            }
+
+            Debug.WriteLine($"[OCTAVE ENGINE] Stream successfully recreated on device {_currentStreamBassDevice} ('{_currentStreamEndpointId}') at position {currentPos:0.0}s (autoResume={autoResume})");
         }
     }
 
@@ -1507,8 +1663,9 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
 
     public void Dispose()
     {
+        WindowsAudioDeviceHelper.DeviceRemoved -= OnDeviceRemoved;
         WindowsAudioDeviceHelper.AudioEndpointsChanged -= OnAudioEndpointsChanged;
-        WindowsAudioDeviceHelper.DefaultAudioEndpointChanged -= OnDefaultAudioEndpointChanged;
+        WindowsAudioDeviceHelper.StopMonitoring();
         StopPositionTimer();
         lock (_streamLock)
         {

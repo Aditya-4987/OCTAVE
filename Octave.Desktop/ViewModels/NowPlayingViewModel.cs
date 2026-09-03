@@ -199,6 +199,8 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
         _queueService.PlaybackStateChanged += OnPlaybackStateChanged;
         _queueService.QueueChanged += OnQueueChanged;
         _audioPlayer.PositionChanged += OnPositionChanged;
+        _audioPlayer.OutputDeviceChanged += OnOutputDeviceChanged;
+        Octave.Core.Helpers.WindowsAudioDeviceHelper.AudioEndpointsChanged += OnAudioEndpointsChanged;
         _libraryService.FavoritesChanged += OnFavoritesChanged;
     }
 
@@ -210,6 +212,8 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
         _queueService.PlaybackStateChanged -= OnPlaybackStateChanged;
         _queueService.QueueChanged -= OnQueueChanged;
         _audioPlayer.PositionChanged -= OnPositionChanged;
+        _audioPlayer.OutputDeviceChanged -= OnOutputDeviceChanged;
+        Octave.Core.Helpers.WindowsAudioDeviceHelper.AudioEndpointsChanged -= OnAudioEndpointsChanged;
         _libraryService.FavoritesChanged -= OnFavoritesChanged;
     }
 
@@ -263,6 +267,24 @@ public partial class NowPlayingViewModel : ObservableObject, IDisposable
         {
             if (_isDisposed) return;
             UpdateFromState(state);
+        });
+    }
+
+    private void OnOutputDeviceChanged(object? sender, EventArgs e)
+    {
+        _dispatcher.TryEnqueue(() =>
+        {
+            if (_isDisposed) return;
+            QualityDetails = _audioPlayer.QualityDetails;
+        });
+    }
+
+    private void OnAudioEndpointsChanged()
+    {
+        _dispatcher.TryEnqueue(() =>
+        {
+            if (_isDisposed) return;
+            QualityDetails = _audioPlayer.QualityDetails;
         });
     }
 

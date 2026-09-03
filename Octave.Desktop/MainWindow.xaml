@@ -644,6 +644,17 @@
 
                                     <!-- Stream Quality Text (e.g. 24-bit 96.0kHz or 320 kbps 44.1kHz) -->
                                     <TextBlock Text="{x:Bind ViewModel.StreamingQuality, Mode=OneWay}" FontSize="10" FontWeight="Medium" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+
+                                    <!-- Output Device Icon & Category -->
+                                    <Border Background="#10FFFFFF" CornerRadius="3" Padding="4,1" VerticalAlignment="Center"
+                                            ToolTipService.ToolTip="{x:Bind ViewModel.OutputDeviceTooltip, Mode=OneWay}">
+                                        <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                            <FontIcon Glyph="{x:Bind ViewModel.OutputDeviceGlyph, Mode=OneWay}" FontFamily="Segoe MDL2 Assets"
+                                                      FontSize="10" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
+                                            <TextBlock Text="{x:Bind ViewModel.OutputDeviceCategoryText, Mode=OneWay}"
+                                                       FontSize="9" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </Border>
                                 </StackPanel>
                             </Border>
                         </StackPanel>

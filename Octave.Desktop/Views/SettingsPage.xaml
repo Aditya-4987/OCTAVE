@@ -90,11 +90,11 @@
 
                         <MenuFlyoutSeparator />
 
-                        <!-- Device Selector -->
+                        <!-- Audio Output Device Selector (Session-Only) -->
                         <Grid ColumnDefinitions="*,Auto" Padding="0,4">
                             <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center" Margin="0,0,12,0">
-                                <TextBlock Text="Active Output Device" Style="{StaticResource RowTitleStyle}" />
-                                <TextBlock Text="Select which sound card, external DAC, or audio endpoint receives playback."
+                                <TextBlock Text="Audio Output Device" Style="{StaticResource RowTitleStyle}" />
+                                <TextBlock Text="Select a playback device for this session. Always defaults to Windows Default on application startup."
                                            Style="{StaticResource RowDescStyle}" />
                             </StackPanel>
                             <ComboBox Grid.Column="1" MinWidth="260" VerticalAlignment="Center"
@@ -103,7 +103,7 @@
                                 <ComboBox.ItemTemplate>
                                     <DataTemplate x:DataType="models:AudioOutputDeviceInfo">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <FontIcon Glyph="&#xE7F6;" FontSize="13" FontFamily="Segoe MDL2 Assets"
+                                            <FontIcon Glyph="{x:Bind Glyph}" FontSize="13" FontFamily="Segoe MDL2 Assets"
                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
                                             <TextBlock Text="{x:Bind Name}" FontSize="13" VerticalAlignment="Center" />
                                         </StackPanel>
@@ -119,7 +119,7 @@
                             <Grid ColumnDefinitions="Auto,*,Auto">
                                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                                     <Border Background="#1AFFFFFF" CornerRadius="4" Padding="6" VerticalAlignment="Center">
-                                        <FontIcon Glyph="&#xE8D6;" FontSize="16" FontFamily="Segoe MDL2 Assets"
+                                        <FontIcon Glyph="{x:Bind ViewModel.OutputDeviceGlyph, Mode=OneWay}" FontSize="16" FontFamily="Segoe MDL2 Assets"
                                                   Foreground="{ThemeResource SystemControlHighlightAccentBrush}" />
                                     </Border>
                                     <StackPanel Spacing="2">

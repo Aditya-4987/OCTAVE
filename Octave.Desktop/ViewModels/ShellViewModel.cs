@@ -62,10 +62,14 @@ public partial class ShellViewModel : ObservableObject
     [ObservableProperty]
     public partial Octave.Core.Models.AudioQualityDetails? AudioQualityInfo { get; set; }
 
-    public ObservableCollection<AudioOutputDeviceInfo> AvailableOutputDevices { get; } = new();
+    [ObservableProperty]
+    public partial string OutputDeviceGlyph { get; set; } = "\uE7F5";
 
     [ObservableProperty]
-    public partial AudioOutputDeviceInfo? SelectedOutputDevice { get; set; }
+    public partial string OutputDeviceTooltip { get; set; } = "Audio Output";
+
+    [ObservableProperty]
+    public partial string OutputDeviceCategoryText { get; set; } = "Audio Output";
 
     [ObservableProperty]
     public partial string QualityBadgeText { get; set; } = "";
@@ -76,18 +80,21 @@ public partial class ShellViewModel : ObservableObject
     [ObservableProperty]
     public partial bool IsBitMatched { get; set; } = false;
 
+    public ObservableCollection<AudioOutputDeviceInfo> AvailableOutputDevices { get; } = new();
+
+    [ObservableProperty]
+    public partial AudioOutputDeviceInfo? SelectedOutputDevice { get; set; }
+
     private bool _isRefreshingOutputDevices;
 
     partial void OnSelectedOutputDeviceChanged(AudioOutputDeviceInfo? value)
     {
         if (_isRefreshingOutputDevices || value == null) return;
-        string currentId = _audioPlayer.CurrentOutputDeviceId ?? "__default__";
+        string currentId = _audioPlayer.SelectedCustomDeviceId ?? "__default__";
         string newId = value.Id ?? "__default__";
         if (!string.Equals(currentId, newId, StringComparison.OrdinalIgnoreCase))
         {
-            _audioPlayer.SetOutputDevice(newId);
-            _ = _dbContext.SetSettingAsync("AudioOutputDeviceId", newId);
-            _ = _dbContext.SetSettingAsync("AudioOutputDeviceIndex", value.Index.ToString());
+            _audioPlayer.SetOutputDevice(newId == "__default__" ? null : newId);
             RefreshAudioQuality();
         }
     }
@@ -102,42 +109,42 @@ public partial class ShellViewModel : ObservableObject
             _isRefreshingOutputDevices = true;
             try
             {
-                var curSelectedId = _audioPlayer.CurrentOutputDeviceId ?? "__default__";
+                var curSelectedId = _audioPlayer.SelectedCustomDeviceId ?? "__default__";
 
-                // Check if device list changed before mutating collection
-                bool listMatches = AvailableOutputDevices.Count == devices.Count;
-                if (listMatches)
+                // In-place collection synchronization to avoid ComboBox flicker/selection loss
+                for (int i = AvailableOutputDevices.Count - 1; i >= 0; i--)
                 {
-                    for (int i = 0; i < devices.Count; i++)
+                    var existing = AvailableOutputDevices[i];
+                    if (!devices.Any(d => string.Equals(d.Id, existing.Id, StringComparison.OrdinalIgnoreCase)))
                     {
-                        if (AvailableOutputDevices[i].Index != devices[i].Index ||
-                            !string.Equals(AvailableOutputDevices[i].Id, devices[i].Id, StringComparison.OrdinalIgnoreCase) ||
-                            !string.Equals(AvailableOutputDevices[i].Name, devices[i].Name, StringComparison.Ordinal))
+                        AvailableOutputDevices.RemoveAt(i);
+                    }
+                }
+
+                for (int i = 0; i < devices.Count; i++)
+                {
+                    var newDev = devices[i];
+                    if (i < AvailableOutputDevices.Count)
+                    {
+                        var existing = AvailableOutputDevices[i];
+                        if (!string.Equals(existing.Id, newDev.Id, StringComparison.OrdinalIgnoreCase) ||
+                            !string.Equals(existing.Name, newDev.Name, StringComparison.Ordinal) ||
+                            existing.Category != newDev.Category ||
+                            existing.Glyph != newDev.Glyph)
                         {
-                            listMatches = false;
-                            break;
+                            AvailableOutputDevices[i] = newDev;
                         }
                     }
-                }
-
-                if (!listMatches)
-                {
-                    AvailableOutputDevices.Clear();
-                    foreach (var d in devices)
+                    else
                     {
-                        AvailableOutputDevices.Add(d);
+                        AvailableOutputDevices.Add(newDev);
                     }
                 }
 
-                AudioOutputDeviceInfo? matching = null;
-                if (!string.IsNullOrWhiteSpace(curSelectedId))
-                {
-                    matching = AvailableOutputDevices.FirstOrDefault(d => string.Equals(d.Id, curSelectedId, StringComparison.OrdinalIgnoreCase));
-                }
-
-                var target = matching
-                    ?? AvailableOutputDevices.FirstOrDefault(d => d.Index == -1)
-                    ?? AvailableOutputDevices.FirstOrDefault();
+                // Select matching item
+                var target = AvailableOutputDevices.FirstOrDefault(d => string.Equals(d.Id, curSelectedId, StringComparison.OrdinalIgnoreCase))
+                             ?? AvailableOutputDevices.FirstOrDefault(d => d.Index == -1)
+                             ?? AvailableOutputDevices.FirstOrDefault();
 
                 if (!ReferenceEquals(SelectedOutputDevice, target) &&
                     (SelectedOutputDevice == null || !string.Equals(SelectedOutputDevice.Id, target?.Id, StringComparison.OrdinalIgnoreCase)))
@@ -165,6 +172,10 @@ public partial class ShellViewModel : ObservableObject
         if (q != null)
         {
             IsBitMatched = q.IsBitMatched;
+            OutputDeviceGlyph = q.OutputDeviceGlyph;
+            OutputDeviceCategoryText = Octave.Core.Helpers.WindowsAudioDeviceHelper.GetCategoryDisplayName(q.OutputDeviceCategory);
+            OutputDeviceTooltip = $"Playing through {OutputDeviceCategoryText} ({q.OutputDeviceName})";
+
             QualityBadgeText = q.QualityBadgeType switch
             {
                 "HiRes" => "HI-RES",
@@ -186,6 +197,9 @@ public partial class ShellViewModel : ObservableObject
             IsBitMatched = false;
             QualityBadgeText = "";
             QualityBadgeColor = "#A0A0A0";
+            OutputDeviceGlyph = "\uE7F5";
+            OutputDeviceCategoryText = "Audio Output";
+            OutputDeviceTooltip = "Audio Output";
         }
     }
     
@@ -341,10 +355,15 @@ public partial class ShellViewModel : ObservableObject
         _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
 
         _ = LoadSettingsAsync();
+        RefreshOutputDevices();
 
         _audioPlayer.OutputDeviceChanged += (s, e) =>
         {
-            _dispatcher.TryEnqueue(RefreshAudioQuality);
+            _dispatcher.TryEnqueue(() =>
+            {
+                RefreshOutputDevices();
+                RefreshAudioQuality();
+            });
         };
 
         Octave.Core.Helpers.WindowsAudioDeviceHelper.AudioEndpointsChanged += () =>
@@ -969,7 +988,7 @@ public partial class ShellViewModel : ObservableObject
         set => BackgroundArtworkOpacity = value / 100.0;
     }
 
-    private double _backgroundBlurOpacity = 0.60;
+    private double _backgroundBlurOpacity = 0.75;
     public double BackgroundBlurOpacity
     {
         get => _backgroundBlurOpacity;
@@ -1322,13 +1341,10 @@ public partial class ShellViewModel : ObservableObject
                 });
             }
 
-            // Audio Output Device
-            var savedDevId = await _dbContext.GetSettingAsync("AudioOutputDeviceId");
-            if (!string.IsNullOrWhiteSpace(savedDevId) && savedDevId != "__default__")
+            _dispatcher.TryEnqueue(() =>
             {
-                _audioPlayer.SetOutputDevice(savedDevId);
-            }
-            RefreshOutputDevices();
+                RefreshAudioQuality();
+            });
         }
         catch (Exception ex)
         {
