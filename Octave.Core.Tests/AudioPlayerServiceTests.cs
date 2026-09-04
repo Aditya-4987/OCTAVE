@@ -179,6 +179,47 @@ public class AudioPlayerServiceTests : IDisposable
     }
 
     [Fact]
+    public void DeviceContextReinitialization_AfterFree_CanInitAndPlaySuccessfully()
+    {
+        _player.Init();
+        string tempWav = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"diag_reinit_{Guid.NewGuid():N}.wav");
+        WriteTestWav(tempWav, 2.0);
+        try
+        {
+            // Find an enabled physical hardware device
+            int testDev = -1;
+            for (int i = 1; Bass.GetDeviceInfo(i, out var info); i++)
+            {
+                if (info.IsEnabled && !string.IsNullOrEmpty(info.Driver))
+                {
+                    testDev = i;
+                    break;
+                }
+            }
+            if (testDev > 0)
+            {
+                // Simulate device Free & Init cycle
+                try { Bass.CurrentDevice = testDev; Bass.Free(); } catch { }
+                bool reinit = Bass.Init(testDev, 44100, DeviceInitFlags.Default, IntPtr.Zero) || Bass.LastError == Errors.Already;
+                Assert.True(reinit);
+
+                try { Bass.CurrentDevice = testDev; } catch { }
+                int stream = Bass.CreateStream(tempWav, 0, 0, BassFlags.Default);
+                Assert.True(stream != 0);
+
+                bool played = Bass.ChannelPlay(stream, false);
+                Assert.True(played);
+                Bass.ChannelStop(stream);
+                Bass.StreamFree(stream);
+            }
+        }
+        finally
+        {
+            try { System.IO.File.Delete(tempWav); } catch { }
+        }
+    }
+
+    [Fact]
     public void EnumerateCoreAudioEndpoints()
     {
         var info = WindowsAudioDeviceHelper.GetOutputDeviceInfo(null, forceRefresh: true);

@@ -146,8 +146,7 @@ public partial class ShellViewModel : ObservableObject
                              ?? AvailableOutputDevices.FirstOrDefault(d => d.Index == -1)
                              ?? AvailableOutputDevices.FirstOrDefault();
 
-                if (!ReferenceEquals(SelectedOutputDevice, target) &&
-                    (SelectedOutputDevice == null || !string.Equals(SelectedOutputDevice.Id, target?.Id, StringComparison.OrdinalIgnoreCase)))
+                if (!ReferenceEquals(SelectedOutputDevice, target))
                 {
                     SelectedOutputDevice = target;
                 }

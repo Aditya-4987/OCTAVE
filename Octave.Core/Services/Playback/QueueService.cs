@@ -75,6 +75,8 @@ public class QueueService : IQueueService, IDisposable
     // QUEUE-12: keep handler references so Dispose can detach them.
     private readonly EventHandler<TrackEndedEventArgs> _trackEndedHandler;
     private readonly EventHandler<double> _positionChangedHandler;
+    private readonly EventHandler _playbackInterruptedHandler;
+    private readonly EventHandler _outputDeviceChangedHandler;
     private readonly EventHandler _libraryChangedHandler;
     private readonly IDispatcherService? _dispatcher;
 
@@ -127,7 +129,7 @@ public class QueueService : IQueueService, IDisposable
             }
         };
         _audioPlayer.TrackEnded += _trackEndedHandler;
-        _audioPlayer.PlaybackInterrupted += (s, e) =>
+        _playbackInterruptedHandler = (s, e) =>
         {
             PlaybackState? state = null;
             lock (_queueLock)
@@ -140,6 +142,22 @@ public class QueueService : IQueueService, IDisposable
             }
             if (state != null) RaisePlaybackEvents(state);
         };
+        _audioPlayer.PlaybackInterrupted += _playbackInterruptedHandler;
+
+        _outputDeviceChangedHandler = (s, e) =>
+        {
+            PlaybackState? state = null;
+            lock (_queueLock)
+            {
+                if (_currentIndex >= 0 && _currentIndex < _activeQueue.Count)
+                {
+                    _activeQueue[_currentIndex].IsPlaying = _audioPlayer.Status == PlaybackStatus.Playing;
+                }
+                state = CaptureStateUnlocked();
+            }
+            if (state != null) RaisePlaybackEvents(state);
+        };
+        _audioPlayer.OutputDeviceChanged += _outputDeviceChangedHandler;
 
         _libraryChangedHandler = (s, e) =>
         {
@@ -788,6 +806,7 @@ public class QueueService : IQueueService, IDisposable
         PlaybackState? state = null;
         lock (_queueLock)
         {
+            double posBeforeResume = _audioPlayer.PositionSeconds;
             _audioPlayer.Resume();
             if (_audioPlayer.Status == PlaybackStatus.Playing)
             {
@@ -801,7 +820,13 @@ public class QueueService : IQueueService, IDisposable
             {
                 // Stopped, Stalled/Buffering, or dead device state: re-play current track
                 int indexToPlay = _currentIndex >= 0 ? _currentIndex : 0;
+                double savedPos = posBeforeResume > 0.5 ? posBeforeResume : _audioPlayer.PositionSeconds;
                 state = PlayIndexInternal(indexToPlay);
+                if (savedPos > 0.5)
+                {
+                    _audioPlayer.Seek(savedPos);
+                    state = CaptureStateUnlocked();
+                }
             }
             else
             {
@@ -1149,6 +1174,8 @@ public class QueueService : IQueueService, IDisposable
 
         _audioPlayer.TrackEnded -= _trackEndedHandler;
         _audioPlayer.PositionChanged -= _positionChangedHandler;
+        _audioPlayer.PlaybackInterrupted -= _playbackInterruptedHandler;
+        _audioPlayer.OutputDeviceChanged -= _outputDeviceChangedHandler;
         _libraryScanner.LibraryChanged -= _libraryChangedHandler;
         _persistenceSemaphore.Dispose();
     }

@@ -373,8 +373,7 @@ public static class WindowsAudioDeviceHelper
         // 3. Type-C / Thunderbolt / USB-C audio devices
         if (deviceName.Contains("Type-C", StringComparison.OrdinalIgnoreCase) ||
             deviceName.Contains("USB-C", StringComparison.OrdinalIgnoreCase) ||
-            deviceName.Contains("Thunderbolt", StringComparison.OrdinalIgnoreCase) ||
-            (deviceName.Contains("USB", StringComparison.OrdinalIgnoreCase) && deviceName.Contains("Audio", StringComparison.OrdinalIgnoreCase)))
+            deviceName.Contains("Thunderbolt", StringComparison.OrdinalIgnoreCase))
         {
             return "Type-C / USB Audio Device";
         }
@@ -434,7 +433,7 @@ public static class WindowsAudioDeviceHelper
         if (deviceName.Contains("Type-C", StringComparison.OrdinalIgnoreCase) ||
             deviceName.Contains("USB-C", StringComparison.OrdinalIgnoreCase) ||
             deviceName.Contains("Thunderbolt", StringComparison.OrdinalIgnoreCase) ||
-            (!string.IsNullOrEmpty(driverOrId) && driverOrId.Contains("USB", StringComparison.OrdinalIgnoreCase) && deviceName.Contains("Audio", StringComparison.OrdinalIgnoreCase)))
+            (!string.IsNullOrEmpty(driverOrId) && (driverOrId.Contains("Type-C", StringComparison.OrdinalIgnoreCase) || driverOrId.Contains("USB-C", StringComparison.OrdinalIgnoreCase))))
         {
             return AudioDeviceCategory.TypeC_USBAudio;
         }

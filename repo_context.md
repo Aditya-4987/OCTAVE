@@ -220,9 +220,9 @@ OCTAVE/
   - Playback automatically resumes (`Bass.ChannelPlay`) if it was playing when the switch occurred; if it was paused, it stays paused ready for resume.
   - Active stream hardware state is tracked continuously via `_currentStreamBassDevice` and `_currentStreamEndpointId`.
 - **Bidirectional Dynamic Stream Migration (Windows Default Mode)**:
-  - **Virtual Default Device 1 Target**: In Windows Default mode (`_selectedCustomDeviceId == null`), the engine strictly targets BASS virtual device 1 (`Configuration.IncludeDefaultDevice = true`), which natively and dynamically tracks the OS default endpoint without getting tied to physical hardware device handles that can be invalidated on disconnect.
-  - **Reconnecting Personal Audio (Speakers $\to$ Headphones / Bluetooth / DAC / Type-C)**: When personal audio devices are plugged in or reconnected, the engine detects default endpoint migration, pauses the old stream on speakers, recreates the stream on Device 1 (now routing to the new personal device) at the exact millisecond byte position, and automatically resumes playback seamlessly.
-  - **Disconnecting Personal Audio (Headphones / Bluetooth / Type-C / USB DAC $\to$ Speakers)**: When removable listening devices are unplugged or disconnected, the engine immediately pauses playback (`Bass.ChannelPause`) to prevent room blasting, fires `PlaybackInterrupted` (transport bar displays Paused), and recreates the stream on Device 1 (now laptop/desktop speakers) in a paused state.
+  - **Dynamic Physical CoreAudio Target**: In Windows Default mode (`_selectedCustomDeviceId == null`), the engine dynamically queries Windows CoreAudio via `WindowsAudioDeviceHelper.GetDefaultOutputEndpointId()` and resolves the active endpoint GUID to its matching physical BASS device index (`ResolveBassDevice(null)`). BASS Device 1 is never hardcoded because DirectSound's legacy Primary Sound Driver wrapper statically targets internal laptop speakers instead of tracking modern OS endpoint migrations.
+  - **Reconnecting Personal Audio (Speakers $\to$ Headphones / Bluetooth / DAC / Type-C)**: When personal audio devices are plugged in or reconnected, the engine detects default endpoint migration, pauses the old stream on speakers, dynamically resolves the new physical device index, recreates the stream on that device at the exact millisecond byte position, and automatically resumes playback seamlessly.
+  - **Disconnecting Personal Audio (Headphones / Bluetooth / Type-C / USB DAC $\to$ Speakers)**: When removable listening devices are unplugged or disconnected, the engine immediately pauses playback (`Bass.ChannelPause`) to prevent room blasting, fires `PlaybackInterrupted` (transport bar displays Paused), dynamically resolves the fallback physical speaker device index, and recreates the stream on it in a paused state.
   - **Paused State Preservation & Zero Audio Leakage**: Explicit `_isPlayingIntent`, `_isPaused`, and `_isStopped` state variables track playback intention independent of WASAPI buffer starvation. Recreating streams in a paused state leaves the channel paused without spurious `ChannelPlay` calls, preventing room blast and race conditions.
 - **Disconnection & Fallback Handling (`OnDeviceRemoved`)**:
   - If an active custom device or default playback device becomes offline, disconnected, or physically detached during playback, playback stops immediately (`Bass.ChannelPause`).
@@ -373,14 +373,19 @@ OCTAVE/
    - In-app `AcrylicBrush` must never use `FallbackColor="Transparent"` over window backdrops. When Windows disables transparency (e.g. Battery Saver / Power Saving mode), it must fall back to a dark solid theme color (`#121214`) to prevent acrylic collapse and preserve readability.
    - Background image fade storyboards must release property holds on completion (`storyboard.Stop()`) to ensure live XAML data bindings retain control over opacity sliders.
    - A deep canvas underlay (`#0C0C0E` at `BackgroundBaseDarkness`) must sit behind artwork and acrylic to prevent Mica deactivation flashes (`#202020`) during window maximize, minimize, restore, and focus transitions.
+8. **Hotplug Device Migration, Hardware Handover & Position Invariants**:
+   - When migrating active audio streams between physical adapters or endpoints on the same sound card (e.g. speakers to AUX headphones), the audio engine must release the old BASS device context (`Bass.CurrentDevice = oldDev; Bass.Free()`) before opening the new device to release soundcard DMA and DirectSound buffer locks.
+   - Device endpoints must call `Bass.CurrentDevice = targetDev; Bass.Start()` to ensure output rendering commences immediately.
+   - Position tracking (`_lastValidPositionSeconds`) must be guarded with `if (pos > 0.05 || _isStopped)` to prevent transient 0-byte reads during channel recreation from resetting active playback time.
+   - `QueueService` listens to `_audioPlayer.OutputDeviceChanged` to immediately synchronize `PlaybackState` when hardware endpoints change, preventing ghost playing states or desynced UI transport buttons.
 
 ---
 
 ## 10. Test Suite Matrix (`Octave.Core.Tests`)
 
-The test suite contains **248 unit and integration tests** covering all core layers:
+The test suite contains **273 unit and integration tests** covering all core layers:
 - **`SqliteDbContextTests` & `SqliteConcurrencyAndMigrationTests`**: Schema creation, CRUD, FTS5 search triggers, cascade deletes, concurrent connections, WAL durability, bulk track insertion transactionality, and automatic dropping of obsolete legacy columns.
-- **`ManagedBassAudioServiceTests`**: Real unmanaged BASS engine initialization, WAV stream decoding, crossfade volume ramping, End-sync registration, skip/detach safety, boundary seek clamping, and idempotent disposal.
+- **`ManagedBassAudioServiceTests` & `AudioPlayerServiceTests`**: Real unmanaged BASS engine initialization, WAV stream decoding, crossfade volume ramping, End-sync registration, skip/detach safety, boundary seek clamping, idempotent disposal, device classification across 9 hardware categories, and device context reinitialization across free/init cycles.
 - **`QueueServiceTests` & `QueueItemTests`**: Queue operations, Fisher-Yates shuffle permutations, repeat modes, multi-track auto-advance sequences, load failure circuit breakers, cross-thread WinRT COM exception resilience, seek state synchronization, and state persistence.
 - **`PlaylistServiceTests`**: Playlist CRUD, surrogate key uniqueness, duplicate track handling, track reordering, and atomic multi-track addition (`AddTracksAsync`).
 - **`LibraryServiceTests` & `LocalLibraryScannerTests`**: Folder scanning, batch writes, tag reading, artwork caching, compilation artist separation, and duplicate detection.
