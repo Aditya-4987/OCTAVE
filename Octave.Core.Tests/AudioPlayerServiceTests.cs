@@ -356,6 +356,18 @@ public class AudioPlayerServiceTests : IDisposable
         Assert.Equal(bins, fft.Length);
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(16)]
+    [InlineData(48)]
+    [InlineData(64)]
+    public void GetFftData_SpanDestination_FillsDestinationWithoutAllocations(int bins)
+    {
+        Span<float> buffer = stackalloc float[bins];
+        int written = _player.GetFftData(buffer);
+        Assert.Equal(bins, written);
+    }
+
     // TEST-06: AggregateFftBins previously had zero coverage of its actual math.
     // These pin the exact first-frame values for the two extremes plus the decay
     // blend and the monotonic frequency mapping.
@@ -789,6 +801,229 @@ public class AudioPlayerServiceTests : IDisposable
             _player.Stop();
             try { File.Delete(tempWav); } catch { }
         }
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task FadeOutAndPauseAsync_WhenPlaying_PausesStreamAndRestoresVolume()
+    {
+        _player.Init();
+        string tempWav = Path.Combine(Path.GetTempPath(), $"fadeout_test_{Guid.NewGuid():N}.wav");
+        WriteTestWav(tempWav, 3.0);
+        try
+        {
+            _player.Volume = 0.8f;
+            long session = _player.Play(tempWav);
+            Assert.True(session > 0);
+            Assert.Equal(PlaybackStatus.Playing, _player.Status);
+
+            await _player.FadeOutAndPauseAsync(150);
+
+            Assert.Equal(PlaybackStatus.Paused, _player.Status);
+            // Master volume property must remain untouched (not corrupted by the fade)
+            Assert.Equal(0.8f, _player.Volume, precision: 2);
+        }
+        finally
+        {
+            _player.Stop();
+            try { File.Delete(tempWav); } catch { }
+        }
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task FadeOutAndPauseAsync_WhenStoppedOrPaused_ReturnsSafelyWithoutThrowing()
+    {
+        _player.Init();
+        Assert.Equal(PlaybackStatus.Stopped, _player.Status);
+
+        // When stopped with no track loaded, returns safely without throwing
+        await _player.FadeOutAndPauseAsync(150);
+        Assert.Equal(PlaybackStatus.Stopped, _player.Status);
+
+        string tempWav = Path.Combine(Path.GetTempPath(), $"fadeout_stopped_{Guid.NewGuid():N}.wav");
+        WriteTestWav(tempWav, 2.0);
+        try
+        {
+            _player.Play(tempWav);
+            _player.Pause();
+            Assert.Equal(PlaybackStatus.Paused, _player.Status);
+
+            // When already paused
+            await _player.FadeOutAndPauseAsync(150);
+            Assert.Equal(PlaybackStatus.Paused, _player.Status);
+        }
+        finally
+        {
+            _player.Stop();
+            try { File.Delete(tempWav); } catch { }
+        }
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task FadeOutAndPauseAsync_DurationClamping_NegativeOrExcessive()
+    {
+        _player.Init();
+        string tempWav = Path.Combine(Path.GetTempPath(), $"fadeout_clamp_{Guid.NewGuid():N}.wav");
+        WriteTestWav(tempWav, 3.0);
+        try
+        {
+            _player.Play(tempWav);
+            Assert.Equal(PlaybackStatus.Playing, _player.Status);
+
+            // Negative duration must clamp safely to 100ms and not crash
+            await _player.FadeOutAndPauseAsync(-500);
+            Assert.Equal(PlaybackStatus.Paused, _player.Status);
+        }
+        finally
+        {
+            _player.Stop();
+            try { File.Delete(tempWav); } catch { }
+        }
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task FadeOutAndPauseAsync_ResumeAfterFade_RestoresChannelVolumeAndPlays()
+    {
+        _player.Init();
+        string tempWav = Path.Combine(Path.GetTempPath(), $"fadeout_resume_{Guid.NewGuid():N}.wav");
+        WriteTestWav(tempWav, 4.0);
+        try
+        {
+            _player.Volume = 0.75f;
+            _player.Play(tempWav);
+            Assert.Equal(PlaybackStatus.Playing, _player.Status);
+
+            await _player.FadeOutAndPauseAsync(150);
+            Assert.Equal(PlaybackStatus.Paused, _player.Status);
+
+            // Resume playback
+            _player.Resume();
+            Assert.Equal(PlaybackStatus.Playing, _player.Status);
+            Assert.Equal(0.75f, _player.Volume, precision: 2);
+        }
+        finally
+        {
+            _player.Stop();
+            try { File.Delete(tempWav); } catch { }
+        }
+    }
+
+    [Fact]
+    public void GetFftData_EmptySpan_ReturnsZero()
+    {
+        _player.Init();
+        Span<float> emptySpan = Span<float>.Empty;
+        int count = _player.GetFftData(emptySpan);
+        Assert.Equal(0, count);
+    }
+
+    [Fact]
+    public void GetFftData_VaryingSpanLengths_PopulatesBufferCorrectly()
+    {
+        _player.Init();
+        string tempWav = Path.Combine(Path.GetTempPath(), $"fft_test_{Guid.NewGuid():N}.wav");
+        WriteTestWav(tempWav, 3.0);
+        try
+        {
+            _player.Play(tempWav);
+
+            int[] binSizes = [16, 24, 32, 48, 64];
+            Span<float> buffer = stackalloc float[64];
+            foreach (int size in binSizes)
+            {
+                Span<float> slice = buffer[..size];
+                int read = _player.GetFftData(slice);
+                Assert.Equal(size, read);
+
+                for (int i = 0; i < size; i++)
+                {
+                    Assert.False(float.IsNaN(slice[i]), $"Bin {i} in size {size} is NaN");
+                    Assert.False(float.IsInfinity(slice[i]), $"Bin {i} in size {size} is Infinity");
+                    Assert.True(slice[i] >= 0f, $"Bin {i} in size {size} is negative: {slice[i]}");
+                }
+            }
+        }
+        finally
+        {
+            _player.Stop();
+            try { File.Delete(tempWav); } catch { }
+        }
+    }
+
+    [Fact]
+    public void GetFftData_WhenStopped_ReturnsDecayingPeaks()
+    {
+        _player.Init();
+        _player.Stop();
+
+        Span<float> buffer = stackalloc float[32];
+        int count = _player.GetFftData(buffer);
+        Assert.Equal(32, count);
+
+        // When never played, peaks are 0
+        for (int i = 0; i < 32; i++)
+        {
+            Assert.Equal(0f, buffer[i]);
+        }
+    }
+
+    [Fact]
+    public void SetPreampGain_ClampsAndHandlesSpecialValues()
+    {
+        _player.Init();
+
+        _player.SetPreampGain(5.0f);
+        Assert.Equal(5.0f, _player.PreampGainDb);
+
+        // Clamp upper bound +15 dB
+        _player.SetPreampGain(25.0f);
+        Assert.Equal(15.0f, _player.PreampGainDb);
+
+        // Clamp lower bound -15 dB
+        _player.SetPreampGain(-30.0f);
+        Assert.Equal(-15.0f, _player.PreampGainDb);
+
+        // NaN and Infinity reset to 0.0 dB
+        _player.SetPreampGain(float.NaN);
+        Assert.Equal(0.0f, _player.PreampGainDb);
+
+        _player.SetPreampGain(float.PositiveInfinity);
+        Assert.Equal(0.0f, _player.PreampGainDb);
+
+        _player.SetPreampGain(float.NegativeInfinity);
+        Assert.Equal(0.0f, _player.PreampGainDb);
+    }
+
+    [Fact]
+    public void SetEqBand_InvalidIndicesAndGainClamping()
+    {
+        _player.Init();
+
+        // Invalid band indices should be ignored without throwing
+        _player.SetEqBand(-1, 5.0f);
+        _player.SetEqBand(10, 5.0f);
+        _player.SetEqBand(100, 5.0f);
+
+        // Valid band index with extreme gain should clamp to [-15, 15]
+        _player.SetEqBand(0, 20.0f);
+        _player.SetEqBand(0, -20.0f);
+        _player.SetEqBand(0, float.NaN);
+    }
+
+    [Fact]
+    public void CrossfadeDurationMs_ClampsValues()
+    {
+        _player.Init();
+
+        _player.CrossfadeDurationMs = 2500;
+        Assert.Equal(2500, _player.CrossfadeDurationMs);
+
+        // Lower bound is 0 (disabled)
+        _player.CrossfadeDurationMs = -500;
+        Assert.Equal(0, _player.CrossfadeDurationMs);
+
+        // Upper bound is 10000ms (10 seconds)
+        _player.CrossfadeDurationMs = 25000;
+        Assert.Equal(10000, _player.CrossfadeDurationMs);
     }
 }
 

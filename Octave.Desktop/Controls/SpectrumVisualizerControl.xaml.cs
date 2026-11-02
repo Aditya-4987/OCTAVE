@@ -156,15 +156,18 @@ public sealed partial class SpectrumVisualizerControl : UserControl
             double barHeight = Math.Clamp(amp * maxAvailableHeight, 2.0, maxAvailableHeight);
 
             var bar = _bars[i];
-            bar.Height = barHeight;
+            if (Math.Abs(bar.Height - barHeight) > 0.3)
+            {
+                bar.Height = barHeight;
 
-            if (IsCenteredWaveform)
-            {
-                Canvas.SetTop(bar, centerY - (barHeight / 2.0));
-            }
-            else
-            {
-                Canvas.SetTop(bar, baseline - barHeight);
+                if (IsCenteredWaveform)
+                {
+                    Canvas.SetTop(bar, centerY - (barHeight / 2.0));
+                }
+                else
+                {
+                    Canvas.SetTop(bar, baseline - barHeight);
+                }
             }
 
             double barFraction = (double)i / _bars.Count;

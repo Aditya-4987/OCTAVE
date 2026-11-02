@@ -20,12 +20,33 @@ public sealed partial class MainWindow : Window
     private readonly EventHandler _favoritesChangedHandler;
     private readonly ToolTip _playbackSliderTooltip = new() { Placement = Microsoft.UI.Xaml.Controls.Primitives.PlacementMode.Top };
     private readonly TextBlock _playbackSliderTooltipText = new() { FontSize = 12 };
+    private readonly float[] _fftBuffer = new float[48];
+    private static readonly SolidColorBrush FavoritedCoralBrush = new(Windows.UI.Color.FromArgb(255, 255, 64, 96));
     private bool _wasNavPaneOpen = true;
     private bool _isSpectrumRenderingHooked;
     private bool _isImageAActive = true;
     private string? _lastRenderedArtworkUrl = "__OCTAVE_UNINITIALIZED__";
     private int _artworkTransitionGeneration = 0;
     private Microsoft.UI.Xaml.Media.Animation.Storyboard? _crossfadeStoryboard;
+
+    private delegate IntPtr SubclassProc(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam, IntPtr uIdSubclass, IntPtr dwRefData);
+
+    [System.Runtime.InteropServices.DllImport("comctl32.dll", SetLastError = true)]
+    private static extern bool SetWindowSubclass(IntPtr hWnd, SubclassProc pfnSubclass, IntPtr uIdSubclass, IntPtr dwRefData);
+
+    [System.Runtime.InteropServices.DllImport("comctl32.dll", SetLastError = true)]
+    private static extern bool RemoveWindowSubclass(IntPtr hWnd, SubclassProc pfnSubclass, IntPtr uIdSubclass);
+
+    [System.Runtime.InteropServices.DllImport("comctl32.dll", SetLastError = true)]
+    private static extern IntPtr DefSubclassProc(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam);
+
+    private const uint WM_QUERYENDSESSION = 0x0011;
+    private const uint WM_ENDSESSION = 0x0016;
+    private static readonly IntPtr PowerSubclassId = new(2);
+    private SubclassProc? _powerSubclassProc;
+    private IntPtr _mainWindowHwnd = IntPtr.Zero;
+    private bool _isPowerActionInitiatedByOctave;
+    private bool _isUpdatingActionComboBox;
 
     public MainWindow()
     {
@@ -98,9 +119,18 @@ public sealed partial class MainWindow : Window
             {
                 TransitionBackgroundArtwork(ViewModel.CurrentArtworkUrl);
             }
+            else if (e.PropertyName == nameof(ShellViewModel.SleepTimerProgressFraction) || e.PropertyName == nameof(ShellViewModel.IsSleepTimerActive))
+            {
+                UpdateSleepTimerArc(ViewModel.SleepTimerProgressFraction, ViewModel.IsSleepTimerActive);
+            }
+            else if (e.PropertyName == nameof(ShellViewModel.SelectedSleepTimerAction))
+            {
+                SyncActionComboBoxes(ViewModel.SelectedSleepTimerAction);
+            }
         };
 
         ApplyBackdrop(ViewModel.BackdropMaterialIndex);
+        InitializeShutdownCancellationDetection();
 
         // Default navigation
         ContentFrame.Navigated += ContentFrame_Navigated;
@@ -136,7 +166,7 @@ public sealed partial class MainWindow : Window
         // NF-32: XamlRoot.Changed alone missed some cross-monitor drags. The
         // window-level position change is the deterministic "crossed a display
         // boundary" signal - re-evaluate the rasterization scale on both paths.
-        AppWindow.Changed += OnAppWindowChangedForScale;
+        AppWindow.Changed += OnAppWindowChanged;
 
         UpdateSpectrumRenderingSubscription();
 
@@ -157,20 +187,27 @@ public sealed partial class MainWindow : Window
         };
     }
 
-    private void OnAppWindowChangedForScale(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowChangedEventArgs args)
+    private void OnAppWindowChanged(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowChangedEventArgs args)
     {
         if (args.DidPositionChange)
         {
             Converters.ArtworkPathConverter.CheckDisplayScale(RootGrid);
         }
+
+        if (args.DidVisibilityChange || args.DidPresenterChange)
+        {
+            UpdateSpectrumRenderingSubscription();
+        }
     }
 
     private void UpdateSpectrumRenderingSubscription()
     {
+        bool isWindowVisible = AppWindow != null && AppWindow.IsVisible;
         bool shouldRender = ProgressBarVisualizer != null &&
                             ProgressBarVisualizer.Visibility == Visibility.Visible &&
                             ViewModel.IsVisualizerEnabled &&
-                            ViewModel.IsPlaying;
+                            ViewModel.IsPlaying &&
+                            isWindowVisible;
 
         if (shouldRender && !_isSpectrumRenderingHooked)
         {
@@ -207,10 +244,10 @@ public sealed partial class MainWindow : Window
             }
 
             _wasVisualizerActive = true;
-            var fft = _audioPlayer.GetFftData(48);
+            _audioPlayer.GetFftData(_fftBuffer);
             double currentPos = ViewModel.IsDragging ? PlaybackSlider.Value : ViewModel.PositionSeconds;
             double ratio = (ViewModel.DurationSeconds > 0) ? (currentPos / ViewModel.DurationSeconds) : 0.0;
-            ProgressBarVisualizer.UpdateSpectrum(fft, ratio);
+            ProgressBarVisualizer.UpdateSpectrum(_fftBuffer, ratio);
         }
         catch (Exception ex)
         {
@@ -220,17 +257,14 @@ public sealed partial class MainWindow : Window
 
     private void RootGrid_SizeChanged(object sender, Microsoft.UI.Xaml.SizeChangedEventArgs e)
     {
-        if (e.NewSize.Width < 950)
+        bool isCompact = e.NewSize.Width < 950;
+        ExtraControlsPanel.Visibility = isCompact ? Visibility.Collapsed : Visibility.Visible;
+        MoreOptionsButton.Visibility = isCompact ? Visibility.Visible : Visibility.Collapsed;
+        TrackDetailsColumn.MaxWidth = isCompact ? 240 : 350;
+
+        if (QualityStreamDetailsPanel != null)
         {
-            ExtraControlsPanel.Visibility = Visibility.Collapsed;
-            MoreOptionsButton.Visibility = Visibility.Visible;
-            TrackDetailsColumn.MaxWidth = 200;
-        }
-        else
-        {
-            ExtraControlsPanel.Visibility = Visibility.Visible;
-            MoreOptionsButton.Visibility = Visibility.Collapsed;
-            TrackDetailsColumn.MaxWidth = 350;
+            QualityStreamDetailsPanel.Visibility = isCompact ? Visibility.Collapsed : Visibility.Visible;
         }
     }
 
@@ -281,18 +315,27 @@ public sealed partial class MainWindow : Window
     private void UpdateBottomBarButtonsState()
     {
         bool isOpen = ViewModel.IsNowPlayingOpen;
+        var accentBrush = (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"];
+        var primaryBrush = ThemedBrush("TextFillColorPrimaryBrush", Windows.UI.Color.FromArgb(255, 255, 255, 255));
+
         if (BottomQueueBtn?.Content is FontIcon queueIcon)
         {
-            queueIcon.Foreground = (isOpen && _selectedSidebarTabIndex == 1)
-                ? (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"]
-                : ThemedBrush("TextFillColorPrimaryBrush", Windows.UI.Color.FromArgb(255, 255, 255, 255));
+            queueIcon.Foreground = (isOpen && _selectedSidebarTabIndex == 1) ? accentBrush : primaryBrush;
         }
 
         if (BottomLyricsBtn?.Content is FontIcon lyricsIcon)
         {
-            lyricsIcon.Foreground = (isOpen && _selectedSidebarTabIndex == 2)
-                ? (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"]
-                : ThemedBrush("TextFillColorPrimaryBrush", Windows.UI.Color.FromArgb(255, 255, 255, 255));
+            lyricsIcon.Foreground = (isOpen && _selectedSidebarTabIndex == 2) ? accentBrush : primaryBrush;
+        }
+
+        if (OverflowQueueBtn?.Content is StackPanel qPanel && qPanel.Children.Count > 0 && qPanel.Children[0] is FontIcon oqIcon)
+        {
+            oqIcon.Foreground = (isOpen && _selectedSidebarTabIndex == 1) ? accentBrush : primaryBrush;
+        }
+
+        if (OverflowLyricsBtn?.Content is StackPanel lPanel && lPanel.Children.Count > 0 && lPanel.Children[0] is FontIcon olIcon)
+        {
+            olIcon.Foreground = (isOpen && _selectedSidebarTabIndex == 2) ? accentBrush : primaryBrush;
         }
     }
 
@@ -681,26 +724,43 @@ public sealed partial class MainWindow : Window
     public Brush GetShuffleColor(bool isShuffle)
     {
         return isShuffle
-            ? ThemedBrush("TextFillColorPrimaryBrush", Microsoft.UI.Colors.White)
+            ? (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"]
             : ThemedBrush("TextFillColorTertiaryBrush", Windows.UI.Color.FromArgb(255, 136, 136, 136));
     }
 
+    public string GetShuffleToolTip(bool isShuffle) => isShuffle ? "Shuffle: On" : "Shuffle: Off";
+
     public Brush GetActiveColor(bool isActive)
     {
-        return isActive ? ThemedBrush("SystemControlHighlightAccentBrush", Microsoft.UI.Colors.DodgerBlue) : ThemedBrush("TextFillColorPrimaryBrush", Microsoft.UI.Colors.White);
+        return isActive ? (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"] : ThemedBrush("TextFillColorPrimaryBrush", Microsoft.UI.Colors.White);
     }
 
     public Brush GetFavoriteColor(bool isFavorite)
     {
-        return isFavorite ? ThemedBrush("SystemControlHighlightAccentBrush", Microsoft.UI.Colors.DodgerBlue) : ThemedBrush("TextFillColorPrimaryBrush", Microsoft.UI.Colors.White);
+        return isFavorite ? FavoritedCoralBrush : ThemedBrush("TextFillColorPrimaryBrush", Microsoft.UI.Colors.White);
     }
+
+    public string GetFavoriteToolTip(bool isFavorite) => isFavorite ? "Remove from Favorites" : "Add to Favorites";
 
     public Brush GetRepeatColor(RepeatMode mode)
     {
         return mode != RepeatMode.None
-            ? ThemedBrush("TextFillColorPrimaryBrush", Microsoft.UI.Colors.White)
+            ? (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"]
             : ThemedBrush("TextFillColorTertiaryBrush", Windows.UI.Color.FromArgb(255, 136, 136, 136));
     }
+
+    public string GetRepeatToolTip(RepeatMode mode)
+    {
+        return mode switch
+        {
+            RepeatMode.Track => "Repeat: One",
+            RepeatMode.Queue => "Repeat: All",
+            _ => "Repeat: Off"
+        };
+    }
+
+    public string GetPlayPauseToolTip(bool isPlaying) => isPlaying ? "Pause" : "Play";
+    public string GetMuteToolTip(bool isMuted) => isMuted ? "Unmute" : "Mute";
 
     public string GetRepeatGlyph(RepeatMode mode)
     {
@@ -852,6 +912,7 @@ public sealed partial class MainWindow : Window
 
     private void PlaybackSlider_PointerWheelChanged(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
+        if (e.Handled) return;
         if (sender is Slider slider && ViewModel.DurationSeconds > 0)
         {
             var delta = e.GetCurrentPoint(slider).Properties.MouseWheelDelta;
@@ -906,6 +967,7 @@ public sealed partial class MainWindow : Window
 
     private void PlaybackSlider_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
     {
+        if (e.Handled) return;
         bool shiftDown = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift)
             .HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
 
@@ -1153,5 +1215,188 @@ public sealed partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(value) || value == "-" || value == "0" || value == "Loading..." || value == "Unknown")
             return Visibility.Collapsed;
         return Visibility.Visible;
+    }
+
+    public Visibility GetPresetCheckVisibility(string? activeTag, string? targetTag)
+    {
+        return string.Equals(activeTag, targetTag, StringComparison.OrdinalIgnoreCase)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    private void SleepPreset_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement fe && fe.Tag is string tag)
+        {
+            ViewModel.SetSleepTimer(tag);
+            BottomSleepTimerFlyout?.Hide();
+            OverflowSleepTimerFlyout?.Hide();
+        }
+    }
+
+    private void ExtendSleepTimer5_Click(object sender, RoutedEventArgs e)
+    {
+        ViewModel.ExtendSleepTimer(5);
+    }
+
+    private void ExtendSleepTimer10_Click(object sender, RoutedEventArgs e)
+    {
+        ViewModel.ExtendSleepTimer(10);
+    }
+
+    private void CloseSleepFlyout_Click(object sender, RoutedEventArgs e)
+    {
+        BottomSleepTimerFlyout?.Hide();
+        OverflowSleepTimerFlyout?.Hide();
+    }
+
+    private async void CustomSleepTimer_Click(object sender, RoutedEventArgs e)
+    {
+        BottomSleepTimerFlyout?.Hide();
+        OverflowSleepTimerFlyout?.Hide();
+        if (this.Content?.XamlRoot == null) return;
+        var minutes = await Octave_Desktop.Helpers.SleepTimerHelper.ShowCustomSleepTimerDialogAsync(this.Content.XamlRoot);
+        if (minutes.HasValue)
+        {
+            ViewModel.SetSleepTimerCustom(minutes.Value);
+        }
+    }
+
+    private void UpdateSleepTimerArc(double fraction, bool isActive)
+    {
+        if (!isActive || fraction <= 0.001)
+        {
+            if (SleepTimerArcPath != null) SleepTimerArcPath.Data = null;
+            if (OverflowSleepTimerProgressArc != null) OverflowSleepTimerProgressArc.Data = null;
+            return;
+        }
+
+        if (SleepTimerArcPath != null)
+        {
+            SleepTimerArcPath.Data = Octave_Desktop.Helpers.SleepTimerHelper.CreateCountdownArcGeometry(fraction, 34.0, 15.0);
+        }
+
+        if (OverflowSleepTimerProgressArc != null)
+        {
+            OverflowSleepTimerProgressArc.Data = Octave_Desktop.Helpers.SleepTimerHelper.CreateCountdownArcGeometry(fraction, 28.0, 12.0);
+        }
+    }
+
+    public int GetActionIndex(SleepTimerCompletionAction action) => action switch
+    {
+        SleepTimerCompletionAction.StopPlayback => 0,
+        SleepTimerCompletionAction.SleepPC => 1,
+        SleepTimerCompletionAction.ShutdownPC => 2,
+        SleepTimerCompletionAction.SignOut => 3,
+        _ => 0
+    };
+
+    private void SyncActionComboBoxes(SleepTimerCompletionAction action)
+    {
+        _isUpdatingActionComboBox = true;
+        try
+        {
+            int index = GetActionIndex(action);
+            if (FlyoutSleepTimerActionComboBox != null && FlyoutSleepTimerActionComboBox.SelectedIndex != index)
+            {
+                FlyoutSleepTimerActionComboBox.SelectedIndex = index;
+            }
+            if (OverflowSleepTimerActionComboBox != null && OverflowSleepTimerActionComboBox.SelectedIndex != index)
+            {
+                OverflowSleepTimerActionComboBox.SelectedIndex = index;
+            }
+        }
+        finally
+        {
+            _isUpdatingActionComboBox = false;
+        }
+    }
+
+    private async void SleepTimerActionComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isUpdatingActionComboBox) return;
+        if (sender is not ComboBox comboBox) return;
+
+        int newIndex = comboBox.SelectedIndex;
+        SleepTimerCompletionAction newAction = newIndex switch
+        {
+            0 => SleepTimerCompletionAction.StopPlayback,
+            1 => SleepTimerCompletionAction.SleepPC,
+            2 => SleepTimerCompletionAction.ShutdownPC,
+            3 => SleepTimerCompletionAction.SignOut,
+            _ => SleepTimerCompletionAction.StopPlayback
+        };
+
+        if (newAction == ViewModel.SelectedSleepTimerAction) return;
+
+        // If the user selected a power action, show an explicit warning dialog to confirm saving changes
+        if (newAction != SleepTimerCompletionAction.StopPlayback)
+        {
+            if (this.Content?.XamlRoot == null) return;
+
+            bool confirmed = await Octave_Desktop.Helpers.SleepTimerHelper.ShowPowerActionWarningDialogAsync(this.Content.XamlRoot, newAction);
+            if (!confirmed)
+            {
+                // Revert to previously confirmed action
+                _isUpdatingActionComboBox = true;
+                try
+                {
+                    comboBox.SelectedIndex = GetActionIndex(ViewModel.SelectedSleepTimerAction);
+                }
+                finally
+                {
+                    _isUpdatingActionComboBox = false;
+                }
+                return;
+            }
+        }
+
+        ViewModel.SelectedSleepTimerAction = newAction;
+        SyncActionComboBoxes(newAction);
+    }
+
+    private void InitializeShutdownCancellationDetection()
+    {
+        _mainWindowHwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        if (_mainWindowHwnd == IntPtr.Zero) return;
+
+        Octave_Desktop.Helpers.SystemPowerHelper.PowerActionInitiated += (s, action) =>
+        {
+            _isPowerActionInitiatedByOctave = true;
+        };
+
+        _powerSubclassProc = new SubclassProc((hWnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) =>
+        {
+            if (uMsg == WM_QUERYENDSESSION)
+            {
+                // Return 1 to indicate OCTAVE is prepared to end the session
+                return new IntPtr(1);
+            }
+            else if (uMsg == WM_ENDSESSION)
+            {
+                // wParam == 0 means Windows aborted or cancelled the shutdown/signout
+                if (wParam == IntPtr.Zero && _isPowerActionInitiatedByOctave)
+                {
+                    _isPowerActionInitiatedByOctave = false;
+                    DispatcherQueue?.TryEnqueue(() =>
+                    {
+                        ViewModel.ShowShutdownCancelledNotification(
+                            "Windows cancelled shutdown/sign-out because another application needs attention or requested cancellation. Your files are safe.");
+                    });
+                }
+            }
+            return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+        });
+
+        SetWindowSubclass(_mainWindowHwnd, _powerSubclassProc, PowerSubclassId, IntPtr.Zero);
+
+        this.Closed += (s, e) =>
+        {
+            if (_mainWindowHwnd != IntPtr.Zero && _powerSubclassProc != null)
+            {
+                RemoveWindowSubclass(_mainWindowHwnd, _powerSubclassProc, PowerSubclassId);
+                _powerSubclassProc = null;
+            }
+        };
     }
 }

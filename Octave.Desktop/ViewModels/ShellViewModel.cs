@@ -13,6 +13,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Octave_Desktop.Helpers;
 
 namespace Octave_Desktop.ViewModels;
 
@@ -294,20 +295,26 @@ public partial class ShellViewModel : ObservableObject
     public double SliderMaximum => DurationSeconds > 0 ? DurationSeconds : 100.0;
     public bool IsTimelineEnabled => DurationSeconds > 0;
 
+    [ObservableProperty]
+    public partial bool HasActiveTrack { get; set; } = false;
+
     public double Volume
     {
-        get => _audioPlayer.Volume * 100.0;
+        get => Math.Round(_audioPlayer.Volume * 100.0, 1);
         set
         {
-            float targetVolume = (float)(value / 100.0);
+            float targetVolume = (float)(Math.Round(value, 1) / 100.0);
             if (Math.Abs(_audioPlayer.Volume - targetVolume) > 0.001f)
             {
                 _audioPlayer.Volume = targetVolume;
                 OnPropertyChanged(nameof(Volume));
+                OnPropertyChanged(nameof(VolumeToolTip));
                 OnPropertyChanged(nameof(IsMuted));
             }
         }
     }
+
+    public string VolumeToolTip => IsMuted ? "Volume: Muted" : $"Volume: {(int)Math.Round(Volume)}%";
 
     public bool IsMuted => _audioPlayer.IsMuted;
 
@@ -766,13 +773,13 @@ public partial class ShellViewModel : ObservableObject
 
     // ---- Sleep timer ------------------------------------------------------
 
-    // ---- Sleep timer ------------------------------------------------------
-
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _sleepCountdownTimer;
     private int _sleepRemainingSeconds;
+    private double _sleepInitialSecondsDouble = 1.0;
     private bool _isSleepEndOfTrack;
+    private bool _isSleepEndOfQueue;
     private string? _sleepTargetTrackId;
-    private float? _originalVolumeBeforeFade;
+    private int _extraMinutesAdded = 0;
 
     [ObservableProperty]
     public partial string SleepTimerStatus { get; set; } = "Off";
@@ -781,7 +788,40 @@ public partial class ShellViewModel : ObservableObject
     public partial bool IsSleepTimerActive { get; set; }
 
     [ObservableProperty]
+    public partial string ActiveSleepPresetTag { get; set; } = "";
+
+    [ObservableProperty]
     public partial string SleepTimerRemainingText { get; set; } = "";
+
+    [ObservableProperty]
+    public partial string SleepTimerSetDurationText { get; set; } = "";
+
+    [ObservableProperty]
+    public partial string SleepTimerSetDurationSubtitle { get; set; } = "";
+
+    [ObservableProperty]
+    public partial double SleepTimerProgressFraction { get; set; } = 0.0;
+
+    [ObservableProperty]
+    public partial string SleepTimerToolTip { get; set; } = "Sleep timer: Off";
+
+    [ObservableProperty]
+    public partial string SleepTimerSettingsDisplayText { get; set; } = "Off";
+
+    [ObservableProperty]
+    public partial Octave.Core.Models.SleepTimerCompletionAction SelectedSleepTimerAction { get; set; } = Octave.Core.Models.SleepTimerCompletionAction.StopPlayback;
+
+    [ObservableProperty]
+    public partial bool IsShutdownCancelledNotificationOpen { get; set; }
+
+    [ObservableProperty]
+    public partial string ShutdownCancelledNotificationMessage { get; set; } = "";
+
+    [RelayCommand]
+    public void DismissShutdownNotification()
+    {
+        IsShutdownCancelledNotificationOpen = false;
+    }
 
     [RelayCommand]
     public void SetSleepTimer(string? mode)
@@ -799,17 +839,78 @@ public partial class ShellViewModel : ObservableObject
             if (track == null)
             {
                 SleepTimerStatus = "Off";
+                UpdateSleepTimerDisplayAndToolTip();
                 return;
             }
 
             _isSleepEndOfTrack = true;
+            _isSleepEndOfQueue = false;
             _sleepTargetTrackId = track.Id;
             IsSleepTimerActive = true;
+            ActiveSleepPresetTag = "EndOfTrack";
+            _extraMinutesAdded = 0;
 
-            double remaining = Math.Max(0.0, DurationSeconds - PositionSeconds);
+            double remaining = Math.Max(1.0, DurationSeconds - PositionSeconds);
+            _sleepInitialSecondsDouble = remaining;
+            _sleepRemainingSeconds = (int)remaining;
+            SleepTimerSetDurationText = "End of current track";
+            SleepTimerSetDurationSubtitle = "Configured for end of track";
+
             string remStr = Octave.Core.Helpers.DurationFormatter.FormatSeconds(remaining);
+            SleepTimerRemainingText = remStr;
             SleepTimerStatus = $"Pausing at end of track ({remStr} left)";
-            SleepTimerRemainingText = $"{remStr} left";
+            SleepTimerProgressFraction = 1.0;
+            UpdateSleepTimerDisplayAndToolTip();
+
+            StartSleepCountdownTimer();
+            return;
+        }
+
+        if (mode.Equals("EndOfQueue", StringComparison.OrdinalIgnoreCase))
+        {
+            var queue = _queueService.GetCurrentQueue();
+            var currentTrack = _queueService.CurrentState.CurrentTrack;
+            if (currentTrack == null || queue == null || queue.Count == 0)
+            {
+                SleepTimerStatus = "Off";
+                UpdateSleepTimerDisplayAndToolTip();
+                return;
+            }
+
+            _isSleepEndOfTrack = false;
+            _isSleepEndOfQueue = true;
+            _sleepTargetTrackId = null;
+            IsSleepTimerActive = true;
+            ActiveSleepPresetTag = "EndOfQueue";
+            _extraMinutesAdded = 0;
+
+            int currIdx = -1;
+            for (int i = 0; i < queue.Count; i++)
+            {
+                if (queue[i].IsPlaying || (currentTrack != null && queue[i].Track.Id == currentTrack.Id))
+                {
+                    currIdx = i;
+                    break;
+                }
+            }
+            if (currIdx < 0) currIdx = 0;
+
+            double trackRem = Math.Max(0.0, DurationSeconds - PositionSeconds);
+            var subDurations = queue.Skip(Math.Max(0, currIdx + 1)).Select(q => q.Track.DurationSeconds);
+            double totalQueueRem = Octave.Core.Helpers.SleepTimerCalculations.CalculateQueueRemainingSeconds(trackRem, subDurations);
+            if (totalQueueRem <= 0.0) totalQueueRem = trackRem;
+            if (totalQueueRem <= 0.0) totalQueueRem = 1.0;
+
+            _sleepInitialSecondsDouble = totalQueueRem;
+            _sleepRemainingSeconds = (int)totalQueueRem;
+            SleepTimerSetDurationText = "End of queue";
+            SleepTimerSetDurationSubtitle = "Configured for end of queue";
+
+            string remStr = Octave.Core.Helpers.DurationFormatter.FormatSeconds(totalQueueRem);
+            SleepTimerRemainingText = remStr;
+            SleepTimerStatus = $"Pausing at end of queue ({remStr} left)";
+            SleepTimerProgressFraction = 1.0;
+            UpdateSleepTimerDisplayAndToolTip();
 
             StartSleepCountdownTimer();
             return;
@@ -817,16 +918,79 @@ public partial class ShellViewModel : ObservableObject
 
         if (int.TryParse(mode, out int minutes) && minutes > 0)
         {
-            _isSleepEndOfTrack = false;
-            _sleepRemainingSeconds = minutes * 60;
-            IsSleepTimerActive = true;
-
-            string initialText = minutes >= 60 ? $"{minutes / 60}h {minutes % 60}m" : $"{minutes} min";
-            SleepTimerStatus = $"Pausing in {initialText}";
-            SleepTimerRemainingText = initialText;
-
-            StartSleepCountdownTimer();
+            SetSleepTimerCustom(minutes, mode);
         }
+    }
+
+    [RelayCommand]
+    public void SetSleepTimerCustom(int minutes) => SetSleepTimerCustom(minutes, null);
+
+    public void SetSleepTimerCustom(int minutes, string? presetTag)
+    {
+        CancelSleepTimer();
+
+        if (minutes <= 0) return;
+
+        _isSleepEndOfTrack = false;
+        _isSleepEndOfQueue = false;
+        _sleepInitialSecondsDouble = minutes * 60.0;
+        _sleepRemainingSeconds = minutes * 60;
+        IsSleepTimerActive = true;
+        ActiveSleepPresetTag = presetTag ?? "Custom";
+
+        string durationText = Octave.Core.Helpers.SleepTimerCalculations.FormatDurationPreset(minutes);
+
+        SleepTimerSetDurationText = durationText;
+        SleepTimerSetDurationSubtitle = $"Configured for {durationText}";
+        string initialRem = Octave.Core.Helpers.SleepTimerCalculations.FormatRemainingTime(minutes * 60);
+        SleepTimerRemainingText = initialRem;
+        SleepTimerStatus = $"Pausing in {initialRem}";
+        SleepTimerProgressFraction = 1.0;
+        UpdateSleepTimerDisplayAndToolTip();
+
+        StartSleepCountdownTimer();
+    }
+
+    [RelayCommand]
+    public void ExtendSleepTimer(int extraMinutes)
+    {
+        if (extraMinutes <= 0) return;
+
+        if (!IsSleepTimerActive)
+        {
+            SetSleepTimerCustom(extraMinutes);
+            return;
+        }
+
+        var ext = Octave.Core.Helpers.SleepTimerCalculations.CalculateExtendedTimer(_sleepRemainingSeconds, _sleepInitialSecondsDouble, extraMinutes, _extraMinutesAdded);
+        _sleepRemainingSeconds = ext.NewRemainingSeconds;
+        _sleepInitialSecondsDouble = ext.NewInitialSeconds;
+        _extraMinutesAdded = ext.TotalExtraMinutesAdded;
+
+        if (_isSleepEndOfTrack)
+        {
+            _isSleepEndOfTrack = false;
+            ActiveSleepPresetTag = "Custom";
+            SleepTimerSetDurationText = $"{_extraMinutesAdded} min added to end of track";
+            SleepTimerSetDurationSubtitle = $"+{_extraMinutesAdded}m extended past track";
+        }
+        else if (_isSleepEndOfQueue)
+        {
+            _isSleepEndOfQueue = false;
+            ActiveSleepPresetTag = "Custom";
+            SleepTimerSetDurationText = $"{_extraMinutesAdded} min added to end of queue";
+            SleepTimerSetDurationSubtitle = $"+{_extraMinutesAdded}m extended past queue";
+        }
+        else
+        {
+            SleepTimerSetDurationSubtitle = $"Set for {SleepTimerSetDurationText} (+{_extraMinutesAdded}m added)";
+        }
+
+        SleepTimerProgressFraction = ext.NewProgressFraction;
+        string timeStr = ext.FormattedRemaining;
+        SleepTimerStatus = $"Pausing in {timeStr}";
+        SleepTimerRemainingText = timeStr;
+        UpdateSleepTimerDisplayAndToolTip();
     }
 
     private void StartSleepCountdownTimer()
@@ -857,12 +1021,8 @@ public partial class ShellViewModel : ObservableObject
             }
 
             double remaining = Math.Max(0.0, DurationSeconds - PositionSeconds);
-            if (remaining <= 4.0 && remaining > 0.0 && IsPlaying)
-            {
-                _originalVolumeBeforeFade ??= _queueService.CurrentState.Volume;
-                float fadeFactor = Math.Clamp((float)(remaining / 4.0), 0.0f, 1.0f);
-                _queueService.SetVolume(_originalVolumeBeforeFade.Value * fadeFactor);
-            }
+            _sleepRemainingSeconds = (int)remaining;
+            SleepTimerProgressFraction = Octave.Core.Helpers.SleepTimerCalculations.CalculateProgressFraction(remaining, _sleepInitialSecondsDouble);
 
             if (remaining <= 0.8)
             {
@@ -872,44 +1032,120 @@ public partial class ShellViewModel : ObservableObject
 
             string remStr = Octave.Core.Helpers.DurationFormatter.FormatSeconds(remaining);
             SleepTimerStatus = $"Pausing at end of track ({remStr} left)";
-            SleepTimerRemainingText = $"{remStr} left";
+            SleepTimerRemainingText = remStr;
+            UpdateSleepTimerDisplayAndToolTip();
+        }
+        else if (_isSleepEndOfQueue)
+        {
+            var currentTrack = _queueService.CurrentState.CurrentTrack;
+            var queue = _queueService.GetCurrentQueue();
+            if (currentTrack == null || !IsPlaying || queue == null || queue.Count == 0)
+            {
+                TriggerSleepPause();
+                return;
+            }
+
+            int currIdx = -1;
+            for (int i = 0; i < queue.Count; i++)
+            {
+                if (queue[i].IsPlaying || (currentTrack != null && queue[i].Track.Id == currentTrack.Id))
+                {
+                    currIdx = i;
+                    break;
+                }
+            }
+            if (currIdx < 0) currIdx = 0;
+
+            double trackRem = Math.Max(0.0, DurationSeconds - PositionSeconds);
+            var subDurations = queue.Skip(Math.Max(0, currIdx + 1)).Select(q => q.Track.DurationSeconds);
+            double remaining = Octave.Core.Helpers.SleepTimerCalculations.CalculateQueueRemainingSeconds(trackRem, subDurations);
+
+            _sleepRemainingSeconds = (int)remaining;
+            SleepTimerProgressFraction = Octave.Core.Helpers.SleepTimerCalculations.CalculateProgressFraction(remaining, _sleepInitialSecondsDouble);
+
+            bool isLastTrack = currIdx >= queue.Count - 1;
+            if (isLastTrack && trackRem <= 0.8)
+            {
+                TriggerSleepPause();
+                return;
+            }
+
+            string remStr = Octave.Core.Helpers.DurationFormatter.FormatSeconds(remaining);
+            SleepTimerStatus = $"Pausing at end of queue ({remStr} left)";
+            SleepTimerRemainingText = remStr;
+            UpdateSleepTimerDisplayAndToolTip();
         }
         else
         {
             _sleepRemainingSeconds--;
-
             if (_sleepRemainingSeconds <= 0)
             {
                 TriggerSleepPause();
                 return;
             }
 
-            if (_sleepRemainingSeconds <= 4 && IsPlaying)
-            {
-                _originalVolumeBeforeFade ??= _queueService.CurrentState.Volume;
-                float fadeFactor = Math.Clamp((float)_sleepRemainingSeconds / 4.0f, 0.0f, 1.0f);
-                _queueService.SetVolume(_originalVolumeBeforeFade.Value * fadeFactor);
-                SleepTimerStatus = $"Pausing in {_sleepRemainingSeconds}s";
-                SleepTimerRemainingText = $"{_sleepRemainingSeconds}s";
-            }
-            else
-            {
-                int mins = _sleepRemainingSeconds / 60;
-                int secs = _sleepRemainingSeconds % 60;
-                string timeStr = mins >= 60
-                    ? $"{mins / 60}h {(mins % 60):D2}m"
-                    : (mins > 0 ? $"{mins}m {secs:D2}s" : $"{secs}s");
-
-                SleepTimerStatus = $"Pausing in {timeStr}";
-                SleepTimerRemainingText = timeStr;
-            }
+            SleepTimerProgressFraction = Octave.Core.Helpers.SleepTimerCalculations.CalculateProgressFraction(_sleepRemainingSeconds, _sleepInitialSecondsDouble);
+            string timeStr = Octave.Core.Helpers.SleepTimerCalculations.FormatRemainingTime(_sleepRemainingSeconds);
+            SleepTimerStatus = $"Pausing in {timeStr}";
+            SleepTimerRemainingText = timeStr;
+            UpdateSleepTimerDisplayAndToolTip();
         }
     }
 
-    private void TriggerSleepPause()
+    private void UpdateSleepTimerDisplayAndToolTip()
     {
-        _queueService.Pause();
+        string actionSuffix = SelectedSleepTimerAction switch
+        {
+            Octave.Core.Models.SleepTimerCompletionAction.SleepPC => " • Sleep PC",
+            Octave.Core.Models.SleepTimerCompletionAction.ShutdownPC => " • Shut down PC",
+            Octave.Core.Models.SleepTimerCompletionAction.SignOut => " • Sign out",
+            _ => ""
+        };
+
+        if (IsSleepTimerActive)
+        {
+            SleepTimerToolTip = $"Sleep timer: {SleepTimerRemainingText} left (Set for {SleepTimerSetDurationText}{actionSuffix})";
+            SleepTimerSettingsDisplayText = $"{SleepTimerRemainingText} left (Set for {SleepTimerSetDurationText}{actionSuffix})";
+        }
+        else
+        {
+            SleepTimerToolTip = "Sleep timer: Off";
+            SleepTimerSettingsDisplayText = "Off";
+        }
+    }
+
+    private async void TriggerSleepPause()
+    {
+        var action = SelectedSleepTimerAction;
         CancelSleepTimer();
+        int fadeMs = _audioPlayer.CrossfadeDurationMs > 0 ? _audioPlayer.CrossfadeDurationMs : 2000;
+        await _audioPlayer.FadeOutAndPauseAsync(fadeMs);
+        _queueService.Pause();
+
+        ExecuteSleepTimerAction(action);
+    }
+
+    private void ExecuteSleepTimerAction(Octave.Core.Models.SleepTimerCompletionAction action)
+    {
+        if (action == Octave.Core.Models.SleepTimerCompletionAction.StopPlayback)
+        {
+            return;
+        }
+
+        var result = SystemPowerHelper.ExecuteAction(action);
+        if (!result.Success && !string.IsNullOrEmpty(result.ErrorMessage))
+        {
+            ShowShutdownCancelledNotification(result.ErrorMessage);
+        }
+    }
+
+    public void ShowShutdownCancelledNotification(string message)
+    {
+        _dispatcher.TryEnqueue(() =>
+        {
+            ShutdownCancelledNotificationMessage = message;
+            IsShutdownCancelledNotificationOpen = true;
+        });
     }
 
     [RelayCommand]
@@ -918,17 +1154,18 @@ public partial class ShellViewModel : ObservableObject
         _sleepCountdownTimer?.Stop();
         _sleepCountdownTimer = null;
         _isSleepEndOfTrack = false;
+        _isSleepEndOfQueue = false;
         _sleepTargetTrackId = null;
-
-        if (_originalVolumeBeforeFade.HasValue)
-        {
-            _queueService.SetVolume(_originalVolumeBeforeFade.Value);
-            _originalVolumeBeforeFade = null;
-        }
+        _extraMinutesAdded = 0;
 
         IsSleepTimerActive = false;
+        ActiveSleepPresetTag = "";
         SleepTimerStatus = "Off";
         SleepTimerRemainingText = "";
+        SleepTimerSetDurationText = "";
+        SleepTimerSetDurationSubtitle = "";
+        SleepTimerProgressFraction = 0.0;
+        UpdateSleepTimerDisplayAndToolTip();
     }
 
     // ---- Playback Resume Settings ------------------------------------------
@@ -1521,6 +1758,7 @@ public partial class ShellViewModel : ObservableObject
         }
 
         IsPlaying = state.Status == PlaybackStatus.Playing;
+        HasActiveTrack = state.CurrentTrack != null;
         DurationSeconds = state.DurationSeconds > 0 ? state.DurationSeconds : (state.CurrentTrack?.DurationSeconds ?? 0);
         if (!IsDragging)
         {
@@ -1529,6 +1767,7 @@ public partial class ShellViewModel : ObservableObject
         IsShuffle = state.IsShuffle;
         RepeatMode = state.RepeatMode;
         OnPropertyChanged(nameof(Volume));
+        OnPropertyChanged(nameof(VolumeToolTip));
         OnPropertyChanged(nameof(IsMuted));
 
         RefreshQueue();
@@ -1619,6 +1858,7 @@ public partial class ShellViewModel : ObservableObject
     {
         _audioPlayer.ToggleMute();
         OnPropertyChanged(nameof(Volume));
+        OnPropertyChanged(nameof(VolumeToolTip));
         OnPropertyChanged(nameof(IsMuted));
     }
 

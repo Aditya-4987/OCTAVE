@@ -27,7 +27,12 @@ OCTAVE/
 │   ├── Services/            # WindowsSmtcService (System Media Transport Controls), WinUIDispatcherService
 │   ├── ViewModels/          # ShellViewModel, Home, Library, Albums, Artists, NowPlaying, Playlists, Search, Settings, EqBand
 │   └── Views/               # HomePage, LibraryPage, AlbumsPage, ArtistsPage, EntityDetailPage, PlaylistsPage, PlaylistDetailPage, SearchResultsPage, SettingsPage, NowPlayingPage, MiniPlayerWindow
-└── Octave.Core.Tests/       # xUnit test suite (248 tests: Sqlite, Library, Audio, Queue, Lyrics, LRCLIB, Matcher, Scanner, Watcher, Normalizer, Formats)
+├── Octave_Package/          # Standalone Self-Contained x64 Portable Package (Zero install, relocatable, all BASS decoders & WinUI runtime bundled)
+├── Octave.Core.Tests/       # xUnit test suite (350 tests: Sqlite, Library, Audio, Queue, Lyrics, LRCLIB, Matcher, Scanner, Watcher, Normalizer, Formats, DeviceClassification, SleepTimer, PackagingIntegrity)
+├── setup.cmd / setup.ps1    # Automated 1-Click zero-admin installer for Windows (deploys to %LOCALAPPDATA%\Programs\Octave with shortcuts & ARP registration)
+├── setup.iss                # Optional Inno Setup compiler script for building standalone OCTAVE_Setup_x64.exe
+├── setup.md                 # End-user setup and installation manual
+└── packagin_context.md      # Packaging and distribution architecture reference
 ```
 
 ---
@@ -182,7 +187,7 @@ OCTAVE/
 - **Per-Stream Identity**: `_endSyncs` maps stream handles to `(SyncHandle, SessionId, Uri)`. Old/crossfaded streams have their sync detached at skip time so late endings cannot trigger false auto-advances.
 - **Crossfading**: Configurable volume ramp via `Bass.ChannelSlideAttribute` (up to 10 seconds).
 - **10-Band Graphic Equalizer**: Implemented via `BASS_FX_DX8_PARAMEQ` (31Hz, 62Hz, 125Hz, 250Hz, 500Hz, 1kHz, 2kHz, 4kHz, 8kHz, 16kHz) with automatic volume clamping and peak limiter.
-- **FFT Spectrum Visualizer**: Fast, real-time frequency analysis via `Bass.ChannelGetData(..., (int)DataFlags.FFT2048)`.
+- **FFT Spectrum Visualizer**: Fast, real-time frequency analysis via `Bass.ChannelGetData(..., (int)DataFlags.FFT2048)`. Supports both traditional `float[] GetFftData(int barCount)` and high-performance, zero-allocation `int GetFftData(Span<float> destination)` to aggregate 1024 bins directly into stack-allocated spans without garbage collection pressure (saving 60–144 heap allocations/sec).
 - **Thread Safety**:
   - `_playGate` serializes concurrent `Play` calls.
   - `_streamLock` guards stream handle mutations (never held across slow I/O or event dispatches).
@@ -216,11 +221,16 @@ OCTAVE/
   - System isolation: Selecting an explicit output device never overwrites or corrupts the application's fallback pointer to the system default output device.
 - **Device Switching Flow & Dynamic Stream Migration**:
   - When the user selects a custom output device or switches between devices, playback immediately pauses (`Bass.ChannelPause`).
+  - **Clean Hardware Handover (`Bass.Free` on Old Device)**: When migrating across endpoints on the same sound card (e.g. Realtek internal speakers and 3.5mm AUX jack), `RecreateStreamOnDeviceUnlocked` actively frees the old BASS device context (`if (oldDev > 0 && oldDev != targetBassDev) { Bass.CurrentDevice = oldDev; Bass.Free(); }`). This releases hardware soundcard DMA channels and DirectSound buffer locks, preventing the sound chip from stalling audio output while the channel falsely reports `Playing`.
+  - **Direct Output Pipeline Start (`Bass.Start`)**: Explicitly sets `Bass.CurrentDevice = targetBassDev; Bass.Start();` to ensure the output buffer and hardware rendering clock begin streaming immediately upon stream migration.
   - The stream is cleanly recreated on the target physical BASS device (`RecreateStreamOnDeviceUnlocked`) at the exact current position with EQ, volume, and ReplayGain restored.
   - Playback automatically resumes (`Bass.ChannelPlay`) if it was playing when the switch occurred; if it was paused, it stays paused ready for resume.
   - Active stream hardware state is tracked continuously via `_currentStreamBassDevice` and `_currentStreamEndpointId`.
+  - **Position Protection Across Stream Migration**: In `GetPositionSeconds()`, `_lastValidPositionSeconds` is guarded with `if (pos > 0.05 || _isStopped)` so transient 0-byte reads during stream migration never overwrite the active timestamp. `Seek()` always updates `_lastValidPositionSeconds = clampedPosition;` (and `safePos` even if stream handle is 0).
 - **Bidirectional Dynamic Stream Migration (Windows Default Mode)**:
   - **Dynamic Physical CoreAudio Target**: In Windows Default mode (`_selectedCustomDeviceId == null`), the engine dynamically queries Windows CoreAudio via `WindowsAudioDeviceHelper.GetDefaultOutputEndpointId()` and resolves the active endpoint GUID to its matching physical BASS device index (`ResolveBassDevice(null)`). BASS Device 1 is never hardcoded because DirectSound's legacy Primary Sound Driver wrapper statically targets internal laptop speakers instead of tracking modern OS endpoint migrations.
+  - **Driver GUID Matching Before Flag Propagation**: `ResolveBassDevice` matches device driver GUID even before BASS's internal `IsEnabled` flag has updated, preventing false fallbacks to speakers on newly inserted devices.
+  - **Physical 3.5mm Jack Settling Delay**: In `OnAudioEndpointsChanged`, a 60ms settling sleep is introduced for analog jack-detect switches, allowing hardware sense pins and OS driver endpoint switches to stabilize before stream re-creation.
   - **Reconnecting Personal Audio (Speakers $\to$ Headphones / Bluetooth / DAC / Type-C)**: When personal audio devices are plugged in or reconnected, the engine detects default endpoint migration, pauses the old stream on speakers, dynamically resolves the new physical device index, recreates the stream on that device at the exact millisecond byte position, and automatically resumes playback seamlessly.
   - **Disconnecting Personal Audio (Headphones / Bluetooth / Type-C / USB DAC $\to$ Speakers)**: When removable listening devices are unplugged or disconnected, the engine immediately pauses playback (`Bass.ChannelPause`) to prevent room blasting, fires `PlaybackInterrupted` (transport bar displays Paused), dynamically resolves the fallback physical speaker device index, and recreates the stream on it in a paused state.
   - **Paused State Preservation & Zero Audio Leakage**: Explicit `_isPlayingIntent`, `_isPaused`, and `_isStopped` state variables track playback intention independent of WASAPI buffer starvation. Recreating streams in a paused state leaves the channel paused without spurious `ChannelPlay` calls, preventing room blast and race conditions.
@@ -245,8 +255,9 @@ OCTAVE/
 - **Active & Unshuffled Queues**: Maintains an active playback queue (`ObservableCollection<QueueItem>`) and an unshuffled backup to preserve the original album/playlist order when toggling Shuffle off.
 - **Resilient Transport Controls & State Synchronization**:
   - `Pause()` unconditionally sets `IsPlaying = false` on all active queue items, pauses the audio engine, captures state, and broadcasts playback state even if the underlying audio driver already stopped or paused. This guarantees the Play/Pause transport button never becomes stuck or unresponsive.
-  - `Resume()` handles paused, stopped, and invalidated stream states with automatic re-play fallback (`PlayIndexInternal`) if the driver requires a fresh stream.
+  - `Resume()` handles paused, stopped, and invalidated stream states with automatic re-play fallback (`PlayIndexInternal`) if the driver requires a fresh stream. Re-captures state after seeking (`_audioPlayer.Seek(savedPos); state = CaptureStateUnlocked();`) so UI timeline receives the true resumed position rather than resetting to 0:00.
   - `PlaybackInterrupted` clears `IsPlaying` across the queue and notifies subscribers on the UI thread.
+  - **Output Device Synchronization**: Listens to `_audioPlayer.OutputDeviceChanged` to immediately update `QueueItem.IsPlaying` and broadcast `CaptureStateUnlocked()` whenever audio endpoints migrate or change, preventing ghost playing states or desynchronized transport controls. Detached cleanly in `Dispose()`.
 - **Shuffle**: Implements Fisher-Yates shuffle with the currently playing track pinned at index 0. Injectable `Random` instance allows deterministic testing.
 - **Repeat Modes**: `None` (stops at end of queue), `Queue` (loops queue), `Track` (repeats current track).
 - **Auto-Advance & Resilient Error Handling**:
@@ -340,12 +351,17 @@ OCTAVE/
 
 ### 8.2 Converters, Helpers & Favorites System
 - **`ArtworkPathConverter`**: Multi-resolution image decoder with LRU caching, DPI rasterization scale awareness, and clean `null` resolution for ambient background when no track is playing.
-- **`FavoriteConverters`**: `FavoriteGlyphConverter` (`\uEB52` HeartFill / `\uEB51` HeartOutline), `FavoriteBrushConverter` (coral red `#FF4060` / theme-aware tertiary brush), and `FavoriteToolTipConverter` ("Remove from Favorites" / "Add to Favorites").
 - **Track Lists Favorite Buttons**: Available on every page listing songs (`LibraryPage`, `EntityDetailPage`, `PlaylistDetailPage`, `SearchResultsPage`, `QueuePanel`, `MainWindow` sidebar queue, and `HomePage` Spotlight Hero card) with live synchronization via `ILibraryService.FavoritesChanged`.
 - **`PlaybackBar` & Transport Subsystem**:
-  - **Interactive Seek Timeline**: Real-time slider with proportional hover preview tooltip calculation (`x / ActualWidth * DurationSeconds`), smooth thumb drag scrubbing, mouse wheel step seeking (±5s standard, ±1s with Ctrl), and comprehensive keyboard accessibility (`Home`, `End`, `PageUp`, `PageDown`, `Left`, `Right`, `Shift+Left`, `Shift+Right`).
+  - **Responsive Column Architecture**: 3-column layout (`ColumnDefinition Width="Auto"`, `Width="*"`, and `Width="Auto" MaxWidth="460"`). Eliminates right-side utility clipping (Sleep Timer, Sync Indicator, Lyrics, Queue, Volume) on wide displays while maintaining centered transport controls.
+  - **Adaptive Track Info**: 2-column fluid `Grid (Auto, *)` inside `BottomTrackDetailsBtn` allowing title and artist to dynamically fill space and truncate cleanly with `CharacterEllipsis` without rigid width limits.
+  - **Quality Badge & Streamlined Device Tag**: Audio Quality Pill visibility bound to `HasActiveTrack` (clean idle state) with secondary details (`QualityStreamDetailsPanel`) collapsing on viewports $<950\text{px}$. Output device pill streamlined to a clean device icon tag with rich hardware DAC pipeline details on hover tooltip.
+  - **Unified Hero Play/Pause Button**: Single 36x36 circular hero button (`TogglePlayPauseCommand`) with high-contrast icon glyphs, preventing keyboard focus dropouts and visual flicker during playback toggles.
+  - **Upgraded Sleep Timer with 2px Clockwise Circular Countdown Arc & Custom Dialog**: Includes standard presets (5m, 10m, 15m, 30m, 45m, 1h, 2h, End of track) and "Custom..." duration dialog with inline `NumberBox` (1–720 min) and quick preset chips. Active timer renders a 2px `SystemControlHighlightAccentBrush` boundary reducing clockwise over time, synchronized across bottom transport bar, overflow menu, and Settings page. Tooltips and status displays indicate remaining time and configured duration (e.g. `14m 20s left (Set for 15 minutes)`).
+  - **Interactive Seek Timeline**: Real-time slider with proportional hover preview tooltip calculation (`x / ActualWidth * DurationSeconds`), smooth thumb drag scrubbing, mouse wheel step seeking (±5s standard, ±1s with Ctrl), guarded against duplicate event handling (`if (e.Handled) return;`), and comprehensive keyboard accessibility (`Home`, `End`, `PageUp`, `PageDown`, `Left`, `Right`, `Shift+Left`, `Shift+Right`).
   - **Scrubber Pointer Capture Resilience**: On `PointerCaptureLost` / `PointerCanceled`, any active drag commits pending seek position to audio engine before clearing `IsDragging` state, preventing dropped seek operations.
-  - **Real-Time Visualizer Tracking**: Synchronizes FFT spectrum bar play-fill progress directly with slider thumb during active user drag.
+  - **Real-Time Visualizer Tracking & Lifecycle Optimization**: Synchronizes FFT spectrum bar play-fill progress directly with slider thumb during active user drag. Automatically pauses `CompositionTarget.Rendering` ticker when window is minimized (`!AppWindow.IsVisible`), dropping visualizer overhead to 0 FPS, and guards layout invalidations with a 0.3px delta threshold.
+  - **Compact Window Overflow Menu (<950px)**: Dedicated flyout hosting Sleep Timer options, live background sync progress, and active timer badges, with synchronized sidebar tab highlight states.
 - **`WindowsAudioDeviceHelper`**: Fast, cached audio endpoint query engine with 60-second positive TTL and 5-minute failure fallback caching to eliminate thread-pool COM activation thrashing and lag on page navigation.
 - **`WindowsSmtcService`**: Windows System Media Transport Controls integration supporting hardware media keys (Play, Pause, Next, Previous) and lock screen / flyout metadata.
 - **CLI & File Association Playback Launch (`App.xaml.cs`)**: Automatic command-line and shell file association handling that parses audio file launch arguments, performs on-demand single-file indexing into SQLite if unregistered, and enqueues/plays the track immediately upon startup.
@@ -378,18 +394,64 @@ OCTAVE/
    - Device endpoints must call `Bass.CurrentDevice = targetDev; Bass.Start()` to ensure output rendering commences immediately.
    - Position tracking (`_lastValidPositionSeconds`) must be guarded with `if (pos > 0.05 || _isStopped)` to prevent transient 0-byte reads during channel recreation from resetting active playback time.
    - `QueueService` listens to `_audioPlayer.OutputDeviceChanged` to immediately synchronize `PlaybackState` when hardware endpoints change, preventing ghost playing states or desynced UI transport buttons.
+9. **Sleep Timer Fading & Master Volume Invariant**:
+   - Sleep timer volume attenuation must never mutate or step `QueueService.SetVolume` or the user's master volume slider. It must use native BASS channel sliding (`Bass.ChannelSlideAttribute(stream, ChannelAttribute.Volume, 0f, fadeDurationMs)`) and restore the channel volume attribute via `UpdateStreamVolumeUnlocked()` upon pausing so that subsequent playback resumes at the user's chosen volume level.
 
 ---
 
 ## 10. Test Suite Matrix (`Octave.Core.Tests`)
 
-The test suite contains **273 unit and integration tests** covering all core layers:
+The test suite contains **350 unit and integration tests** covering all core layers:
 - **`SqliteDbContextTests` & `SqliteConcurrencyAndMigrationTests`**: Schema creation, CRUD, FTS5 search triggers, cascade deletes, concurrent connections, WAL durability, bulk track insertion transactionality, and automatic dropping of obsolete legacy columns.
-- **`ManagedBassAudioServiceTests` & `AudioPlayerServiceTests`**: Real unmanaged BASS engine initialization, WAV stream decoding, crossfade volume ramping, End-sync registration, skip/detach safety, boundary seek clamping, idempotent disposal, device classification across 9 hardware categories, and device context reinitialization across free/init cycles.
+- **`ManagedBassAudioServiceTests` & `AudioPlayerServiceTests`**: Real unmanaged BASS engine initialization, WAV stream decoding, crossfade volume ramping, native BASS channel slide fade-and-pause (`FadeOutAndPauseAsync`), End-sync registration, skip/detach safety, boundary seek clamping, idempotent disposal, device classification across 9 hardware categories, device context reinitialization across free/init cycles, zero-allocation span-based FFT data extraction (`GetFftData(Span<float>)`) across variable buffer sizes, preamp gain boundaries (`[-15dB, +15dB]`), and 10-band equalizer configuration.
+- **`SleepTimerTests`**: Exhaustive headless verification of sleep timer algorithms: duration preset formatting, adaptive countdown remaining string formatting, circular clockwise arc geometry coordinates and trigonometry at 12, 3, 6, and 9 o'clock angles, large arc sweep flags, defensive fraction clamping (including NaN/Infinity/negative guards), cumulative timer extension calculations, and completion power actions (Sleep, Shutdown, SignOut).
+- **`PackagingAndPublishingIntegrityTests`**: Validates native runtime dependencies (`bass.dll`, `bass_fx.dll`) as valid 64-bit AMD64 PE binaries (DOS MZ + PE\0\0 + 0x8664); validates SQLite initializes with FTS5 virtual full-text search tables; validates TagLib# metadata parsing without reflection missing member exceptions; validates LRCLIB JSON deserialization stability; validates that the standalone portable package (`Octave_Package/`) contains all required binaries, WinUI PRIs, compiled XBF views/controls, and high-resolution assets for relocatable execution.
 - **`QueueServiceTests` & `QueueItemTests`**: Queue operations, Fisher-Yates shuffle permutations, repeat modes, multi-track auto-advance sequences, load failure circuit breakers, cross-thread WinRT COM exception resilience, seek state synchronization, and state persistence.
 - **`PlaylistServiceTests`**: Playlist CRUD, surrogate key uniqueness, duplicate track handling, track reordering, and atomic multi-track addition (`AddTracksAsync`).
 - **`LibraryServiceTests` & `LocalLibraryScannerTests`**: Folder scanning, batch writes, tag reading, artwork caching, compilation artist separation, and duplicate detection.
 - **`LyricsServiceTests`**: Embedded, sidecar `.lrc`, SQLite cache, L1 in-memory caching, and LRCLIB resolution pipelines, timestamp parsing, negative caching, and offset calculations.
 - **`LrclibClientTests` & `LyricsMatcherTests`**: HTTP request generation, response parsing, error handling, title normalizations, and candidate fuzzy matching algorithms.
 - **`MetadataTextNormalizerTests`, `AudioFormatAndDimensionTests` & `FormattingTests`**: 23 canonical audio formats, PNG/JPEG dimension parsing without GDI+, diacritic stripping, version matching, Levenshtein distances, and duration formatting.
+
+---
+
+## 11. Packaging, Portable Distribution & Automated Installer Subsystem
+
+### 11.1 Self-Contained Portable Release Architecture (`Octave_Package/`)
+OCTAVE ships as a zero-prerequisite, relocatable 64-bit AMD64 standalone application package in `Octave_Package/`.
+- **Runtime Bundling**: Includes the self-contained .NET 10 runtime (`coreclr.dll`, `clrjit.dll`) and self-contained Windows App SDK runtime (`Microsoft.ui.xaml.dll`, `DirectML.dll`, `DWriteCore.dll`, `MRM.dll`). Target systems require neither the .NET SDK nor the Windows App SDK redistributable.
+- **Relocatable Path Safety**: The application directory is treated as strictly read-only and immutable. All runtime database writes (`octave.db`), lyrics caches, and extracted artwork (`ArtworkCache/{hash}.jpg`) route to `%LOCALAPPDATA%/Octave/`, ensuring full execution mobility across USB drives, external storage, and restricted paths.
+- **Native Unmanaged Binaries**: Bundles core BASS 2.4 (`bass.dll`), BASS FX (`bass_fx.dll`), 8 native decoder add-ons (`bassflac.dll`, `bassopus.dll`, `bass_aac.dll`, `bassalac.dll`, `basswma.dll`, `bassdsd.dll`, `bassape.dll`, `basswv.dll`), unmanaged tag extraction (`tags.dll`), and SQLite native library with FTS5 (`e_sqlite3.dll`).
+
+### 11.2 MSBuild Unpackaged WinUI 3 Publish Pipeline (`PublishWinUIAppArtifacts`)
+In unpackaged WinUI 3 SDK projects, standard `dotnet publish` copies managed and native assemblies to `PublishDir` but leaves behind PRI resource tables, compiled XAML XBF trees, and production assets. To solve this in `Octave.Desktop.csproj`:
+- Implemented `PublishWinUIAppArtifacts` target triggered `AfterTargets="Publish"`.
+- Copies `$(TargetName).pri` and `resources.pri` to `$(PublishDir)`.
+- Copies all root XBF binaries (`App.xbf`, `MainWindow.xbf`, `MiniPlayerWindow.xbf`) to `$(PublishDir)`.
+- Copies all subdirectory XBF binaries (`Views/`, `Controls/`, `Controls/NowPlaying/`) preserving the XAML URI namespace.
+- Copies all production `Assets/` (icons, splash screens, default placeholders) while excluding dev fixtures (`test.mp3`) in Release configuration.
+- Copies installer scripts (`setup.cmd`, `setup.ps1`, `setup.md`) directly into the publish directory for immediate portable readiness.
+
+### 11.3 1-Click Zero-Admin Windows Setup Engine (`setup.cmd` & `setup.ps1`)
+- **Per-User Deployment**: Installs OCTAVE to `%LOCALAPPDATA%\Programs\Octave` (the official standard per-user app directory on Windows), requiring **zero administrator / UAC elevation**.
+- **Process Concurrency Check**: Detects running `Octave.Desktop` instances, gracefully requests close, and cleans file locks prior to updating.
+- **System Shortcuts**: Emits Start Menu shortcut (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\OCTAVE.lnk`) and Desktop shortcut (`%USERPROFILE%\Desktop\OCTAVE.lnk`) with high-resolution `AppIcon.ico`.
+- **Windows Installed Apps Control Panel (ARP) Integration**: Registers keys under `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\OCTAVE` (`DisplayName`, `DisplayVersion`, `Publisher`, `DisplayIcon`, `InstallLocation`, `UninstallString`, `QuietUninstallString`, and `EstimatedSize`).
+- **Uninstaller Generation**: Emits `uninstall.cmd` and `uninstall.ps1` inside the installation folder for 1-click clean removal from Windows Settings or command prompt.
+
+### 11.4 Inno Setup Compiler Integration (`setup.iss`)
+- Standard Inno Setup compilation script targeting modern Windows 10/11 x64 systems (`ArchitecturesAllowed=x64compatible`).
+- Compiles the entire `Octave_Package/` into a single, high-compression (`lzma2/ultra64`) standalone installer executable (`OCTAVE_Setup_x64.exe`).
+
+### 11.5 Reproduction & Publishing Commands
+```powershell
+# Publish standalone portable distribution package to Octave_Package/
+dotnet publish Octave.Desktop/Octave.Desktop.csproj -c Release -r win-x64 --self-contained true -o Octave_Package
+
+# Run automated 1-click setup
+.\setup.cmd
+
+# Verify packaging integrity test suite
+dotnet test --filter "FullyQualifiedName~PackagingAndPublishingIntegrityTests"
+```
 

@@ -31,10 +31,23 @@ public sealed partial class SettingsPage : Page
             ? Visibility.Collapsed
             : Visibility.Visible;
 
+    private bool _isSyncingSleepTimerCombo;
+    private bool _isSyncingActionCombo;
+
+    public int GetActionIndex(SleepTimerCompletionAction action) => action switch
+    {
+        SleepTimerCompletionAction.StopPlayback => 0,
+        SleepTimerCompletionAction.SleepPC => 1,
+        SleepTimerCompletionAction.ShutdownPC => 2,
+        SleepTimerCompletionAction.SignOut => 3,
+        _ => 0
+    };
+
     public SettingsPage()
     {
         ViewModel = App.Services.GetRequiredService<ShellViewModel>();
         InitializeComponent();
+        ViewModel.PropertyChanged += ViewModel_PropertyChanged;
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -43,14 +56,164 @@ public sealed partial class SettingsPage : Page
         ViewModel.RefreshAudioQuality();
         ViewModel.RefreshOutputDevices();
         await ViewModel.LoadFoldersAsync();
+        UpdateSettingsSleepArc();
+        SyncSleepTimerComboWithViewModel();
+        SyncActionComboWithViewModel();
     }
 
-    // Remade sleep timer: supports minutes, hours, and EndOfTrack modes with live countdown
-    private void SleepTimerCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
-        if (ViewModel == null || sender is not ComboBox cb || cb.SelectedItem is not ComboBoxItem item) return;
+        base.OnNavigatedFrom(e);
+        ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+    }
+
+    private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(ShellViewModel.SleepTimerProgressFraction) || e.PropertyName == nameof(ShellViewModel.IsSleepTimerActive))
+        {
+            UpdateSettingsSleepArc();
+        }
+
+        if (e.PropertyName == nameof(ShellViewModel.ActiveSleepPresetTag) || e.PropertyName == nameof(ShellViewModel.IsSleepTimerActive))
+        {
+            SyncSleepTimerComboWithViewModel();
+        }
+
+        if (e.PropertyName == nameof(ShellViewModel.SelectedSleepTimerAction))
+        {
+            SyncActionComboWithViewModel();
+        }
+    }
+
+    private void SyncSleepTimerComboWithViewModel()
+    {
+        if (SleepTimerCombo == null || ViewModel == null) return;
+        _isSyncingSleepTimerCombo = true;
+        try
+        {
+            if (!ViewModel.IsSleepTimerActive)
+            {
+                SleepTimerCombo.SelectedIndex = 0;
+                return;
+            }
+
+            string activeTag = ViewModel.ActiveSleepPresetTag;
+            for (int i = 0; i < SleepTimerCombo.Items.Count; i++)
+            {
+                if (SleepTimerCombo.Items[i] is ComboBoxItem item &&
+                    string.Equals(item.Tag as string, activeTag, StringComparison.OrdinalIgnoreCase))
+                {
+                    SleepTimerCombo.SelectedIndex = i;
+                    return;
+                }
+            }
+
+            // If custom duration or extended
+            SleepTimerCombo.SelectedIndex = -1;
+        }
+        finally
+        {
+            _isSyncingSleepTimerCombo = false;
+        }
+    }
+
+    private void UpdateSettingsSleepArc()
+    {
+        if (SettingsSleepArcPath == null) return;
+        if (ViewModel.IsSleepTimerActive && ViewModel.SleepTimerProgressFraction > 0.001)
+        {
+            SettingsSleepArcPath.Data = Octave_Desktop.Helpers.SleepTimerHelper.CreateCountdownArcGeometry(ViewModel.SleepTimerProgressFraction, 22.0, 9.0);
+        }
+        else
+        {
+            SettingsSleepArcPath.Data = null;
+        }
+    }
+
+    // Remade sleep timer: supports minutes, hours, EndOfTrack, and Custom dialog with live countdown
+    private async void SleepTimerCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isSyncingSleepTimerCombo || ViewModel == null || sender is not ComboBox cb || cb.SelectedItem is not ComboBoxItem item) return;
         string? mode = item.Tag as string ?? item.Content?.ToString();
+
+        if (string.Equals(mode, "Custom", StringComparison.OrdinalIgnoreCase))
+        {
+            if (this.Content?.XamlRoot == null) return;
+            var minutes = await Octave_Desktop.Helpers.SleepTimerHelper.ShowCustomSleepTimerDialogAsync(this.Content.XamlRoot);
+            if (minutes.HasValue)
+            {
+                ViewModel.SetSleepTimerCustom(minutes.Value);
+            }
+            else
+            {
+                _isSyncingSleepTimerCombo = true;
+                try
+                {
+                    cb.SelectedIndex = ViewModel.IsSleepTimerActive ? -1 : 0;
+                }
+                finally
+                {
+                    _isSyncingSleepTimerCombo = false;
+                }
+            }
+            return;
+        }
+
         ViewModel.SetSleepTimerCommand.Execute(mode);
+    }
+
+    private void SyncActionComboWithViewModel()
+    {
+        if (SleepTimerActionCombo == null || ViewModel == null) return;
+        _isSyncingActionCombo = true;
+        try
+        {
+            SleepTimerActionCombo.SelectedIndex = GetActionIndex(ViewModel.SelectedSleepTimerAction);
+        }
+        finally
+        {
+            _isSyncingActionCombo = false;
+        }
+    }
+
+    private async void SleepTimerActionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isSyncingActionCombo || ViewModel == null || sender is not ComboBox cb) return;
+
+        int newIndex = cb.SelectedIndex;
+        SleepTimerCompletionAction newAction = newIndex switch
+        {
+            0 => SleepTimerCompletionAction.StopPlayback,
+            1 => SleepTimerCompletionAction.SleepPC,
+            2 => SleepTimerCompletionAction.ShutdownPC,
+            3 => SleepTimerCompletionAction.SignOut,
+            _ => SleepTimerCompletionAction.StopPlayback
+        };
+
+        if (newAction == ViewModel.SelectedSleepTimerAction) return;
+
+        // If user chose a power action, ask for confirmation
+        if (newAction != SleepTimerCompletionAction.StopPlayback)
+        {
+            if (this.Content?.XamlRoot == null) return;
+
+            bool confirmed = await Octave_Desktop.Helpers.SleepTimerHelper.ShowPowerActionWarningDialogAsync(this.Content.XamlRoot, newAction);
+            if (!confirmed)
+            {
+                _isSyncingActionCombo = true;
+                try
+                {
+                    cb.SelectedIndex = GetActionIndex(ViewModel.SelectedSleepTimerAction);
+                }
+                finally
+                {
+                    _isSyncingActionCombo = false;
+                }
+                return;
+            }
+        }
+
+        ViewModel.SelectedSleepTimerAction = newAction;
     }
 
     private void EqBand_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)

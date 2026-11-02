@@ -27,6 +27,7 @@ public interface IAudioPlayerService
     bool Init();
     long Play(string urlOrPath, double replayGain = 0.0);
     void Pause();
+    System.Threading.Tasks.Task FadeOutAndPauseAsync(int fadeDurationMs);
     void Resume();
     void Stop();
     double GetPositionSeconds();
@@ -46,6 +47,7 @@ public interface IAudioPlayerService
     Octave.Core.Models.AudioQualityDetails QualityDetails { get; }
     void Seek(double positionSeconds);
     float[] GetFftData(int binCount = 36);
+    int GetFftData(Span<float> destination);
 
     // 10-band graphic equalizer (requires bass_fx.dll at runtime).
     System.Collections.Generic.IReadOnlyList<int> EqFrequencies { get; }

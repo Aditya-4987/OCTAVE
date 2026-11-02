@@ -519,13 +519,27 @@
             </SplitView.Pane>
         </SplitView>
 
+        <!-- In-app Notification for Shutdown/Sign-out cancellation -->
+        <InfoBar Grid.Row="1"
+                 x:Name="ShutdownCancelledInfoBar"
+                 Severity="Warning"
+                 Title="Power Action Cancelled"
+                 Message="{x:Bind ViewModel.ShutdownCancelledNotificationMessage, Mode=OneWay}"
+                 IsOpen="{x:Bind ViewModel.IsShutdownCancelledNotificationOpen, Mode=TwoWay}"
+                 IsClosable="True"
+                 VerticalAlignment="Top"
+                 HorizontalAlignment="Center"
+                 Margin="24,12,24,0"
+                 MaxWidth="650"
+                 Canvas.ZIndex="999" />
+
         <!-- Bottom Playback Dashboard Bar -->
         <!-- NF-14: was {StaticResource PageBackgroundBrush} (#121212, dark-locked) -->
-        <Grid Grid.Row="2" Background="{ThemeResource SolidBackgroundFillColorBaseBrush}" Padding="16,12,16,8" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0">
+        <Grid Grid.Row="2" Background="{ThemeResource SolidBackgroundFillColorBaseBrush}" Padding="16,10,16,8" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="2.5*" MaxWidth="350" x:Name="TrackDetailsColumn" />
                 <ColumnDefinition Width="5*" />
-                <ColumnDefinition Width="2.5*" MaxWidth="300" x:Name="UtilitiesColumn" />
+                <ColumnDefinition Width="2.5*" MaxWidth="460" x:Name="UtilitiesColumn" />
             </Grid.ColumnDefinitions>
 
             <!-- Column 0: Track Details & Favorite -->
@@ -535,19 +549,28 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <Button x:Name="BottomTrackDetailsBtn" Grid.Column="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Background="Transparent" BorderBrush="Transparent" Padding="4" Click="TrackDetails_Click">
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="16">
-                        <Grid Width="56" Height="56">
-                            <Border CornerRadius="4" Background="{ThemeResource SystemControlHighlightAccentBrush}" Opacity="0.15">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <!-- Artwork thumbnail with smooth 6px rounded corners -->
+                        <Grid Grid.Column="0" Width="52" Height="52" VerticalAlignment="Center">
+                            <Border CornerRadius="6" Background="{ThemeResource SystemControlHighlightAccentBrush}" Opacity="0.15">
                                 <FontIcon Glyph="&#xE8D6;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" />
                             </Border>
-                            <Border CornerRadius="4">
+                            <Border CornerRadius="6">
                                 <Image Source="{Binding ViewModel.CurrentArtworkUrl, Converter={StaticResource ArtworkPathConverter}, ConverterParameter=Small}" Stretch="UniformToFill" UseLayoutRounding="True"/>
                             </Border>
                         </Grid>
-                        <StackPanel VerticalAlignment="Center">
-                            <TextBlock Text="{x:Bind ViewModel.TrackTitle, Mode=OneWay}" FontWeight="SemiBold" FontSize="14" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" MaxWidth="220" />
-                            <TextBlock Text="{x:Bind ViewModel.ArtistName, Mode=OneWay}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" MaxWidth="220" />
-                            <Border Margin="0,4,0,0" HorizontalAlignment="Left" CornerRadius="4" Padding="6,2" Background="{ThemeResource LayerFillColorDefaultBrush}" ToolTipService.Placement="Top">
+                        <!-- Text & Quality Badge (bounded by * column so CharacterEllipsis works reliably) -->
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock Text="{x:Bind ViewModel.TrackTitle, Mode=OneWay}" FontWeight="SemiBold" FontSize="14" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{x:Bind ViewModel.ArtistName, Mode=OneWay}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                            
+                            <!-- Audio Pipeline & Stream Quality Pill: only visible when track/audio info is active -->
+                            <Border Margin="0,3,0,0" HorizontalAlignment="Left" CornerRadius="4" Padding="5,1.5" Background="{ThemeResource LayerFillColorDefaultBrush}" ToolTipService.Placement="Top"
+                                    Visibility="{x:Bind BoolToVisibility(ViewModel.HasActiveTrack), Mode=OneWay}">
                                 <ToolTipService.ToolTip>
                                     <ToolTip Background="{ThemeResource SolidBackgroundFillColorTertiaryBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="10" Padding="14" MaxWidth="450">
                                         <StackPanel Spacing="8">
@@ -628,7 +651,7 @@
                                         </StackPanel>
                                     </ToolTip>
                                 </ToolTipService.ToolTip>
-                                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
                                     <!-- Audiophile Tier Badge (HI-RES / LOSSLESS / AAC / MP3) -->
                                     <Border Background="#20FFFFFF" BorderBrush="{x:Bind ViewModel.QualityBadgeColor, Mode=OneWay}"
                                             BorderThickness="1" CornerRadius="3" Padding="4,1" VerticalAlignment="Center"
@@ -642,28 +665,33 @@
                                                 VerticalAlignment="Center" ToolTipService.ToolTip="Bit-Matched Direct Audio"
                                                 Visibility="{x:Bind BoolToVisibility(ViewModel.IsBitMatched), Mode=OneWay}" />
 
-                                    <!-- Stream Quality Text (e.g. 24-bit 96.0kHz or 320 kbps 44.1kHz) -->
-                                    <TextBlock Text="{x:Bind ViewModel.StreamingQuality, Mode=OneWay}" FontSize="10" FontWeight="Medium" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                                    <!-- Secondary hardware details: collapses in compact mode (<950px) -->
+                                    <StackPanel x:Name="QualityStreamDetailsPanel" Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+                                        <!-- Stream Quality Text (e.g. 24-bit 96.0kHz or 320 kbps 44.1kHz) -->
+                                        <TextBlock Text="{x:Bind ViewModel.StreamingQuality, Mode=OneWay}" FontSize="10" FontWeight="Medium" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
 
-                                    <!-- Output Device Icon & Category -->
-                                    <Border Background="#10FFFFFF" CornerRadius="3" Padding="4,1" VerticalAlignment="Center"
-                                            ToolTipService.ToolTip="{x:Bind ViewModel.OutputDeviceTooltip, Mode=OneWay}">
-                                        <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                        <!-- Output Device Icon Tag (Text removed per user request, tooltip preserved) -->
+                                        <Border Background="#10FFFFFF" CornerRadius="3" Padding="4,2" VerticalAlignment="Center"
+                                                ToolTipService.ToolTip="{x:Bind ViewModel.OutputDeviceTooltip, Mode=OneWay}">
                                             <FontIcon Glyph="{x:Bind ViewModel.OutputDeviceGlyph, Mode=OneWay}" FontFamily="Segoe MDL2 Assets"
                                                       FontSize="10" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
-                                            <TextBlock Text="{x:Bind ViewModel.OutputDeviceCategoryText, Mode=OneWay}"
-                                                       FontSize="9" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
-                                        </StackPanel>
-                                    </Border>
+                                        </Border>
+                                    </StackPanel>
                                 </StackPanel>
                             </Border>
                         </StackPanel>
-                    </StackPanel>
+                    </Grid>
                 </Button>
                 
-                <!-- Favorite Button -->
-                <Button Grid.Column="1" Command="{x:Bind ViewModel.ToggleCurrentTrackFavoriteCommand}" Style="{StaticResource GhostIconButtonStyle}" VerticalAlignment="Center" Margin="0,0,16,0" ToolTipService.ToolTip="Favorite">
-                    <FontIcon Glyph="{x:Bind GetFavoriteGlyph(ViewModel.IsCurrentTrackFavorite), Mode=OneWay}" FontFamily="Segoe MDL2 Assets" Foreground="{x:Bind GetFavoriteColor(ViewModel.IsCurrentTrackFavorite), Mode=OneWay}" FontSize="16" />
+                <!-- Favorite Button: coral red when favorited, disabled when no track loaded -->
+                <Button Grid.Column="1" Command="{x:Bind ViewModel.ToggleCurrentTrackFavoriteCommand}"
+                        IsEnabled="{x:Bind ViewModel.HasActiveTrack, Mode=OneWay}"
+                        Style="{StaticResource GhostIconButtonStyle}" VerticalAlignment="Center" Margin="0,0,12,0"
+                        ToolTipService.ToolTip="{x:Bind GetFavoriteToolTip(ViewModel.IsCurrentTrackFavorite), Mode=OneWay}">
+                    <FontIcon Glyph="{x:Bind GetFavoriteGlyph(ViewModel.IsCurrentTrackFavorite), Mode=OneWay}"
+                              FontFamily="Segoe MDL2 Assets"
+                              Foreground="{x:Bind GetFavoriteColor(ViewModel.IsCurrentTrackFavorite), Mode=OneWay}"
+                              FontSize="16" />
                 </Button>
             </Grid>
 
@@ -672,67 +700,63 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 
                 <!-- Transport Controls -->
-                <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="24" HorizontalAlignment="Center" Margin="0,0,0,4">
+                <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="20" HorizontalAlignment="Center" Margin="0,0,0,4">
                     <!-- Shuffle -->
-                    <Button Command="{x:Bind ViewModel.ToggleShuffleCommand}" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Shuffle">
+                    <Button Command="{x:Bind ViewModel.ToggleShuffleCommand}" Style="{StaticResource GhostIconButtonStyle}"
+                            ToolTipService.ToolTip="{x:Bind GetShuffleToolTip(ViewModel.IsShuffle), Mode=OneWay}">
                         <FontIcon Glyph="&#xE8B1;" FontFamily="Segoe MDL2 Assets" Foreground="{x:Bind GetShuffleColor(ViewModel.IsShuffle), Mode=OneWay}" FontSize="16" />
                     </Button>
                     
                     <!-- Previous -->
-                    <Button Command="{x:Bind ViewModel.PreviousCommand}" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Previous">
+                    <Button Command="{x:Bind ViewModel.PreviousCommand}" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Previous (Ctrl+Left)">
                         <FontIcon Glyph="&#xE892;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="18" />
                     </Button>
                     
-                    <!-- Play / Pause (Circular) -->
-                    <Grid Width="40" Height="40">
-                        <Button Command="{x:Bind ViewModel.PlayCommand}" Visibility="{x:Bind BoolToVisibilityNegation(ViewModel.IsPlaying), Mode=OneWay}" Style="{StaticResource SmallPlayButtonStyle}" ToolTipService.ToolTip="Play">
-                            <FontIcon Glyph="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="16" />
-                        </Button>
-                        <Button Command="{x:Bind ViewModel.PauseCommand}" Visibility="{x:Bind BoolToVisibility(ViewModel.IsPlaying), Mode=OneWay}" Style="{StaticResource SmallPlayButtonStyle}" ToolTipService.ToolTip="Pause">
-                            <FontIcon Glyph="&#xE769;" FontFamily="Segoe MDL2 Assets" FontSize="16" />
-                        </Button>
-                    </Grid>
+                    <!-- Play / Pause (Single Hero Button: preserves focus, no element swapping) -->
+                    <Button Command="{x:Bind ViewModel.TogglePlayPauseCommand}" Style="{StaticResource SmallPlayButtonStyle}"
+                            Width="36" Height="36" CornerRadius="18"
+                            ToolTipService.ToolTip="{x:Bind GetPlayPauseToolTip(ViewModel.IsPlaying), Mode=OneWay}">
+                        <FontIcon Glyph="{x:Bind GetNowPlayingGlyph(ViewModel.IsPlaying), Mode=OneWay}" FontFamily="Segoe MDL2 Assets" FontSize="16" />
+                    </Button>
 
                     <!-- Next -->
-                    <Button Command="{x:Bind ViewModel.NextCommand}" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Next">
+                    <Button Command="{x:Bind ViewModel.NextCommand}" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Next (Ctrl+Right)">
                         <FontIcon Glyph="&#xE893;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="18" />
                     </Button>
 
                     <!-- Repeat -->
-                    <Button Command="{x:Bind ViewModel.CycleRepeatCommand}" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Repeat">
+                    <Button Command="{x:Bind ViewModel.CycleRepeatCommand}" Style="{StaticResource GhostIconButtonStyle}"
+                            ToolTipService.ToolTip="{x:Bind GetRepeatToolTip(ViewModel.RepeatMode), Mode=OneWay}">
                         <FontIcon Glyph="{x:Bind GetRepeatGlyph(ViewModel.RepeatMode), Mode=OneWay}" FontFamily="Segoe MDL2 Assets" Foreground="{x:Bind GetRepeatColor(ViewModel.RepeatMode), Mode=OneWay}" FontSize="16" />
                     </Button>
                 </StackPanel>
 
                 <!-- Timeline Slider -->
-                <Grid Grid.Row="1" Margin="0,4,0,0">
+                <Grid Grid.Row="1" Margin="0,2,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="{x:Bind FormatSeconds(ViewModel.PositionSeconds), Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Width="40" TextAlignment="Right" Margin="0,0,8,0"/>
+                    <TextBlock Grid.Column="0" Text="{x:Bind FormatSeconds(ViewModel.PositionSeconds), Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" MinWidth="42" TextAlignment="Right" Margin="0,0,8,0"/>
                     <Grid Grid.Column="1" VerticalAlignment="Center">
-                        <controls:SpectrumVisualizerControl x:Name="ProgressBarVisualizer" Visibility="{x:Bind BoolToVisibility(ViewModel.IsVisualizerEnabled), Mode=OneWay}" IsHitTestVisible="False" Margin="8,0,8,10" VerticalAlignment="Center" Height="25" />
+                        <controls:SpectrumVisualizerControl x:Name="ProgressBarVisualizer" Visibility="{x:Bind BoolToVisibility(ViewModel.IsVisualizerEnabled), Mode=OneWay}" IsHitTestVisible="False" Margin="8,0,8,8" VerticalAlignment="Center" Height="24" />
                         <Slider x:Name="PlaybackSlider" Minimum="0"
                                 Maximum="{x:Bind ViewModel.SliderMaximum, Mode=OneWay}"
                                 Value="{x:Bind ViewModel.PositionSeconds, Mode=OneWay}"
                                 IsEnabled="{x:Bind ViewModel.IsTimelineEnabled, Mode=OneWay}"
-                                StepFrequency="0.1" IsThumbToolTipEnabled="False" VerticalAlignment="Center" Margin="0,-8,0,-8"
-                                ValueChanged="PlaybackSlider_ValueChanged" PointerWheelChanged="PlaybackSlider_PointerWheelChanged" KeyDown="PlaybackSlider_KeyDown" />
+                                StepFrequency="0.1" IsThumbToolTipEnabled="False" VerticalAlignment="Center" Margin="0,-4,0,-4"
+                                ValueChanged="PlaybackSlider_ValueChanged" />
                     </Grid>
-                    <TextBlock Grid.Column="2" Text="{x:Bind FormatSeconds(ViewModel.DurationSeconds), Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Width="40" TextAlignment="Left" Margin="8,0,0,0"/>
+                    <TextBlock Grid.Column="2" Text="{x:Bind FormatSeconds(ViewModel.DurationSeconds), Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" MinWidth="42" TextAlignment="Left" Margin="8,0,0,0"/>
                 </Grid>
-
-
             </Grid>
 
             <!-- Column 2: Utilities (Sleep Timer, Lyrics, Queue, Mini Player, Mute, Volume) -->
-            <StackPanel Grid.Column="2" x:Name="ExtraControlsPanel" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Spacing="8">
+            <StackPanel Grid.Column="2" x:Name="ExtraControlsPanel" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Spacing="6">
                 <!-- Ambient Background Library Ingesting Indicator -->
                 <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" Margin="0,0,4,0"
                             Visibility="{x:Bind BoolToVisibility(ViewModel.IsBackgroundScanning), Mode=OneWay}">
@@ -743,26 +767,194 @@
                     <TextBlock Text="Syncing..." FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
                 </StackPanel>
 
-                <!-- Sleep Timer Quick Button & Flyout -->
-                <Button x:Name="BottomSleepTimerBtn" Style="{StaticResource GhostIconButtonStyle}">
+                <!-- Sleep Timer Quick Button & Flyout with 2px Circular Countdown Arc -->
+                <Button x:Name="BottomSleepTimerBtn" Style="{StaticResource GhostIconButtonStyle}"
+                        Width="34" Height="34" CornerRadius="17" Padding="0" BorderThickness="0"
+                        HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
                     <ToolTipService.ToolTip>
-                        <ToolTip Content="{x:Bind ViewModel.SleepTimerStatus, Mode=OneWay}" />
+                        <ToolTip Content="{x:Bind ViewModel.SleepTimerToolTip, Mode=OneWay}" Placement="Top" />
                     </ToolTipService.ToolTip>
-                    <FontIcon Glyph="&#xEC46;" FontFamily="Segoe MDL2 Assets"
-                              Foreground="{x:Bind GetActiveColor(ViewModel.IsSleepTimerActive), Mode=OneWay}" FontSize="16" />
+                    <Grid Width="34" Height="34" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
+                        <!-- Faint 2px circular boundary track when timer is active -->
+                        <Ellipse Width="32" Height="32"
+                                 Stroke="{ThemeResource SystemControlHighlightAccentBrush}" Opacity="0.2"
+                                 StrokeThickness="2" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                 Visibility="{x:Bind BoolToVisibility(ViewModel.IsSleepTimerActive), Mode=OneWay}" />
+
+                        <!-- 2px Accent timer boundary reducing clockwise -->
+                        <Path x:Name="SleepTimerArcPath" Width="34" Height="34"
+                              Stroke="{ThemeResource SystemControlHighlightAccentBrush}" StrokeThickness="2"
+                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                              HorizontalAlignment="Center" VerticalAlignment="Center"
+                              Visibility="{x:Bind BoolToVisibility(ViewModel.IsSleepTimerActive), Mode=OneWay}" />
+
+                        <!-- Timer Icon: optically centered with 0.5px margin -->
+                        <FontIcon Glyph="&#xEC46;" FontFamily="Segoe MDL2 Assets"
+                                  Foreground="{x:Bind GetActiveColor(ViewModel.IsSleepTimerActive), Mode=OneWay}"
+                                  FontSize="15" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                  Margin="0,0.5,0,0" />
+                    </Grid>
                     <Button.Flyout>
-                        <MenuFlyout Placement="Top">
-                            <MenuFlyoutItem Text="Off" Command="{x:Bind ViewModel.CancelSleepTimerCommand}" />
-                            <MenuFlyoutSeparator />
-                            <MenuFlyoutItem Text="End of current track" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="EndOfTrack" />
-                            <MenuFlyoutItem Text="5 minutes" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="5" />
-                            <MenuFlyoutItem Text="10 minutes" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="10" />
-                            <MenuFlyoutItem Text="15 minutes" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="15" />
-                            <MenuFlyoutItem Text="30 minutes" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="30" />
-                            <MenuFlyoutItem Text="45 minutes" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="45" />
-                            <MenuFlyoutItem Text="1 hour" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="60" />
-                            <MenuFlyoutItem Text="2 hours" Command="{x:Bind ViewModel.SetSleepTimerCommand}" CommandParameter="120" />
-                        </MenuFlyout>
+                        <Flyout x:Name="BottomSleepTimerFlyout" Placement="Top">
+                            <Flyout.FlyoutPresenterStyle>
+                                <Style TargetType="FlyoutPresenter">
+                                    <Setter Property="Padding" Value="8" />
+                                    <Setter Property="CornerRadius" Value="10" />
+                                    <Setter Property="MinWidth" Value="260" />
+                                    <Setter Property="MaxWidth" Value="280" />
+                                </Style>
+                            </Flyout.FlyoutPresenterStyle>
+                            <StackPanel Spacing="3" Width="254">
+                                <!-- Active Timer Dashboard Card (visible only when timer is running) -->
+                                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                        BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,6"
+                                        Visibility="{x:Bind BoolToVisibility(ViewModel.IsSleepTimerActive), Mode=OneWay}">
+                                    <StackPanel Spacing="6">
+                                        <Grid ColumnDefinitions="*,Auto">
+                                            <TextBlock Text="SLEEP TIMER ACTIVE" FontSize="11" FontWeight="SemiBold"
+                                                       Foreground="{ThemeResource SystemControlHighlightAccentBrush}" VerticalAlignment="Center" />
+                                            <Button Grid.Column="1" Content="Turn off" FontSize="11" Padding="8,3"
+                                                    Command="{x:Bind ViewModel.CancelSleepTimerCommand}"
+                                                    Click="CloseSleepFlyout_Click"
+                                                    CornerRadius="4" />
+                                        </Grid>
+
+                                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                            <FontIcon Glyph="&#xEC46;" FontFamily="Segoe MDL2 Assets" FontSize="18"
+                                                      Foreground="{ThemeResource SystemControlHighlightAccentBrush}" />
+                                            <TextBlock Text="{x:Bind ViewModel.SleepTimerRemainingText, Mode=OneWay}"
+                                                       FontSize="18" FontWeight="SemiBold" />
+                                        </StackPanel>
+
+                                        <TextBlock Text="{x:Bind ViewModel.SleepTimerSetDurationSubtitle, Mode=OneWay}"
+                                                   FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+
+                                        <!-- Quick Extension Buttons -->
+                                        <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                                            <Button Content="+5 min" FontSize="12" Padding="10,4"
+                                                    Click="ExtendSleepTimer5_Click"
+                                                    CornerRadius="4" />
+                                            <Button Content="+10 min" FontSize="12" Padding="10,4"
+                                                    Click="ExtendSleepTimer10_Click"
+                                                    CornerRadius="4" />
+                                        </StackPanel>
+
+                                        <!-- Action on Expiry Dropdown -->
+                                        <StackPanel Spacing="3" Margin="0,6,0,0">
+                                            <TextBlock Text="When timer ends:" FontSize="11"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <ComboBox x:Name="FlyoutSleepTimerActionComboBox" HorizontalAlignment="Stretch"
+                                                      FontSize="12" Padding="8,5"
+                                                      SelectedIndex="{x:Bind GetActionIndex(ViewModel.SelectedSleepTimerAction), Mode=OneWay}"
+                                                      SelectionChanged="SleepTimerActionComboBox_SelectionChanged">
+                                                <ComboBoxItem Content="Stop playback" />
+                                                <ComboBoxItem Content="Sleep PC" />
+                                                <ComboBoxItem Content="Shut down PC" />
+                                                <ComboBoxItem Content="Sign out" />
+                                            </ComboBox>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- Header when inactive -->
+                                <TextBlock Text="Sleep timer" FontSize="13" FontWeight="SemiBold" Margin="8,4,8,4"
+                                           Visibility="{x:Bind BoolToVisibilityNegation(ViewModel.IsSleepTimerActive), Mode=OneWay}" />
+
+                                <!-- Presets -->
+                                <Button Tag="EndOfTrack" Click="SleepPreset_Click" Style="{StaticResource FlyoutMenuItemButtonStyle}">
+                                    <Grid ColumnDefinitions="*,Auto" HorizontalAlignment="Stretch">
+                                        <TextBlock Text="End of current track" VerticalAlignment="Center" FontSize="13" />
+                                        <FontIcon Grid.Column="1" Glyph="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                  Foreground="{ThemeResource SystemControlHighlightAccentBrush}"
+                                                  Visibility="{x:Bind GetPresetCheckVisibility(ViewModel.ActiveSleepPresetTag, 'EndOfTrack'), Mode=OneWay}" />
+                                    </Grid>
+                                </Button>
+
+                                <Button Tag="EndOfQueue" Click="SleepPreset_Click" Style="{StaticResource FlyoutMenuItemButtonStyle}">
+                                    <Grid ColumnDefinitions="*,Auto" HorizontalAlignment="Stretch">
+                                        <TextBlock Text="End of queue" VerticalAlignment="Center" FontSize="13" />
+                                        <FontIcon Grid.Column="1" Glyph="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                  Foreground="{ThemeResource SystemControlHighlightAccentBrush}"
+                                                  Visibility="{x:Bind GetPresetCheckVisibility(ViewModel.ActiveSleepPresetTag, 'EndOfQueue'), Mode=OneWay}" />
+                                    </Grid>
+                                </Button>
+
+                                <Button Tag="5" Click="SleepPreset_Click" Style="{StaticResource FlyoutMenuItemButtonStyle}">
+                                    <Grid ColumnDefinitions="*,Auto" HorizontalAlignment="Stretch">
+                                        <TextBlock Text="5 minutes" VerticalAlignment="Center" FontSize="13" />
+                                        <FontIcon Grid.Column="1" Glyph="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                  Foreground="{ThemeResource SystemControlHighlightAccentBrush}"
+                                                  Visibility="{x:Bind GetPresetCheckVisibility(ViewModel.ActiveSleepPresetTag, '5'), Mode=OneWay}" />
+                                    </Grid>
+                                </Button>
+
+                                <Button Tag="10" Click="SleepPreset_Click" Style="{StaticResource FlyoutMenuItemButtonStyle}">
+                                    <Grid ColumnDefinitions="*,Auto" HorizontalAlignment="Stretch">
+                                        <TextBlock Text="10 minutes" VerticalAlignment="Center" FontSize="13" />
+                                        <FontIcon Grid.Column="1" Glyph="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                  Foreground="{ThemeResource SystemControlHighlightAccentBrush}"
+                                                  Visibility="{x:Bind GetPresetCheckVisibility(ViewModel.ActiveSleepPresetTag, '10'), Mode=OneWay}" />
+                                    </Grid>
+                                </Button>
+
+                                <Button Tag="15" Click="SleepPreset_Click" Style="{StaticResource FlyoutMenuItemButtonStyle}">
+                                    <Grid ColumnDefinitions="*,Auto" HorizontalAlignment="Stretch">
+                                        <TextBlock Text="15 minutes" VerticalAlignment="Center" FontSize="13" />
+                                        <FontIcon Grid.Column="1" Glyph="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                  Foreground="{ThemeResource SystemControlHighlightAccentBrush}"
+                                                  Visibility="{x:Bind GetPresetCheckVisibility(ViewModel.ActiveSleepPresetTag, '15'), Mode=OneWay}" />
+                                    </Grid>
+                                </Button>
+
+                                <Button Tag="30" Click="SleepPreset_Click" Style="{StaticResource FlyoutMenuItemButtonStyle}">
+                                    <Grid ColumnDefinitions="*,Auto" HorizontalAlignment="Stretch">
+                                        <TextBlock Text="30 minutes" VerticalAlignment="Center" FontSize="13" />
+                                        <FontIcon Grid.Column="1" Glyph="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                  Foreground="{ThemeResource SystemControlHighlightAccentBrush}"
+                                                  Visibility="{x:Bind GetPresetCheckVisibility(ViewModel.ActiveSleepPresetTag, '30'), Mode=OneWay}" />
+                                    </Grid>
+                                </Button>
+
+                                <Button Tag="45" Click="SleepPreset_Click" Style="{StaticResource FlyoutMenuItemButtonStyle}">
+                                    <Grid ColumnDefinitions="*,Auto" HorizontalAlignment="Stretch">
+                                        <TextBlock Text="45 minutes" VerticalAlignment="Center" FontSize="13" />
+                                        <FontIcon Grid.Column="1" Glyph="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                  Foreground="{ThemeResource SystemControlHighlightAccentBrush}"
+                                                  Visibility="{x:Bind GetPresetCheckVisibility(ViewModel.ActiveSleepPresetTag, '45'), Mode=OneWay}" />
+                                    </Grid>
+                                </Button>
+
+                                <Button Tag="60" Click="SleepPreset_Click" Style="{StaticResource FlyoutMenuItemButtonStyle}">
+                                    <Grid ColumnDefinitions="*,Auto" HorizontalAlignment="Stretch">
+                                        <TextBlock Text="1 hour" VerticalAlignment="Center" FontSize="13" />
+                                        <FontIcon Grid.Column="1" Glyph="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                  Foreground="{ThemeResource SystemControlHighlightAccentBrush}"
+                                                  Visibility="{x:Bind GetPresetCheckVisibility(ViewModel.ActiveSleepPresetTag, '60'), Mode=OneWay}" />
+                                    </Grid>
+                                </Button>
+
+                                <Button Tag="120" Click="SleepPreset_Click" Style="{StaticResource FlyoutMenuItemButtonStyle}">
+                                    <Grid ColumnDefinitions="*,Auto" HorizontalAlignment="Stretch">
+                                        <TextBlock Text="2 hours" VerticalAlignment="Center" FontSize="13" />
+                                        <FontIcon Grid.Column="1" Glyph="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                  Foreground="{ThemeResource SystemControlHighlightAccentBrush}"
+                                                  Visibility="{x:Bind GetPresetCheckVisibility(ViewModel.ActiveSleepPresetTag, '120'), Mode=OneWay}" />
+                                    </Grid>
+                                </Button>
+
+                                <MenuFlyoutSeparator Margin="0,2" />
+
+                                <Button Click="CustomSleepTimer_Click" Style="{StaticResource FlyoutMenuItemButtonStyle}">
+                                    <Grid ColumnDefinitions="*,Auto" HorizontalAlignment="Stretch">
+                                        <TextBlock Text="Custom..." VerticalAlignment="Center" FontSize="13" />
+                                        <FontIcon Grid.Column="1" Glyph="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                  Foreground="{ThemeResource SystemControlHighlightAccentBrush}"
+                                                  Visibility="{x:Bind GetPresetCheckVisibility(ViewModel.ActiveSleepPresetTag, 'Custom'), Mode=OneWay}" />
+                                    </Grid>
+                                </Button>
+                            </StackPanel>
+                        </Flyout>
                     </Button.Flyout>
                 </Button>
 
@@ -782,19 +974,217 @@
                 </Button>
 
                 <!-- Mute -->
-                <Button Command="{x:Bind ViewModel.ToggleMuteCommand}" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="Mute">
+                <Button Command="{x:Bind ViewModel.ToggleMuteCommand}" Style="{StaticResource GhostIconButtonStyle}" ToolTipService.ToolTip="{x:Bind GetMuteToolTip(ViewModel.IsMuted), Mode=OneWay}">
                     <FontIcon Glyph="{x:Bind GetMuteGlyph(ViewModel.IsMuted, ViewModel.Volume), Mode=OneWay}" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="16" />
                 </Button>
 
                 <!-- Volume Slider -->
-                <Slider Minimum="0" Maximum="100" Value="{x:Bind ViewModel.Volume, Mode=TwoWay}" Width="100" VerticalAlignment="Center" Margin="0,0,16,0" ToolTipService.ToolTip="Volume" PointerWheelChanged="VolumeSlider_PointerWheelChanged"/>
+                <Slider Minimum="0" Maximum="100" StepFrequency="1" SnapsTo="StepValues"
+                        Value="{x:Bind ViewModel.Volume, Mode=TwoWay}" Width="100" VerticalAlignment="Center" Margin="0,0,12,0"
+                        ToolTipService.ToolTip="{x:Bind ViewModel.VolumeToolTip, Mode=OneWay}"
+                        PointerWheelChanged="VolumeSlider_PointerWheelChanged"/>
             </StackPanel>
 
-            <!-- Overflow menu for narrow windows -->
-            <Button Grid.Column="2" x:Name="MoreOptionsButton" Visibility="Collapsed" HorizontalAlignment="Right" Style="{StaticResource GhostIconButtonStyle}">
+            <!-- Overflow menu for narrow windows (<950px) -->
+            <Button Grid.Column="2" x:Name="MoreOptionsButton" Visibility="Collapsed" HorizontalAlignment="Right" Style="{StaticResource GhostIconButtonStyle}"
+                    ToolTipService.ToolTip="More options">
                 <Button.Flyout>
                     <Flyout Placement="TopEdgeAlignedRight">
-                        <StackPanel Spacing="16" Width="200" Padding="12">
+                        <StackPanel Spacing="8" Width="220" Padding="8">
+                            <!-- Ambient Background Sync in overflow -->
+                            <StackPanel Orientation="Horizontal" Spacing="8" Padding="12,6"
+                                        Visibility="{x:Bind BoolToVisibility(ViewModel.IsBackgroundScanning), Mode=OneWay}">
+                                <ProgressRing IsActive="{x:Bind ViewModel.IsBackgroundScanning, Mode=OneWay}" Width="14" Height="14" />
+                                <TextBlock Text="{x:Bind ViewModel.BackgroundScanStatus, Mode=OneWay}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+
+                            <!-- Sleep Timer in overflow -->
+                            <Button Style="{StaticResource GhostIconButtonStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                <ToolTipService.ToolTip>
+                                    <ToolTip Content="{x:Bind ViewModel.SleepTimerToolTip, Mode=OneWay}" Placement="Left" />
+                                </ToolTipService.ToolTip>
+                                <StackPanel Orientation="Horizontal" Spacing="12">
+                                    <Grid Width="28" Height="28" VerticalAlignment="Center" IsHitTestVisible="False">
+                                        <Ellipse Width="26" Height="26"
+                                                 Stroke="{ThemeResource SystemControlHighlightAccentBrush}" Opacity="0.2"
+                                                 StrokeThickness="2" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                 Visibility="{x:Bind BoolToVisibility(ViewModel.IsSleepTimerActive), Mode=OneWay}" />
+                                        <Path x:Name="OverflowSleepTimerProgressArc" Width="28" Height="28"
+                                              Stroke="{ThemeResource SystemControlHighlightAccentBrush}" StrokeThickness="2"
+                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                              HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              Visibility="{x:Bind BoolToVisibility(ViewModel.IsSleepTimerActive), Mode=OneWay}" />
+                                        <FontIcon Glyph="&#xEC46;" FontFamily="Segoe MDL2 Assets"
+                                                  Foreground="{x:Bind GetActiveColor(ViewModel.IsSleepTimerActive), Mode=OneWay}"
+                                                  FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  Margin="0,0.5,0,0" />
+                                    </Grid>
+                                    <TextBlock Text="{x:Bind ViewModel.SleepTimerSettingsDisplayText, Mode=OneWay}" TextTrimming="CharacterEllipsis" MaxWidth="150" VerticalAlignment="Center" />
+                                </StackPanel>
+                                <Button.Flyout>
+                                    <Flyout x:Name="OverflowSleepTimerFlyout" Placement="Left">
+                                        <Flyout.FlyoutPresenterStyle>
+                                            <Style TargetType="FlyoutPresenter">
+                                                <Setter Property="Padding" Value="8" />
+                                                <Setter Property="CornerRadius" Value="10" />
+                                                <Setter Property="MinWidth" Value="260" />
+                                                <Setter Property="MaxWidth" Value="280" />
+                                            </Style>
+                                        </Flyout.FlyoutPresenterStyle>
+                                        <StackPanel Spacing="3" Width="254">
+                                            <!-- Active Timer Dashboard Card (visible only when timer is running) -->
+                                            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                                    BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,6"
+                                                    Visibility="{x:Bind BoolToVisibility(ViewModel.IsSleepTimerActive), Mode=OneWay}">
+                                                <StackPanel Spacing="6">
+                                                    <Grid ColumnDefinitions="*,Auto">
+                                                        <TextBlock Text="SLEEP TIMER ACTIVE" FontSize="11" FontWeight="SemiBold"
+                                                                   Foreground="{ThemeResource SystemControlHighlightAccentBrush}" VerticalAlignment="Center" />
+                                                        <Button Grid.Column="1" Content="Turn off" FontSize="11" Padding="8,3"
+                                                                Command="{x:Bind ViewModel.CancelSleepTimerCommand}"
+                                                                Click="CloseSleepFlyout_Click"
+                                                                CornerRadius="4" />
+                                                    </Grid>
+
+                                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                                        <FontIcon Glyph="&#xEC46;" FontFamily="Segoe MDL2 Assets" FontSize="18"
+                                                                  Foreground="{ThemeResource SystemControlHighlightAccentBrush}" />
+                                                        <TextBlock Text="{x:Bind ViewModel.SleepTimerRemainingText, Mode=OneWay}"
+                                                                   FontSize="18" FontWeight="SemiBold" />
+                                                    </StackPanel>
+
+                                                    <TextBlock Text="{x:Bind ViewModel.SleepTimerSetDurationSubtitle, Mode=OneWay}"
+                                                               FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+
+                                                    <!-- Quick Extension Buttons -->
+                                                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                                                        <Button Content="+5 min" FontSize="12" Padding="10,4"
+                                                                Click="ExtendSleepTimer5_Click"
+                                                                CornerRadius="4" />
+                                                        <Button Content="+10 min" FontSize="12" Padding="10,4"
+                                                                Click="ExtendSleepTimer10_Click"
+                                                                CornerRadius="4" />
+                                                    </StackPanel>
+
+                                                    <!-- Completion Action Dropdown -->
+                                                    <StackPanel Spacing="3" Margin="0,6,0,0">
+                                                        <TextBlock Text="When timer ends:" FontSize="11"
+                                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                        <ComboBox x:Name="OverflowSleepTimerActionComboBox" HorizontalAlignment="Stretch"
+                                                                  FontSize="12" Padding="8,5"
+                                                                  SelectedIndex="{x:Bind GetActionIndex(ViewModel.SelectedSleepTimerAction), Mode=OneWay}"
+                                                                  SelectionChanged="SleepTimerActionComboBox_SelectionChanged">
+                                                            <ComboBoxItem Content="Stop playback" />
+                                                            <ComboBoxItem Content="Sleep PC" />
+                                                            <ComboBoxItem Content="Shut down PC" />
+                                                            <ComboBoxItem Content="Sign out" />
+                                                        </ComboBox>
+                                                    </StackPanel>
+                                                </StackPanel>
+                                            </Border>
+
+                                            <!-- Header when inactive -->
+                                            <TextBlock Text="Sleep timer" FontSize="13" FontWeight="SemiBold" Margin="8,4,8,4"
+                                                       Visibility="{x:Bind BoolToVisibilityNegation(ViewModel.IsSleepTimerActive), Mode=OneWay}" />
+
+                                            <!-- Presets -->
+                                            <Button Tag="EndOfTrack" Click="SleepPreset_Click" Style="{StaticResource FlyoutMenuItemButtonStyle}">
+                                                <Grid ColumnDefinitions="*,Auto" HorizontalAlignment="Stretch">
+                                                    <TextBlock Text="End of current track" VerticalAlignment="Center" FontSize="13" />
+                                                    <FontIcon Grid.Column="1" Glyph="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                              Foreground="{ThemeResource SystemControlHighlightAccentBrush}"
+                                                              Visibility="{x:Bind GetPresetCheckVisibility(ViewModel.ActiveSleepPresetTag, 'EndOfTrack'), Mode=OneWay}" />
+                                                </Grid>
+                                            </Button>
+
+                                            <Button Tag="EndOfQueue" Click="SleepPreset_Click" Style="{StaticResource FlyoutMenuItemButtonStyle}">
+                                                <Grid ColumnDefinitions="*,Auto" HorizontalAlignment="Stretch">
+                                                    <TextBlock Text="End of queue" VerticalAlignment="Center" FontSize="13" />
+                                                    <FontIcon Grid.Column="1" Glyph="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                              Foreground="{ThemeResource SystemControlHighlightAccentBrush}"
+                                                              Visibility="{x:Bind GetPresetCheckVisibility(ViewModel.ActiveSleepPresetTag, 'EndOfQueue'), Mode=OneWay}" />
+                                                </Grid>
+                                            </Button>
+
+                                            <Button Tag="5" Click="SleepPreset_Click" Style="{StaticResource FlyoutMenuItemButtonStyle}">
+                                                <Grid ColumnDefinitions="*,Auto" HorizontalAlignment="Stretch">
+                                                    <TextBlock Text="5 minutes" VerticalAlignment="Center" FontSize="13" />
+                                                    <FontIcon Grid.Column="1" Glyph="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                              Foreground="{ThemeResource SystemControlHighlightAccentBrush}"
+                                                              Visibility="{x:Bind GetPresetCheckVisibility(ViewModel.ActiveSleepPresetTag, '5'), Mode=OneWay}" />
+                                                </Grid>
+                                            </Button>
+
+                                            <Button Tag="10" Click="SleepPreset_Click" Style="{StaticResource FlyoutMenuItemButtonStyle}">
+                                                <Grid ColumnDefinitions="*,Auto" HorizontalAlignment="Stretch">
+                                                    <TextBlock Text="10 minutes" VerticalAlignment="Center" FontSize="13" />
+                                                    <FontIcon Grid.Column="1" Glyph="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                              Foreground="{ThemeResource SystemControlHighlightAccentBrush}"
+                                                              Visibility="{x:Bind GetPresetCheckVisibility(ViewModel.ActiveSleepPresetTag, '10'), Mode=OneWay}" />
+                                                </Grid>
+                                            </Button>
+
+                                            <Button Tag="15" Click="SleepPreset_Click" Style="{StaticResource FlyoutMenuItemButtonStyle}">
+                                                <Grid ColumnDefinitions="*,Auto" HorizontalAlignment="Stretch">
+                                                    <TextBlock Text="15 minutes" VerticalAlignment="Center" FontSize="13" />
+                                                    <FontIcon Grid.Column="1" Glyph="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                              Foreground="{ThemeResource SystemControlHighlightAccentBrush}"
+                                                              Visibility="{x:Bind GetPresetCheckVisibility(ViewModel.ActiveSleepPresetTag, '15'), Mode=OneWay}" />
+                                                </Grid>
+                                            </Button>
+
+                                            <Button Tag="30" Click="SleepPreset_Click" Style="{StaticResource FlyoutMenuItemButtonStyle}">
+                                                <Grid ColumnDefinitions="*,Auto" HorizontalAlignment="Stretch">
+                                                    <TextBlock Text="30 minutes" VerticalAlignment="Center" FontSize="13" />
+                                                    <FontIcon Grid.Column="1" Glyph="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                              Foreground="{ThemeResource SystemControlHighlightAccentBrush}"
+                                                              Visibility="{x:Bind GetPresetCheckVisibility(ViewModel.ActiveSleepPresetTag, '30'), Mode=OneWay}" />
+                                                </Grid>
+                                            </Button>
+
+                                            <Button Tag="45" Click="SleepPreset_Click" Style="{StaticResource FlyoutMenuItemButtonStyle}">
+                                                <Grid ColumnDefinitions="*,Auto" HorizontalAlignment="Stretch">
+                                                    <TextBlock Text="45 minutes" VerticalAlignment="Center" FontSize="13" />
+                                                    <FontIcon Grid.Column="1" Glyph="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                              Foreground="{ThemeResource SystemControlHighlightAccentBrush}"
+                                                              Visibility="{x:Bind GetPresetCheckVisibility(ViewModel.ActiveSleepPresetTag, '45'), Mode=OneWay}" />
+                                                </Grid>
+                                            </Button>
+
+                                            <Button Tag="60" Click="SleepPreset_Click" Style="{StaticResource FlyoutMenuItemButtonStyle}">
+                                                <Grid ColumnDefinitions="*,Auto" HorizontalAlignment="Stretch">
+                                                    <TextBlock Text="1 hour" VerticalAlignment="Center" FontSize="13" />
+                                                    <FontIcon Grid.Column="1" Glyph="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                              Foreground="{ThemeResource SystemControlHighlightAccentBrush}"
+                                                              Visibility="{x:Bind GetPresetCheckVisibility(ViewModel.ActiveSleepPresetTag, '60'), Mode=OneWay}" />
+                                                </Grid>
+                                            </Button>
+
+                                            <Button Tag="120" Click="SleepPreset_Click" Style="{StaticResource FlyoutMenuItemButtonStyle}">
+                                                <Grid ColumnDefinitions="*,Auto" HorizontalAlignment="Stretch">
+                                                    <TextBlock Text="2 hours" VerticalAlignment="Center" FontSize="13" />
+                                                    <FontIcon Grid.Column="1" Glyph="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                              Foreground="{ThemeResource SystemControlHighlightAccentBrush}"
+                                                              Visibility="{x:Bind GetPresetCheckVisibility(ViewModel.ActiveSleepPresetTag, '120'), Mode=OneWay}" />
+                                                </Grid>
+                                            </Button>
+
+                                            <MenuFlyoutSeparator Margin="0,2" />
+
+                                            <Button Click="CustomSleepTimer_Click" Style="{StaticResource FlyoutMenuItemButtonStyle}">
+                                                <Grid ColumnDefinitions="*,Auto" HorizontalAlignment="Stretch">
+                                                    <TextBlock Text="Custom..." VerticalAlignment="Center" FontSize="13" />
+                                                    <FontIcon Grid.Column="1" Glyph="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                              Foreground="{ThemeResource SystemControlHighlightAccentBrush}"
+                                                              Visibility="{x:Bind GetPresetCheckVisibility(ViewModel.ActiveSleepPresetTag, 'Custom'), Mode=OneWay}" />
+                                                </Grid>
+                                            </Button>
+                                        </StackPanel>
+                                    </Flyout>
+                                </Button.Flyout>
+                            </Button>
+
                             <Button x:Name="OverflowLyricsBtn" Click="LyricsButton_Click" Style="{StaticResource GhostIconButtonStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
                                 <StackPanel Orientation="Horizontal" Spacing="12">
                                     <FontIcon Glyph="&#xEC4F;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="16" />
@@ -803,7 +1193,7 @@
                             </Button>
                             <Button x:Name="OverflowQueueBtn" Click="QueueButton_Click" Style="{StaticResource GhostIconButtonStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
                                 <StackPanel Orientation="Horizontal" Spacing="12">
-                                    <FontIcon Glyph="&#xE8FD;" FontFamily="Segoe MDL2 Assets" Foreground="{x:Bind GetActiveColor(ViewModel.IsNowPlayingOpen), Mode=OneWay}" FontSize="16" />
+                                    <FontIcon Glyph="&#xE8FD;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="16" />
                                     <TextBlock Text="Queue" />
                                 </StackPanel>
                             </Button>
@@ -813,20 +1203,32 @@
                                     <TextBlock Text="Mini Player" />
                                 </StackPanel>
                             </Button>
-                            <Grid Margin="0,8,0,0">
+                            <MenuFlyoutSeparator Margin="0,4" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                            <Grid Margin="4,2,4,4">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <Button Grid.Column="0" Command="{x:Bind ViewModel.ToggleMuteCommand}" Style="{StaticResource GhostIconButtonStyle}">
+                                <Button Grid.Column="0" Command="{x:Bind ViewModel.ToggleMuteCommand}" Style="{StaticResource GhostIconButtonStyle}"
+                                        ToolTipService.ToolTip="{x:Bind GetMuteToolTip(ViewModel.IsMuted), Mode=OneWay}">
                                     <FontIcon Glyph="{x:Bind GetMuteGlyph(ViewModel.IsMuted, ViewModel.Volume), Mode=OneWay}" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="16" />
                                 </Button>
-                                <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{x:Bind ViewModel.Volume, Mode=TwoWay}" VerticalAlignment="Center" Margin="8,0,0,0" PointerWheelChanged="VolumeSlider_PointerWheelChanged"/>
+                                <Slider Grid.Column="1" Minimum="0" Maximum="100" StepFrequency="1" SnapsTo="StepValues"
+                                        Value="{x:Bind ViewModel.Volume, Mode=TwoWay}" VerticalAlignment="Center" Margin="8,0,0,0"
+                                        ToolTipService.ToolTip="{x:Bind ViewModel.VolumeToolTip, Mode=OneWay}"
+                                        PointerWheelChanged="VolumeSlider_PointerWheelChanged"/>
                             </Grid>
                         </StackPanel>
                     </Flyout>
                 </Button.Flyout>
-                <FontIcon Glyph="&#xE712;" FontFamily="Segoe MDL2 Assets" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="16" />
+                <Grid>
+                    <FontIcon Glyph="&#xE712;" FontFamily="Segoe MDL2 Assets"
+                              Foreground="{x:Bind GetActiveColor(ViewModel.IsSleepTimerActive), Mode=OneWay}" FontSize="16" />
+                    <!-- Active Dot indicator when Sleep Timer is active in compact mode -->
+                    <Ellipse Width="6" Height="6" Fill="{ThemeResource SystemControlHighlightAccentBrush}"
+                             HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-2,-2,0"
+                             Visibility="{x:Bind BoolToVisibility(ViewModel.IsSleepTimerActive), Mode=OneWay}" />
+                </Grid>
             </Button>
         </Grid>
     </Grid>

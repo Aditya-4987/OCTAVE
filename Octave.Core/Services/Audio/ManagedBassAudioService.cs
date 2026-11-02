@@ -847,6 +847,42 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         }
     }
 
+    public async Task FadeOutAndPauseAsync(int fadeDurationMs)
+    {
+        int streamToFade = 0;
+        lock (_streamLock)
+        {
+            if (_disposed || _currentStream == 0 || Bass.ChannelIsActive(_currentStream) != ManagedBass.PlaybackState.Playing)
+            {
+                Pause();
+                return;
+            }
+            streamToFade = _currentStream;
+            fadeDurationMs = Math.Clamp(fadeDurationMs, 100, 10000);
+            Bass.ChannelSlideAttribute(streamToFade, ChannelAttribute.Volume, 0f, fadeDurationMs);
+        }
+
+        try
+        {
+            await Task.Delay(fadeDurationMs).ConfigureAwait(false);
+        }
+        catch { }
+
+        StopPositionTimer();
+        lock (_streamLock)
+        {
+            if (!_disposed && _currentStream == streamToFade)
+            {
+                _isPlayingIntent = false;
+                _isPaused = true;
+                _isStopped = false;
+                Bass.ChannelPause(streamToFade);
+                // Restore stream channel volume attribute so subsequent resume/play starts at full volume
+                UpdateStreamVolumeUnlocked();
+            }
+        }
+    }
+
     public void Resume()
     {
         bool resumed = false;
@@ -1741,6 +1777,14 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
     {
         if (binCount <= 0) binCount = 36;
         var result = new float[binCount];
+        GetFftData(result.AsSpan());
+        return result;
+    }
+
+    public int GetFftData(Span<float> destination)
+    {
+        int binCount = destination.Length;
+        if (binCount <= 0) return 0;
 
         lock (_streamLock)
         {
@@ -1756,9 +1800,9 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
                 for (int i = 0; i < binCount; i++)
                 {
                     _lastFftPeaks[i] = Math.Max(0f, _lastFftPeaks[i] * 0.85f);
-                    result[i] = _lastFftPeaks[i];
+                    destination[i] = _lastFftPeaks[i];
                 }
-                return result;
+                return binCount;
             }
 
             int read = Bass.ChannelGetData(_currentStream, _rawFftBuffer, (int)DataFlags.FFT512);
@@ -1767,15 +1811,14 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
                 for (int i = 0; i < binCount; i++)
                 {
                     _lastFftPeaks[i] = Math.Max(0f, _lastFftPeaks[i] * 0.85f);
-                    result[i] = _lastFftPeaks[i];
+                    destination[i] = _lastFftPeaks[i];
                 }
-                return result;
+                return binCount;
             }
 
-            AggregateFftBins(_rawFftBuffer, binCount, _lastFftPeaks, result);
+            AggregateFftBins(_rawFftBuffer, binCount, _lastFftPeaks, destination);
+            return binCount;
         }
-
-        return result;
     }
 
     // TEST-06: the logarithmic bin mapping + attack/decay peak smoothing, extracted
@@ -1803,7 +1846,7 @@ public class ManagedBassAudioService : IAudioPlayerService, IDisposable
         });
     }
 
-    internal static void AggregateFftBins(float[] rawFft, int binCount, float[] peaks, float[] result)
+    internal static void AggregateFftBins(float[] rawFft, int binCount, float[] peaks, Span<float> result)
     {
         var binMap = GetBinMap(binCount);
         for (int i = 0; i < binCount; i++)

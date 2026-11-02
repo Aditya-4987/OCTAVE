@@ -19,18 +19,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Content Include="Assets\SplashScreen.scale-200.png" />
-    <Content Include="Assets\LockScreenLogo.scale-200.png" />
-    <Content Include="Assets\Square150x150Logo.scale-200.png" />
-    <Content Include="Assets\Square44x44Logo.scale-200.png" />
-    <Content Include="Assets\Square44x44Logo.targetsize-24_altform-unplated.png" />
-    <Content Include="Assets\Square44x44Logo.targetsize-48_altform-lightunplated.png" />
-    <Content Include="Assets\StoreLogo.png" />
-    <Content Include="Assets\AppIcon.ico" />
-    <Content Include="Assets\Wide310x150Logo.scale-200.png" />
-    <!-- Dev-only audio fixture: kept out of Release packaging (PH-08). -->
-    <Content Include="Assets\test.mp3" Condition="'$(Configuration)' == 'Debug'">
-        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    <Content Include="Assets\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory Condition="'%(Filename)%(Extension)' == 'test.mp3' and '$(Configuration)' != 'Debug'">Never</CopyToPublishDirectory>
+      <CopyToPublishDirectory Condition="'%(Filename)%(Extension)' != 'test.mp3' or '$(Configuration)' == 'Debug'">PreserveNewest</CopyToPublishDirectory>
     </Content>
   </ItemGroup>
   <ItemGroup>
@@ -68,7 +60,38 @@
   <PropertyGroup>
     <PublishReadyToRun Condition="'$(Configuration)' == 'Debug'">False</PublishReadyToRun>
     <PublishReadyToRun Condition="'$(Configuration)' != 'Debug'">True</PublishReadyToRun>
-    <PublishTrimmed Condition="'$(Configuration)' == 'Debug'">False</PublishTrimmed>
-    <PublishTrimmed Condition="'$(Configuration)' != 'Debug'">True</PublishTrimmed>
+    <PublishTrimmed>False</PublishTrimmed>
   </PropertyGroup>
+
+  <!-- WinUI 3 Unpackaged Publish Target: Guarantees PRI, XBF, and Assets are published for standalone portable deployment -->
+  <Target Name="PublishWinUIAppArtifacts" AfterTargets="Publish">
+    <ItemGroup>
+      <_PriFiles Include="$(TargetDir)$(TargetName).pri" Condition="Exists('$(TargetDir)$(TargetName).pri')" />
+      <_RootXbfFiles Include="$(TargetDir)*.xbf" />
+      <_ViewsXbfFiles Include="$(TargetDir)Views\**\*.xbf" />
+      <_ControlsXbfFiles Include="$(TargetDir)Controls\**\*.xbf" />
+      <_ProjectAssets Include="$(MSBuildProjectDirectory)\Assets\**\*" Exclude="$(MSBuildProjectDirectory)\Assets\test.mp3" Condition="'$(Configuration)' != 'Debug'" />
+      <_ProjectAssets Include="$(MSBuildProjectDirectory)\Assets\**\*" Condition="'$(Configuration)' == 'Debug'" />
+    </ItemGroup>
+
+    <!-- Copy PRI file as Octave.Desktop.pri and resources.pri to ensure both naming conventions resolve -->
+    <Copy SourceFiles="@(_PriFiles)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_PriFiles)" DestinationFiles="$(PublishDir)resources.pri" SkipUnchangedFiles="true" />
+
+    <!-- Copy root XBF files (App.xbf, MainWindow.xbf, MiniPlayerWindow.xbf) -->
+    <Copy SourceFiles="@(_RootXbfFiles)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+
+    <!-- Copy subfolder XBF files (Views, Controls) preserving relative paths -->
+    <Copy SourceFiles="@(_ViewsXbfFiles)" DestinationFiles="@(_ViewsXbfFiles->'$(PublishDir)Views\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_ControlsXbfFiles)" DestinationFiles="@(_ControlsXbfFiles->'$(PublishDir)Controls\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+
+    <!-- Copy Assets folder with all branding, icons, and placeholder art -->
+    <Copy SourceFiles="@(_ProjectAssets)" DestinationFiles="@(_ProjectAssets->'$(PublishDir)Assets\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+
+    <!-- Copy Setup scripts and documentation to PublishDir for portable distribution -->
+    <ItemGroup>
+      <_SetupFiles Include="$(MSBuildProjectDirectory)\..\setup.cmd;$(MSBuildProjectDirectory)\..\setup.ps1;$(MSBuildProjectDirectory)\..\SETUP.md;$(MSBuildProjectDirectory)\..\setup.md" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_SetupFiles)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="Exists('%(FullPath)')" />
+  </Target>
 </Project>
